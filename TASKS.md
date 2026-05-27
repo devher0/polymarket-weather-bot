@@ -62,14 +62,14 @@ type FusedForecast struct {
 
 ## 🟡 ПРИОРИТЕТ 2 — Стратегия и сигналы
 
-### TASK-006: Улучшить классификатор рынков
+### [x] 2026-05-27 — TASK-006: Улучшить классификатор рынков
 **Файл:** `internal/markets/markets.go` (обновить)
 - Парсить температурный порог regex: `(\d+)\s*°?[FC]` из вопроса
 - Добавить поле ThresholdC в Market struct, конвертировать F→C если нужно
 - Передавать реальный порог в HeatProbability() вместо захардкоженных 35°C
 - Расширить cityPatterns: NYC, Chi-town, LA, Chicago, San Francisco, Berlin
 
-### TASK-007: Калибровка (Brier score)
+### [x] 2026-05-27 — TASK-007: Калибровка (Brier score)
 **Файл:** `internal/calibration/calibration.go` + `data/bets_history.csv`
 - Функция SaveBet(decision, timestamp) → append в CSV
 - Функция LoadHistory() → []BetRecord
@@ -77,7 +77,7 @@ type FusedForecast struct {
 - После resolve рынка — функция UpdateOutcome(conditionID, outcome bool)
 - Запускать при старте: вывести текущий Brier score если есть данные
 
-### TASK-008: Ensemble + confidence gate
+### [x] 2026-05-27 — TASK-008: Ensemble + confidence gate
 **Файл:** `internal/strategy/strategy.go` (обновить)
 - Принимать FusedForecast из aggregator
 - Если confidence < 0.4 — пропускать рынок (не ставить)

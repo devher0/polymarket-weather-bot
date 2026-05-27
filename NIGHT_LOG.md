@@ -26,3 +26,19 @@
 **Итого: ~8 файлов, ~1150 строк**
 
 `go build ./...` — ✅ чистая компиляция
+
+## 2026-05-27 15:11 — TASK-006, TASK-007, TASK-008: Market classifier, Calibration, Ensemble gate
+
+**Задачи:** TASK-006, TASK-007, TASK-008
+
+**Файлы изменены/созданы:**
+- `internal/markets/markets.go` — парсинг температурного порога regex `(\d+)°?[FC]` с конвертацией F→C; новое поле `ThresholdC float64` в Market; расширен cityPatterns: chicago, los_angeles, san_francisco, berlin; ~+40 строк
+- `internal/weather/weather.go` — добавлены 4 новых города в Cities: chicago, los_angeles, san_francisco, berlin
+- `internal/collectors/noaa_nws.go` — расширен usCities: chicago, los_angeles, san_francisco
+- `internal/strategy/strategy.go` — EvaluateFused теперь логирует weighted contribution каждого источника (напр. `ensemble=[openmeteo(41%)+nasa(35%)+noaa(24%)] confidence=0.87`); HeatProbability/cold теперь использует реальный ThresholdC из вопроса рынка вместо захардкоженных 35°C/10°C; ~+20 строк
+- `internal/calibration/calibration.go` — новый пакет (~220 строк): SaveBet() → append CSV; LoadHistory() → []BetRecord; BrierScore() → float64; UpdateOutcome(conditionID, outcome); PrintBrierScore() с win rate и avg edge on wins
+- `cmd/bot/main.go` — интеграция calibration.PrintBrierScore() при старте; calibration.SaveBet() после успешной ставки в live режиме
+
+**Итого: 6 файлов, ~300 строк**
+
+`go build ./...` — ✅ чистая компиляция

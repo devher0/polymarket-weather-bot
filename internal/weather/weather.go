@@ -26,11 +26,15 @@ type City struct {
 }
 
 var Cities = map[string]City{
-	"new_york": {40.71, -74.01},
-	"london":   {51.51, -0.13},
-	"tokyo":    {35.68, 139.69},
-	"miami":    {25.77, -80.19},
-	"paris":    {48.85, 2.35},
+	"new_york":      {40.71, -74.01},
+	"london":        {51.51, -0.13},
+	"tokyo":         {35.68, 139.69},
+	"miami":         {25.77, -80.19},
+	"paris":         {48.85, 2.35},
+	"chicago":       {41.88, -87.63},
+	"los_angeles":   {34.05, -118.24},
+	"san_francisco": {37.77, -122.42},
+	"berlin":        {52.52, 13.41},
 }
 
 type openMeteoResp struct {

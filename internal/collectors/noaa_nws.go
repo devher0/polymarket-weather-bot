@@ -20,8 +20,11 @@ const (
 
 // usCities lists cities supported by the NWS API (US only).
 var usCities = map[string]bool{
-	"new_york": true,
-	"miami":    true,
+	"new_york":      true,
+	"miami":         true,
+	"chicago":       true,
+	"los_angeles":   true,
+	"san_francisco": true,
 }
 
 // noaaPointsResp is the /points/{lat},{lon} response.

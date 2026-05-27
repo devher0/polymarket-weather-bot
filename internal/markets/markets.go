@@ -7,22 +7,25 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const polyHost = "https://clob.polymarket.com"
 
+// Market represents a single Polymarket weather prediction market.
 type Market struct {
-	ConditionID  string
-	Question     string
-	YesTokenID   string
-	NoTokenID    string
-	YesPrice     float64
-	NoPrice      float64
-	City         string // may be empty
-	Signal       string // rain|heat|cold|snow|wind|sunny
-	EndDate      string
+	ConditionID string
+	Question    string
+	YesTokenID  string
+	NoTokenID   string
+	YesPrice    float64
+	NoPrice     float64
+	City        string  // may be empty if no city matched
+	Signal      string  // rain|heat|cold|snow|wind|sunny
+	EndDate     string
+	ThresholdC  float64 // parsed temperature threshold in Celsius (0 = not set)
 }
 
 type signal struct {
@@ -39,15 +42,42 @@ var signals = []signal{
 	{regexp.MustCompile(`(?i)sunny|sunshine|clear sky`), "sunny"},
 }
 
-var cityPatterns = map[string]*regexp.Regexp{
-	"new_york": regexp.MustCompile(`(?i)new york|nyc|manhattan`),
-	"london":   regexp.MustCompile(`(?i)london|uk weather`),
-	"tokyo":    regexp.MustCompile(`(?i)tokyo|japan weather`),
-	"miami":    regexp.MustCompile(`(?i)miami|florida weather`),
-	"paris":    regexp.MustCompile(`(?i)paris|france weather`),
+// tempThresholdRe extracts a numeric temperature and optional F/C unit from market questions.
+// Examples: "above 95°F", "above 35°C", "exceed 40 degrees", "above 100F"
+var tempThresholdRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*°?\s*([FC])\b`)
+
+// parseTempThresholdC extracts a temperature threshold from a market question
+// and returns it in Celsius. Returns 0 if none found.
+func parseTempThresholdC(question string) float64 {
+	m := tempThresholdRe.FindStringSubmatch(question)
+	if len(m) < 3 {
+		return 0
+	}
+	val, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0
+	}
+	unit := strings.ToUpper(m[2])
+	if unit == "F" {
+		// Convert Fahrenheit → Celsius
+		val = (val - 32) * 5 / 9
+	}
+	return val
 }
 
-func classify(question string) (city, sig string) {
+var cityPatterns = map[string]*regexp.Regexp{
+	"new_york":      regexp.MustCompile(`(?i)new york|nyc|manhattan|NYC|Chi-town`),
+	"london":        regexp.MustCompile(`(?i)\blondon\b|uk weather`),
+	"tokyo":         regexp.MustCompile(`(?i)\btokyo\b|japan weather`),
+	"miami":         regexp.MustCompile(`(?i)\bmiami\b|florida weather`),
+	"paris":         regexp.MustCompile(`(?i)\bparis\b|france weather`),
+	"chicago":       regexp.MustCompile(`(?i)\bchicago\b|chi-town`),
+	"los_angeles":   regexp.MustCompile(`(?i)los angeles|\bLA\b|l\.a\.|southern california`),
+	"san_francisco": regexp.MustCompile(`(?i)san francisco|\bSF\b|bay area|s\.f\.|frisco`),
+	"berlin":        regexp.MustCompile(`(?i)\bberlin\b|germany weather`),
+}
+
+func classify(question string) (city, sig string, thresholdC float64) {
 	for _, s := range signals {
 		if s.re.MatchString(question) {
 			sig = s.sig
@@ -55,7 +85,7 @@ func classify(question string) (city, sig string) {
 		}
 	}
 	if sig == "" {
-		return "", ""
+		return "", "", 0
 	}
 	for c, re := range cityPatterns {
 		if re.MatchString(question) {
@@ -63,7 +93,13 @@ func classify(question string) (city, sig string) {
 			break
 		}
 	}
-	return city, sig
+
+	// Parse temperature threshold for heat/cold signals
+	if sig == "heat" || sig == "cold" {
+		thresholdC = parseTempThresholdC(question)
+	}
+
+	return city, sig, thresholdC
 }
 
 // -- Polymarket CLOB types (minimal) --
@@ -117,7 +153,7 @@ func GetWeatherMarkets() ([]Market, error) {
 			if m.Closed || m.Archived {
 				continue
 			}
-			city, sig := classify(m.Question)
+			city, sig, thresholdC := classify(m.Question)
 			if sig == "" {
 				continue
 			}
@@ -145,6 +181,7 @@ func GetWeatherMarkets() ([]Market, error) {
 				City:        city,
 				Signal:      sig,
 				EndDate:     m.EndDateISO,
+				ThresholdC:  thresholdC,
 			})
 		}
 

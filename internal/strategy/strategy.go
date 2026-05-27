@@ -57,8 +57,27 @@ func EvaluateFused(
 		return nil
 	}
 
-	return evaluate(m, ff.Forecast, bankroll, minEdge, maxBet,
-		fmt.Sprintf("sources=[%s] confidence=%.2f", strings.Join(ff.Sources, ","), ff.Confidence))
+	// Build per-source contribution note for the Decision reason.
+	// Weights are normalised to available sources; show each as percentage.
+	sourceWeights := map[string]float64{
+		"openmeteo": 0.35, "nasa": 0.30, "noaa": 0.25, "goes": 0.10,
+	}
+	totalW := 0.0
+	for _, s := range ff.Sources {
+		totalW += sourceWeights[s]
+	}
+	if totalW == 0 {
+		totalW = 1
+	}
+	parts := make([]string, 0, len(ff.Sources))
+	for _, s := range ff.Sources {
+		pct := sourceWeights[s] / totalW * 100
+		parts = append(parts, fmt.Sprintf("%s(%.0f%%)", s, pct))
+	}
+	sourceNote := fmt.Sprintf("ensemble=[%s] confidence=%.2f",
+		strings.Join(parts, "+"), ff.Confidence)
+
+	return evaluate(m, ff.Forecast, bankroll, minEdge, maxBet, sourceNote)
 }
 
 // Evaluate compares our weather forecast to a Polymarket price.
@@ -94,14 +113,25 @@ func evaluate(
 		return nil
 	}
 
+	// Use parsed temperature threshold from market question when available;
+	// fall back to sensible defaults.
+	heatThreshold := 35.0
+	if m.ThresholdC != 0 {
+		heatThreshold = m.ThresholdC
+	}
+	coldThreshold := 10.0
+	if m.ThresholdC != 0 {
+		coldThreshold = m.ThresholdC
+	}
+
 	var ourP float64
 	switch m.Signal {
 	case "rain":
 		ourP = weather.RainProbability(f)
 	case "heat":
-		ourP = weather.HeatProbability(f, 35.0)
+		ourP = weather.HeatProbability(f, heatThreshold)
 	case "cold":
-		ourP = 1 - weather.HeatProbability(f, 10.0)
+		ourP = 1 - weather.HeatProbability(f, coldThreshold)
 	case "snow":
 		coldP := 1 - weather.HeatProbability(f, 2.0)
 		ourP = coldP * weather.RainProbability(f) * 0.8

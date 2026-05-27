@@ -16,6 +16,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
@@ -47,6 +48,9 @@ func main() {
 	} else {
 		slog.Warn("LIVE MODE — real money!")
 	}
+
+	// Print Brier score from past bets at startup
+	calibration.PrintBrierScore(".")
 
 	maxBet  := envFloat("MAX_BET_USDC", 5.0)
 	minEdge := envFloat("MIN_EDGE", 0.05)
@@ -129,6 +133,10 @@ func main() {
 				if err := placeBet(d); err != nil {
 					slog.Error("order failed", "err", err)
 				} else {
+					// Record bet for calibration tracking
+					if err := calibration.SaveBet(d, "."); err != nil {
+						slog.Warn("calibration save failed", "err", err)
+					}
 					placed++
 				}
 			} else {
