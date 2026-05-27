@@ -21,10 +21,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CityEntry allows specifying a city with custom lat/lon in config.yaml.
+// Example:
+//
+//	city_defs:
+//	  - name: dubai
+//	    lat: 25.20
+//	    lon: 55.27
+//
+// When city_defs is non-empty, each entry is registered in weather.Cities so
+// the rest of the pipeline can fetch forecasts for it.
+type CityEntry struct {
+	Name string  `yaml:"name"`
+	Lat  float64 `yaml:"lat"`
+	Lon  float64 `yaml:"lon"`
+}
+
 // Config holds all bot configuration.
 type Config struct {
 	// Trading parameters
-	Cities  []string `yaml:"cities"`   // list of city slugs to trade (default: all)
+	Cities    []string    `yaml:"cities"`     // list of city slugs to trade (default: all)
+	CityDefs  []CityEntry `yaml:"city_defs"`  // optional custom city definitions with lat/lon
 	MinEdge float64  `yaml:"min_edge"` // minimum edge to place a bet (0.05 = 5%)
 	MaxBet  float64  `yaml:"max_bet"`  // max bet per market in USDC
 

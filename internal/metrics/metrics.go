@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
+	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 )
 
 // ── Runtime state (updated by main.go via UpdateCycle) ────────────────────
@@ -153,17 +154,88 @@ func metricsHandler(dataRoot string) http.HandlerFunc {
 	}
 }
 
-// ── /healthz handler (TASK-051) ───────────────────────────────────────────
+// ── /healthz handler (TASK-051, extended by TASK-108) ────────────────────
+
+// sourceStatus is one entry in the healthz "sources" map.
+type sourceStatus struct {
+	OK          bool   `json:"ok"`           // true when last successful fetch < 3 s ago via ping
+	LastSuccess string `json:"last_success"` // RFC3339 or "never"
+	ConsecFails int    `json:"consec_fails"`
+}
 
 // healthzPayload is the JSON body returned by GET /healthz.
+// TASK-108: expanded with per-source status, brier_score, last_bet_at.
 type healthzPayload struct {
-	Status         string  `json:"status"`           // "ok" | "degraded"
-	UptimeSec      int64   `json:"uptime_s"`
-	LastCycleAt    string  `json:"last_cycle_at"`    // RFC3339 or "never"
-	Cycles         int64   `json:"cycles"`
-	BetsPlaced     int64   `json:"bets_placed"`
-	OpenPositions  int     `json:"open_positions"`
-	BankrollUSDC   float64 `json:"bankroll_usdc"`
+	Status        string                  `json:"status"`         // "ok" | "degraded"
+	UptimeSec     int64                   `json:"uptime_s"`
+	LastCycleAt   string                  `json:"last_cycle_at"`  // RFC3339 or "never"
+	LastBetAt     string                  `json:"last_bet_at"`    // RFC3339 or "never"
+	Cycles        int64                   `json:"cycles"`
+	BetsPlaced    int64                   `json:"bets_placed"`
+	OpenPositions int                     `json:"open_positions"`
+	BankrollUSDC  float64                 `json:"bankroll_usdc"`
+	BrierScore    float64                 `json:"brier_score"`    // 0=perfect; -1 if no resolved bets
+	Sources       map[string]sourceStatus `json:"sources"`
+}
+
+// pingURL does a HEAD/GET to the given URL with a 3-second timeout.
+func pingURL(rawURL string) bool {
+	c := &http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get(rawURL)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
+// sourceProbes maps source names to a lightweight probe URL.
+// A successful response (HTTP < 500) within 3 s → source is reachable.
+var sourceProbes = map[string]string{
+	"openmeteo": "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&daily=temperature_2m_max&forecast_days=1&timezone=UTC",
+	"nasa":      "https://power.larc.nasa.gov/api/temporal/daily/point?parameters=T2M&community=RE&longitude=13.41&latitude=52.52&start=20240101&end=20240101&format=JSON",
+	"noaa":      "https://api.weather.gov/points/40.71,-74.01",
+	"goes":      "https://noaa-goes19.s3.amazonaws.com/",
+}
+
+// buildSourceStatuses reads the persisted SourceHealth records and returns a
+// status map.  It does NOT issue live probes during the HTTP request so as to
+// stay fast; the persistent health records (written by collectors on each cycle)
+// are used instead.  A source is "ok" when its last successful fetch was < 1 h ago.
+func buildSourceStatuses(dataRoot string) map[string]sourceStatus {
+	health := collectors.LoadSourceHealth(dataRoot)
+	out := make(map[string]sourceStatus, len(sourceProbes))
+	now := time.Now()
+	for name := range sourceProbes {
+		h, found := health[name]
+		ss := sourceStatus{ConsecFails: h.ConsecFails}
+		if found && !h.LastSuccess.IsZero() {
+			ss.LastSuccess = h.LastSuccess.UTC().Format(time.RFC3339)
+			ss.OK = now.Sub(h.LastSuccess) < time.Hour
+		} else {
+			ss.LastSuccess = "never"
+		}
+		out[name] = ss
+	}
+	return out
+}
+
+// lastBetTime scans bets_history.csv for the most recent bet timestamp.
+func lastBetTime(dataRoot string) string {
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil || len(records) == 0 {
+		return "never"
+	}
+	var latest time.Time
+	for _, r := range records {
+		if r.Timestamp.After(latest) {
+			latest = r.Timestamp
+		}
+	}
+	if latest.IsZero() {
+		return "never"
+	}
+	return latest.UTC().Format(time.RFC3339)
 }
 
 // healthzHandler returns a JSON summary of the bot's runtime health.
@@ -179,7 +251,6 @@ func healthzHandler(dataRoot string) http.HandlerFunc {
 
 		if lastTS == 0 {
 			lastStr = "never"
-			// Only flag degraded if loop is configured and enough time has passed.
 			ls := state.loopSec.Load()
 			if ls > 0 && uptime > 2*ls {
 				statusOK = false
@@ -187,15 +258,21 @@ func healthzHandler(dataRoot string) http.HandlerFunc {
 		} else {
 			lastTime := time.Unix(lastTS, 0)
 			lastStr = lastTime.UTC().Format(time.RFC3339)
-			// Degraded when last cycle is older than 2×loopSec.
 			ls := state.loopSec.Load()
 			if ls > 0 && now.Sub(lastTime) > time.Duration(2*ls)*time.Second {
 				statusOK = false
 			}
 		}
 
-		// Load open positions / bankroll from CSV (lightweight).
 		snap := collect(dataRoot)
+
+		// Brier score: -1 when no resolved bets exist.
+		brierVal := -1.0
+		if records, err := calibration.LoadHistory(dataRoot); err == nil {
+			if score, count, err := calibration.BrierScore(records); err == nil && count > 0 {
+				brierVal = score
+			}
+		}
 
 		status := "ok"
 		httpCode := http.StatusOK
@@ -208,10 +285,13 @@ func healthzHandler(dataRoot string) http.HandlerFunc {
 			Status:        status,
 			UptimeSec:     uptime,
 			LastCycleAt:   lastStr,
+			LastBetAt:     lastBetTime(dataRoot),
 			Cycles:        state.cycleCount.Load(),
 			BetsPlaced:    state.betsPlaced.Load(),
 			OpenPositions: snap.OpenPositions,
 			BankrollUSDC:  snap.Bankroll,
+			BrierScore:    brierVal,
+			Sources:       buildSourceStatuses(dataRoot),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

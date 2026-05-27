@@ -39,6 +39,18 @@ var Cities = map[string]City{
 	"los_angeles":   {34.05, -118.24},
 	"san_francisco": {37.77, -122.42},
 	"berlin":        {52.52, 13.41},
+	// TASK-109: additional cities
+	"dubai":      {25.20, 55.27},
+	"sydney":     {-33.87, 151.21},
+	"singapore":  {1.35, 103.82},
+	"toronto":    {43.65, -79.38},
+	"moscow":     {55.75, 37.62},
+}
+
+// RegisterCity adds or replaces a city in the global Cities map.
+// Used by config to inject yaml-defined cities at startup.
+func RegisterCity(name string, lat, lon float64) {
+	Cities[name] = City{Lat: lat, Lon: lon}
 }
 
 type openMeteoResp struct {
@@ -57,6 +69,12 @@ type openMeteoResp struct {
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
+// openMeteoBase is the Open-Meteo API host. Overridable in tests via SetOpenMeteoBase.
+var openMeteoBase = "https://api.open-meteo.com"
+
+// SetOpenMeteoBase overrides the Open-Meteo API base URL. For testing only.
+func SetOpenMeteoBase(u string) { openMeteoBase = u }
+
 // GetForecast returns daily forecasts for the given city (up to `days` days).
 func GetForecast(city string, days int) ([]Forecast, error) {
 	c, ok := Cities[city]
@@ -65,12 +83,12 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 	}
 
 	url := fmt.Sprintf(
-		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"+
+		"%s/v1/forecast?latitude=%.4f&longitude=%.4f"+
 			"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,"+
 			"precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max,"+
 			"apparent_temperature_max"+ // TASK-098: feels-like max temperature
 			"&forecast_days=%d&timezone=UTC",
-		c.Lat, c.Lon, days,
+		openMeteoBase, c.Lat, c.Lon, days,
 	)
 
 	resp, err := httpClient.Get(url)

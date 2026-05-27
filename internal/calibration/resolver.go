@@ -26,6 +26,9 @@ type gammaMarketResp struct {
 	Resolved bool `json:"resolved"`
 	// outcome is the winning outcome: "Yes" or "No" (may be empty when unresolved)
 	Outcome string `json:"outcome"`
+	// resolutionPrice: 1.0 = YES won, 0.0 = NO won (preferred over Outcome string).
+	// Returned as a JSON string by Gamma API.
+	ResolutionPrice string `json:"resolutionPrice"`
 	// endDate is ISO-8601; used to decide whether to even bother querying
 	EndDate string `json:"endDate"`
 }
@@ -117,13 +120,34 @@ func ResolveOpenBets(dataRoot string) (int, error) {
 		}
 
 		// Determine if our side won.
-		// r.Side is "YES" or "NO"; info.Outcome is "Yes" or "No".
+		// Prefer resolutionPrice (numeric, unambiguous):
+		//   "1.0" or "1" → YES token pays out → YES won
+		//   "0.0" or "0" → YES token worthless → NO won
+		// Fall back to the Outcome string when resolutionPrice is absent.
 		won := false
+		yesWon := false
+		if info.ResolutionPrice == "1" || info.ResolutionPrice == "1.0" {
+			yesWon = true
+		} else if info.ResolutionPrice == "0" || info.ResolutionPrice == "0.0" {
+			yesWon = false
+		} else {
+			// Fallback: parse outcome string.
+			switch {
+			case info.Outcome == "Yes" || info.Outcome == "YES":
+				yesWon = true
+			case info.Outcome == "No" || info.Outcome == "NO":
+				yesWon = false
+			default:
+				slog.Warn("resolver: cannot determine outcome", "conditionID", r.ConditionID,
+					"outcome", info.Outcome, "resolutionPrice", info.ResolutionPrice)
+				continue
+			}
+		}
 		switch r.Side {
 		case "YES":
-			won = (info.Outcome == "Yes" || info.Outcome == "YES")
+			won = yesWon
 		case "NO":
-			won = (info.Outcome == "No" || info.Outcome == "NO")
+			won = !yesWon
 		default:
 			slog.Warn("resolver: unknown side in bet record", "side", r.Side, "conditionID", r.ConditionID)
 			continue

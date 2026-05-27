@@ -240,6 +240,13 @@ func main() {
 		cfg.MetricsPort = *metricsPortFlag
 	}
 
+	// TASK-109: register any custom city lat/lon from config before validation.
+	for _, cd := range cfg.CityDefs {
+		if cd.Name != "" {
+			weather.RegisterCity(cd.Name, cd.Lat, cd.Lon)
+		}
+	}
+
 	// TASK-080: apply Kelly parameters from config to strategy package vars.
 	strategy.KellyFraction = cfg.KellyFraction
 	strategy.MaxKellyFraction = cfg.MaxKellyFraction
@@ -366,6 +373,12 @@ func main() {
 		var res cycleResult
 		sess.cycleCount.Add(1)
 		slog.Info("=== cycle start", "time", time.Now().Format(time.RFC3339))
+
+		// TASK-111: respect /pause command from Telegram.
+		if notifier.IsPaused() {
+			slog.Info("trading paused via /pause — skipping cycle")
+			return res
+		}
 
 		// 0. Load bet history for dedup and risk checks.
 		history, err := calibration.LoadHistory(cfg.DataRoot)
@@ -943,6 +956,14 @@ func main() {
 
 		// Start the auto-resolver goroutine: checks resolved markets every hour.
 		calibration.StartResolver(cfg.DataRoot, ctx)
+
+		// TASK-111: start Telegram command poller (/status /positions /next /pause /resume).
+		notifier.StartCommandPoller(ctx, notifier.BotConfig{
+			DataRoot: cfg.DataRoot,
+			Bankroll: calibration.LoadBankroll(cfg.DataRoot),
+			MinEdge:  cfg.MinEdge,
+			MaxBet:   cfg.MaxBet,
+		})
 
 		// TASK-047: adaptive loop interval.
 		// nextInterval computes the delay before the next cycle based on results.

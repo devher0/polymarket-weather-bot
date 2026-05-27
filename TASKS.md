@@ -1003,3 +1003,31 @@ Spread между источниками = мера неопределённос
 - NowcastRainProbability(minutes int) float64 — вероятность дождя в следующие N минут
 - Использовать для рынков с EndDate сегодня (DaysUntilExpiry == 0)
 - Точнее daily forecast для intraday рынков на 20-30%
+
+---
+
+## Фаза 4 — Качество, мониторинг и live-trading
+
+### [x] 2026-05-28 — TASK-107: Integration test — сквозной dry-run без реальных ставок
+**Файл:** `tests/integration_test.go`
+Написать сквозной тест: GetWeatherMarkets → GetForecast → EvaluateFused → логируем решение. Мокаем HTTP через httptest. Проверяем что бот не паникует на пустом рынке, на рынке без города, на рынке с thin liquidity. `go test ./tests/... -tags integration`
+
+### [x] 2026-05-28 — TASK-108: Healthcheck endpoint — расширенный статус
+**Файл:** `internal/metrics/metrics.go` (обновить)
+Расширить `/healthz` до JSON: `{"status":"ok","sources":{"openmeteo":true,"nasa":true,...},"last_bet_at":"...","brier_score":0.18,"open_positions":3}`. Каждый источник ping-ует свой API с таймаутом 3с. Если источник недоступен — статус degraded, не error.
+
+### [x] 2026-05-28 — TASK-109: Авто-добавление новых городов через конфиг
+**Файл:** `config/config.yaml` + `internal/weather/weather.go`
+Сейчас города захардкожены в `var Cities`. Читать их из `config.yaml` секция `cities:` — имя, lat, lon. Добавить 5 новых городов: dubai, sydney, singapore, toronto, moscow. Backward-compatible: если конфиг пустой — использовать встроенные.
+
+### [x] 2026-05-28 — TASK-110: Авто-резолв ставок через Polymarket Gamma API
+**Файл:** `internal/calibration/resolver.go` (обновить)
+Текущий resolver использует заглушку. Подключить реальный Polymarket Gamma API: `GET https://gamma-api.polymarket.com/markets/{conditionId}` → поле `resolved`, `resolutionPrice`. Если рынок resolved=true и resolutionPrice=1.0 → YES выиграл. Обновлять `bets_history.csv` автоматически раз в час.
+
+### [x] 2026-05-28 — TASK-111: Telegram команды — /status /positions /next
+**Файл:** `internal/notifier/telegram_commands.go` (новый файл)
+Добавить polling Telegram updates (long-poll, не webhook). Команды:
+- `/status` — текущий Brier score, открытые позиции, P&L за день
+- `/positions` — список открытых ставок
+- `/next` — топ-3 лучших ставки прямо сейчас (dry-run)
+- `/pause` и `/resume` — приостановить/возобновить торговлю

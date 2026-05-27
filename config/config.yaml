@@ -3,7 +3,7 @@
 # Secrets (private key, API keys) are best kept in .env or real ENV — not here.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Cities to trade (must match keys in internal/weather/weather.go).
+# Cities to trade (must match keys in internal/weather/weather.go or city_defs below).
 # Env override: CITIES=new_york,london,tokyo (comma-separated)
 cities:
   - new_york
@@ -15,6 +15,31 @@ cities:
   - los_angeles
   - san_francisco
   - berlin
+  - dubai
+  - sydney
+  - singapore
+  - toronto
+  - moscow
+
+# Optional custom city definitions with explicit lat/lon.
+# Use this to add new cities without modifying weather.go.
+# If a name matches a built-in city, this overrides its coordinates.
+city_defs:
+  - name: dubai
+    lat: 25.20
+    lon: 55.27
+  - name: sydney
+    lat: -33.87
+    lon: 151.21
+  - name: singapore
+    lat: 1.35
+    lon: 103.82
+  - name: toronto
+    lat: 43.65
+    lon: -79.38
+  - name: moscow
+    lat: 55.75
+    lon: 37.62
 
 # Minimum edge required to place a bet (5% default).
 # Env override: MIN_EDGE=0.05

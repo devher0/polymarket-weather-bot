@@ -12,7 +12,12 @@ import (
 	"time"
 )
 
-const polyHost = "https://clob.polymarket.com"
+// polyHost is the Polymarket CLOB API base URL.
+// Overridable in tests via SetPolyHost.
+var polyHost = "https://clob.polymarket.com"
+
+// SetPolyHost overrides the Polymarket CLOB base URL. For testing only.
+func SetPolyHost(u string) { polyHost = u }
 
 // Market represents a single Polymarket weather prediction market.
 type Market struct {

@@ -1314,3 +1314,74 @@
 - `internal/aggregation/bayesian_ensemble_test.go` — new, 8 tests covering edge cases (no beliefs, all agree, conflicting sources, noisy source, DefaultNoise clamping)
 
 **Строк добавлено:** ~90 (bayesian_ensemble_test.go)
+ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
+
+---
+
+## 2026-05-28 — TASK-107: Integration test — сквозной end-to-end pipeline
+
+**Файл:** `tests/integration_test.go` (новый, 330 строк)
+
+**Что сделано:**
+- Новый тестовый пакет `tests/` с build tag `integration`
+- `TestPipeline_RainMarket_EdgedBet` — golden path: httptest mock Polymarket + Open-Meteo → GetWeatherMarkets → GetForecast → EvaluateFused → Decision ✓
+- `TestPipeline_EmptyMarkets` — пустой список рынков: pipeline не паникует ✓
+- `TestPipeline_MarketWithoutCity` — рынок без распознанного города: Decision=nil ✓
+- `TestPipeline_ThinLiquidity` — thin liquidity market: правильно пропускается ✓
+- `TestPipeline_NilForecast` — nil FusedForecast: Decision=nil без паники ✓
+- `TestPipeline_MultipleMarkets` — 3 рынка (rain/heat/unclassified): все обрабатываются ✓
+- Для моков: изменил `const polyHost` → `var polyHost` + `SetPolyHost()` в markets; добавил `var openMeteoBase` + `SetOpenMeteoBase()` в weather
+
+**Строк:** 330 (integration_test.go) + 8 (markets.go) + 8 (weather.go)
+
+## 2026-05-28 — TASK-108: Расширенный healthz endpoint
+
+**Файл:** `internal/metrics/metrics.go` (обновлён)
+
+**Что сделано:**
+- Добавлены поля в healthzPayload: `sources`, `last_bet_at`, `brier_score`
+- `buildSourceStatuses(dataRoot)` — читает SourceHealth записи из source_health.json (written by collectors), возвращает map[name]→{ok, last_success, consec_fails}
+- `lastBetTime(dataRoot)` — сканирует bets_history.csv, находит последнюю временную метку
+- `brier_score: -1` когда нет resolved ставок (явный sentinel вместо 0)
+- Добавил import `collectors` для LoadSourceHealth
+
+**Строк добавлено:** ~90 строк в metrics.go
+
+## 2026-05-28 — TASK-109: Новые города через конфиг
+
+**Файлы:** `internal/weather/weather.go`, `config/config.go`, `config/config.yaml`, `cmd/bot/main.go`
+
+**Что сделано:**
+- Добавил 5 новых городов в `weather.Cities`: dubai, sydney, singapore, toronto, moscow
+- `RegisterCity(name, lat, lon)` — публичная функция для регистрации кастомных городов
+- `CityEntry` struct в config.go + поле `CityDefs []CityEntry yaml:"city_defs"`
+- `config.yaml` расширен: новые города в `cities:` list + `city_defs:` секция с lat/lon
+- `cmd/bot/main.go`: цикл по `cfg.CityDefs` вызывает `weather.RegisterCity()` до валидации
+
+**Строк:** +20 (weather.go) + 25 (config.go) + 20 (config.yaml) + 8 (main.go)
+
+## 2026-05-28 — TASK-110: Авто-резолв через resolutionPrice
+
+**Файл:** `internal/calibration/resolver.go` (обновлён)
+
+**Что сделано:**
+- Добавил поле `ResolutionPrice string` в `gammaMarketResp`
+- Логика определения победителя: сначала проверяем `resolutionPrice` ("1"/"1.0"→YES, "0"/"0.0"→NO), затем fallback на `Outcome` строку
+- Обработка неизвестных значений: логируем предупреждение и skip, не крашимся
+
+**Строк:** +20 (resolver.go)
+
+## 2026-05-28 — TASK-111: Telegram bot commands
+
+**Файл:** `internal/notifier/telegram_commands.go` (новый, 320 строк)
+
+**Что сделано:**
+- `StartCommandPoller(ctx, BotConfig)` — goroutine с long-poll (getUpdates timeout=60s)
+- `/status` — Brier score, открытые позиции, P&L за текущий день UTC, статус pause/run
+- `/positions` — список всех открытых (unresolved) ставок с размером и датой
+- `/next` — dry-run: реальный фетч рынков + OpenMeteo, топ-3 по score → EvaluateFused
+- `/pause` и `/resume` — atomic flag `paused`, блокирует run() цикл в main.go
+- Поддержка команд с суффиксом (@botname): `/status@mybot` парсится корректно
+- Изменён `cmd/bot/main.go`: StartCommandPoller + IsPaused() check в начале run()
+
+**Строк:** 320 (telegram_commands.go) + 15 (main.go)
