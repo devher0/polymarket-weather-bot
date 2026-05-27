@@ -13,6 +13,20 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
 
+// KellyFraction controls bet aggressiveness.
+//
+//	0.25 = quarter-Kelly (conservative)
+//	0.50 = half-Kelly (default, industry standard)
+//	1.00 = full-Kelly (aggressive)
+//
+// Set by cmd/bot at startup from config. Tests use the default 0.5.
+var KellyFraction = 0.5
+
+// MaxKellyFraction is a hard cap on the fraction of bankroll risked per bet
+// regardless of the Kelly formula output (default: 5%).
+// Set by cmd/bot at startup from config.
+var MaxKellyFraction = 0.05
+
 // ScoredMarket pairs a market with its pre-computed priority score
 // and the fused forecast used to compute it.
 type ScoredMarket struct {
@@ -90,7 +104,9 @@ type Decision struct {
 	Reason         string
 }
 
-// halfKelly returns the half-Kelly bet size given edge and decimal odds.
+// halfKelly returns the bet size using the fractional-Kelly formula.
+// The actual fraction applied is min(maxFraction, k*KellyFraction).
+// maxFraction is a hard cap; KellyFraction (package-level var) scales Kelly.
 func halfKelly(edge, odds, bankroll, maxFraction float64) float64 {
 	if edge <= 0 {
 		return 0
@@ -99,7 +115,7 @@ func halfKelly(edge, odds, bankroll, maxFraction float64) float64 {
 	p := edge + 1/odds
 	q := 1 - p
 	k := (b*p - q) / b
-	frac := math.Min(maxFraction, math.Max(0, k/2))
+	frac := math.Min(maxFraction, math.Max(0, k*KellyFraction))
 	return frac * bankroll
 }
 
@@ -473,7 +489,7 @@ func evaluate(
 		return nil
 	}
 
-	size := halfKelly(best.edge, best.odds, bankroll, 0.05)
+	size := halfKelly(best.edge, best.odds, bankroll, MaxKellyFraction)
 	size = math.Min(size, maxBet)
 
 	// Liquidity gate: skip thin markets when expected position size < $50 USDC

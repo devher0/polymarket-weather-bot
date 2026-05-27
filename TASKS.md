@@ -725,3 +725,33 @@ type FusedForecast struct {
 - Например: рынок "дождь в NYC до 18:00" → считать только часы 00-18, не 00-24
 - Добавить поле `Market.ExpiryUTC time.Time` — парсить из Gamma API ответа
 - Логировать "rain window [06-18 UTC]: prob=0.73 (full day: 0.45)"
+
+---
+
+## 🔴 ПРИОРИТЕТ 21 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-080: Configurable Kelly fraction + max Kelly cap
+**Файлы:** `config/config.go` (обновить), `config/config.yaml` (обновить), `internal/strategy/strategy.go` (обновить), `cmd/bot/main.go` (обновить)
+- Добавить `KellyFraction float64` в Config (yaml: `kelly_fraction`, env: `KELLY_FRACTION`, default: 0.5)
+- Добавить `MaxKellyFraction float64` в Config (yaml: `max_kelly_fraction`, env: `MAX_KELLY_FRACTION`, default: 0.05 — max 5% of bankroll per bet)
+- Обновить `halfKelly(edge, odds, bankroll, maxFraction float64)` — уже принимает maxFraction; передавать cfg.MaxKellyFraction
+- В `evaluate()` и `EvaluateFused()`: `k/2` → `k * cfg.KellyFraction`; обновить сигнатуры для передачи KellyFraction
+- Альтернатива: передавать оба параметра в Evaluate/EvaluateFused или упаковать в `StrategyParams` struct
+- Позволяет операторам настраивать агрессивность (0.25 = quarter-Kelly, 1.0 = full-Kelly)
+
+### [x] 2026-05-27 — TASK-081: Source health tracker — per-source up/down stats
+**Файлы:** `internal/collectors/source_health.go` (новый), `internal/collectors/aggregator.go` (обновить), `cmd/dashboard/main.go` (обновить)
+- Тип `SourceHealth{LastSuccess, LastError time.Time, ConsecFails int, TotalCalls, TotalSuccess int64}`
+- `RecordSourceCall(source string, err error, dataRoot string)` — atomic update + persist в `data/source_health.json`
+- `LoadSourceHealth(dataRoot)` → `map[string]SourceHealth`
+- В `collectSources()` aggregator.go: вызывать `RecordSourceCall` для каждого источника
+- Новый sub-command `dashboard health` — таблица: Source | Status | LastSuccess | LastError | ConsecFails | UpRate%
+- Цвет: зелёный если последний успех < 1ч назад, жёлтый < 6ч, красный > 6ч
+
+### [x] 2026-05-27 — TASK-082: Config validation + sanitization
+**Файлы:** `config/config.go` (обновить), `cmd/bot/main.go` (обновить)
+- Функция `Validate(cfg *Config) []string` → возвращает список предупреждений (warnings); ошибки fatal
+- Проверки: MinEdge [0.01, 0.50], MaxBet [0.10, 1000], KellyFraction [0.10, 1.0], MaxKellyFraction [0.01, 0.25]
+- Предупреждения: MinEdge < 0.03 ("very aggressive"), MaxBet > 100 ("large bets"), LoopSec > 0 && LoopSec < 60 ("tight loop")
+- Ошибки: Cities пустой, MinEdge <= 0, MaxBet <= 0
+- В cmd/bot/main.go: вызывать Validate при старте; если warnings — логировать slog.Warn; если errors — exit(1)

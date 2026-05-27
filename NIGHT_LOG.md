@@ -1,5 +1,39 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 19:42 UTC — TASK-080, TASK-081, TASK-082: Kelly config, Source health, Config validation
+
+**Задачи:** TASK-080 (Configurable Kelly fraction), TASK-081 (Source health tracker), TASK-082 (Config validation)
+
+**Контекст:** все предыдущие задачи (TASK-001 – TASK-079) выполнены. Добавлены новые задачи ПРИОРИТЕТ 21 и сразу реализованы.
+
+**Файлы созданы/изменены:**
+
+### TASK-080: Configurable Kelly fraction + max Kelly cap
+- `internal/strategy/strategy.go` — два новых экспортированных package-level vars: `KellyFraction = 0.5` (агрессивность ставок: 0.25=quarter, 0.5=half, 1.0=full) и `MaxKellyFraction = 0.05` (hard cap, 5% bankroll max per bet); `halfKelly()` обновлён: `k/2` → `k * KellyFraction`; вызов `halfKelly()` в `evaluate()` использует `MaxKellyFraction` вместо hardcoded `0.05`; ~20 строк
+- `config/config.go` — новые поля `KellyFraction float64` и `MaxKellyFraction float64` в `Config`; defaults 0.5/0.05; ENV overlay `KELLY_FRACTION`/`MAX_KELLY_FRACTION`; ~15 строк
+- `config/config.yaml` — секция "Kelly bet sizing" с документацией; ~10 строк
+- `cmd/bot/main.go` — после CLI flag override: `strategy.KellyFraction = cfg.KellyFraction` + `strategy.MaxKellyFraction = cfg.MaxKellyFraction`; ~3 строки
+
+### TASK-081: Source health tracker — per-source up/down stats
+- `internal/collectors/source_health.go` — НОВЫЙ (~170 строк): `SourceHealth` struct с `LastSuccess`, `LastError`, `LastErrorMsg`, `ConsecFails`, `TotalCalls`, `TotalSuccess`; `UpRatePct()`, `Status(now)` методы; `LoadSourceHealth(dataRoot)`; `RecordSourceCall(source, err, dataRoot)` — atomic update + persist `data/source_health.json`; `HealthSummaryLine()` для логов; in-memory cache с lazy-loading
+- `internal/collectors/aggregator.go` — в `collectSources()`: каждая горутина (openmeteo/nasa/noaa/goes) вызывает `RecordSourceCall` после попытки фетча; ~20 строк добавлено
+- `cmd/dashboard/main.go` — новый `case "health":` → `cmdSourceHealth(dataRoot)`; функция `cmdSourceHealth()` (~90 строк): таблица Source|Status|Last Success|Last Error|ConsecFails|Total Calls|Up Rate%; цвет статуса: зелёный ok (<1ч), жёлтый degraded (<6ч), красный down (>6ч); добавлена строка в `printUsage()`
+
+### TASK-082: Config validation + sanitization
+- `config/config.go` — новый тип `ValidationResult{Errors, Warnings []string}`; функция `Validate(cfg *Config)` (~65 строк): fatal errors (cities пустой, MinEdge ≤0 или >0.50, MaxBet ≤0, KellyFraction вне (0,1], MaxKellyFraction вне (0,1]); warnings (MinEdge<0.03, MaxBet>100, KellyFraction>0.75, MaxKellyFraction>0.15, LoopSec<60, MaxForecastAgeHours>6, MaxDailyLossUSDC>200)
+- `cmd/bot/main.go` — после CLI overrides: вызов `config.Validate(cfg)`; warnings → `slog.Warn`; errors → `slog.Error` + `os.Exit(1)`; ~15 строк
+
+**Ключевые эффекты:**
+- TASK-080: оператор может настроить `kelly_fraction: 0.25` для консервативной стратегии или `kelly_fraction: 1.0` для агрессивной; `max_kelly_fraction: 0.10` удвоит cap с 5% до 10%; backward-совместимо — тесты используют default 0.5 без изменений
+- TASK-081: `dashboard health` показывает что происходит с каждым API в реальном времени; если NASA POWER недоступен >6ч — красная строка в таблице; накопительная статистика UpRate% помогает выявить ненадёжные источники
+- TASK-082: невалидная конфигурация теперь выдаёт чёткие сообщения вместо непредсказуемого поведения; предупреждения указывают на нетипичные настройки без остановки бота
+
+**Сборка:** `go build ./...` — OK; `go test ./...` — все PASS (все 8 пакетов зелёные)
+
+**Строк добавлено:** ~390 (source_health.go: ~170, config.go: ~80, strategy.go: ~20, aggregator.go: ~20, dashboard/main.go: ~90, bot/main.go: ~18, config.yaml: ~10)
+
+---
+
 ## 2026-05-27 18:27 UTC — TASK-057: Structured prediction logging
 
 **Задача:** TASK-057

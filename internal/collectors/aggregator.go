@@ -91,9 +91,14 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	go func() {
 		fc, err := weather.GetForecast(city, days)
 		if err != nil || len(fc) == 0 {
+			if err == nil {
+				err = fmt.Errorf("empty forecast")
+			}
+			RecordSourceCall("openmeteo", err, dataRoot)
 			ch <- item{}
 			return
 		}
+		RecordSourceCall("openmeteo", nil, dataRoot)
 		idx := dayOffset
 		if idx >= len(fc) {
 			idx = len(fc) - 1
@@ -105,9 +110,14 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	go func() {
 		fc, err := NASAGetForecast(city, days)
 		if err != nil || len(fc) == 0 {
+			if err == nil {
+				err = fmt.Errorf("empty forecast")
+			}
+			RecordSourceCall("nasa", err, dataRoot)
 			ch <- item{}
 			return
 		}
+		RecordSourceCall("nasa", nil, dataRoot)
 		idx := dayOffset
 		if idx >= len(fc) {
 			idx = len(fc) - 1
@@ -119,9 +129,14 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	go func() {
 		fc, err := NOAAGetForecast(city, days)
 		if err != nil || len(fc) == 0 {
+			if err == nil {
+				err = fmt.Errorf("empty forecast")
+			}
+			RecordSourceCall("noaa", err, dataRoot)
 			ch <- item{}
 			return
 		}
+		RecordSourceCall("noaa", nil, dataRoot)
 		idx := dayOffset
 		if idx >= len(fc) {
 			idx = len(fc) - 1
@@ -134,9 +149,11 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		go func() {
 			cover, err := GOESGetCloudCover(city, dataRoot)
 			if err != nil {
+				RecordSourceCall("goes", err, dataRoot)
 				ch <- item{}
 				return
 			}
+			RecordSourceCall("goes", nil, dataRoot)
 			ch <- item{r: sourceResult{name: "goes", weight: weights["goes"], cloudCover: &cover}, ok: true}
 		}()
 	}

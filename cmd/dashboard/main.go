@@ -510,6 +510,9 @@ func main() {
 			city = os.Args[2]
 		}
 		cmdHourly(city)
+	case "health":
+		// TASK-081: show per-source data availability stats.
+		cmdSourceHealth(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -539,6 +542,7 @@ func printUsage() {
 	fmt.Println("  snapshot                          Print calibration model snapshot (TASK-074)")
 	fmt.Println("  heatmap                           Show today's market opportunity heatmap summary (TASK-075)")
 	fmt.Println("  hourly <city>                     Hourly weather table for city (today + tomorrow) (TASK-078)")
+	fmt.Println("  health                            Per-source data availability stats (TASK-081)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -1071,4 +1075,118 @@ func cmdHeatmap(dataRoot string) {
 	t.Render()
 
 	fmt.Printf("\nHeatmap file: data/heatmap/%s.csv\n", time.Now().UTC().Format("2006-01-02"))
+}
+
+// ── source health (TASK-081) ──────────────────────────────────────────────────
+
+// cmdSourceHealth displays per-source availability statistics loaded from
+// data/source_health.json. The table is colour-coded: green = ok (< 1h ago),
+// yellow = degraded (< 6h), red = down (> 6h or never seen).
+func cmdSourceHealth(dataRoot string) {
+	header("SOURCE HEALTH")
+
+	health := collectors.LoadSourceHealth(dataRoot)
+
+	// Ensure all known sources appear, even if they've never been called.
+	knownSources := []string{"openmeteo", "nasa", "noaa", "goes"}
+	for _, s := range knownSources {
+		if _, ok := health[s]; !ok {
+			health[s] = collectors.SourceHealth{}
+		}
+	}
+
+	now := time.Now().UTC()
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"Source", "Status", "Last Success", "Last Error", "ConsecFails", "Total Calls", "Up Rate%",
+	})
+
+	// Keep knownSources order, then any extras.
+	seen := map[string]bool{}
+	ordered := make([]string, 0, len(health))
+	for _, s := range knownSources {
+		ordered = append(ordered, s)
+		seen[s] = true
+	}
+	for s := range health {
+		if !seen[s] {
+			ordered = append(ordered, s)
+		}
+	}
+
+	for _, src := range ordered {
+		h := health[src]
+		status := h.Status(now)
+
+		// Colour the status cell.
+		var statusStr string
+		switch status {
+		case "ok":
+			statusStr = styleWin.Sprint("ok")
+		case "degraded":
+			statusStr = styleNeutral.Sprint("degraded")
+		case "down":
+			statusStr = styleLoss.Sprint("down")
+		default:
+			statusStr = "unknown"
+		}
+
+		lastOk := "-"
+		if !h.LastSuccess.IsZero() {
+			age := now.Sub(h.LastSuccess)
+			if age < time.Minute {
+				lastOk = fmt.Sprintf("%ds ago", int(age.Seconds()))
+			} else if age < time.Hour {
+				lastOk = fmt.Sprintf("%dm ago", int(age.Minutes()))
+			} else {
+				lastOk = fmt.Sprintf("%.1fh ago", age.Hours())
+			}
+		}
+
+		lastErr := "-"
+		if !h.LastError.IsZero() {
+			age := now.Sub(h.LastError)
+			if age < time.Minute {
+				lastErr = fmt.Sprintf("%ds ago", int(age.Seconds()))
+			} else if age < time.Hour {
+				lastErr = fmt.Sprintf("%dm ago", int(age.Minutes()))
+			} else {
+				lastErr = fmt.Sprintf("%.1fh ago", age.Hours())
+			}
+			if h.LastErrorMsg != "" && len(h.LastErrorMsg) < 30 {
+				lastErr += " (" + h.LastErrorMsg + ")"
+			}
+		}
+
+		upRate := "-"
+		if h.TotalCalls > 0 {
+			upRate = fmt.Sprintf("%.0f%%", h.UpRatePct())
+		}
+
+		consecStr := fmt.Sprintf("%d", h.ConsecFails)
+		if h.ConsecFails >= 3 {
+			consecStr = styleLoss.Sprint(consecStr)
+		}
+
+		t.AppendRow(table.Row{
+			src,
+			statusStr,
+			lastOk,
+			lastErr,
+			consecStr,
+			h.TotalCalls,
+			upRate,
+		})
+	}
+
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Name: "Source", Align: text.AlignLeft},
+		{Name: "Status", Align: text.AlignCenter},
+		{Name: "Up Rate%", Align: text.AlignRight},
+	})
+	t.Render()
+
+	fmt.Printf("\nSource health data: %s/data/source_health.json\n", dataRoot)
+	fmt.Println("Status: ok=<1h  degraded=<6h  down=>6h since last success")
 }

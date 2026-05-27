@@ -51,6 +51,10 @@ type Config struct {
 	MaxBetsPerCycle     int     `yaml:"max_bets_per_cycle"`     // max bets per single run loop (0 = unlimited)
 	MinHoursToExpiry    float64 `yaml:"min_hours_to_expiry"`    // skip markets closing within this many hours (0 = disabled)
 
+	// Kelly sizing (TASK-080)
+	KellyFraction    float64 `yaml:"kelly_fraction"`     // fraction of full Kelly (0.25=quarter, 0.5=half, 1.0=full; default 0.5)
+	MaxKellyFraction float64 `yaml:"max_kelly_fraction"` // hard cap on bankroll fraction per bet (default 0.05 = 5%)
+
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
 	PolyAddress      string `yaml:"poly_address"`
@@ -88,6 +92,8 @@ func defaults() Config {
 		MaxForecastAgeHours:   3.0,
 		MaxBetsPerCycle:     5,
 		MinHoursToExpiry:    6.0,
+		KellyFraction:       0.5,
+		MaxKellyFraction:    0.05,
 	}
 }
 
@@ -220,6 +226,14 @@ func applyEnv(cfg *Config) {
 		cfg.MinHoursToExpiry = *v
 	}
 
+	// Kelly sizing (TASK-080)
+	if v := envFloat("KELLY_FRACTION"); v != nil {
+		cfg.KellyFraction = *v
+	}
+	if v := envFloat("MAX_KELLY_FRACTION"); v != nil {
+		cfg.MaxKellyFraction = *v
+	}
+
 	// Telegram
 	if v := os.Getenv("TELEGRAM_BOT_TOKEN"); v != "" {
 		cfg.TelegramBotToken = v
@@ -259,4 +273,75 @@ func envInt(key string) *int {
 		return nil
 	}
 	return &i
+}
+
+// ValidationResult holds the result of a config validation pass.
+type ValidationResult struct {
+	Errors   []string // fatal: bot should not start
+	Warnings []string // non-fatal: logged but bot continues
+}
+
+// Validate checks the config for invalid or suspicious values.
+// Returns errors (must fix) and warnings (advisories only).
+// Call at startup: if len(r.Errors) > 0 → exit(1).
+//
+// TASK-082: Config validation + sanitization.
+func Validate(cfg *Config) ValidationResult {
+	var r ValidationResult
+
+	// ── Fatal errors ────────────────────────────────────────────────────────────
+
+	if len(cfg.Cities) == 0 {
+		r.Errors = append(r.Errors, "cities: list is empty — bot has no cities to trade")
+	}
+
+	if cfg.MinEdge <= 0 {
+		r.Errors = append(r.Errors, fmt.Sprintf("min_edge: must be > 0, got %.4f", cfg.MinEdge))
+	} else if cfg.MinEdge > 0.50 {
+		r.Errors = append(r.Errors, fmt.Sprintf("min_edge: %.2f exceeds 0.50 — no market will ever meet this threshold", cfg.MinEdge))
+	}
+
+	if cfg.MaxBet <= 0 {
+		r.Errors = append(r.Errors, fmt.Sprintf("max_bet: must be > 0, got %.4f", cfg.MaxBet))
+	}
+
+	if cfg.KellyFraction <= 0 || cfg.KellyFraction > 1.0 {
+		r.Errors = append(r.Errors, fmt.Sprintf("kelly_fraction: must be in (0, 1.0], got %.2f", cfg.KellyFraction))
+	}
+
+	if cfg.MaxKellyFraction <= 0 || cfg.MaxKellyFraction > 1.0 {
+		r.Errors = append(r.Errors, fmt.Sprintf("max_kelly_fraction: must be in (0, 1.0], got %.4f", cfg.MaxKellyFraction))
+	}
+
+	// ── Warnings ────────────────────────────────────────────────────────────────
+
+	if cfg.MinEdge < 0.03 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("min_edge=%.3f is very aggressive (< 3%%) — expect many false positives and lower average P&L", cfg.MinEdge))
+	}
+
+	if cfg.MaxBet > 100 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("max_bet=%.0f USDC is large — ensure bankroll supports this bet size", cfg.MaxBet))
+	}
+
+	if cfg.KellyFraction > 0.75 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("kelly_fraction=%.2f is aggressive (> 0.75) — consider half-Kelly (0.50) for lower variance", cfg.KellyFraction))
+	}
+
+	if cfg.MaxKellyFraction > 0.15 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("max_kelly_fraction=%.2f caps at %.0f%% of bankroll per bet — very high single-bet exposure", cfg.MaxKellyFraction, cfg.MaxKellyFraction*100))
+	}
+
+	if cfg.LoopSec > 0 && cfg.LoopSec < 60 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("loop_sec=%d is very tight — risk of API rate-limiting; recommend ≥60s", cfg.LoopSec))
+	}
+
+	if cfg.MaxForecastAgeHours > 0 && cfg.MaxForecastAgeHours > 6 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("max_forecast_age_hours=%.1f is high — forecasts >6h old may be significantly stale", cfg.MaxForecastAgeHours))
+	}
+
+	if cfg.MaxDailyLossUSDC > 0 && cfg.MaxDailyLossUSDC > 200 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("max_daily_loss_usdc=%.0f is high — this is a large daily risk tolerance", cfg.MaxDailyLossUSDC))
+	}
+
+	return r
 }

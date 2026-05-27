@@ -239,6 +239,25 @@ func main() {
 		cfg.MetricsPort = *metricsPortFlag
 	}
 
+	// TASK-080: apply Kelly parameters from config to strategy package vars.
+	strategy.KellyFraction = cfg.KellyFraction
+	strategy.MaxKellyFraction = cfg.MaxKellyFraction
+
+	// TASK-082: validate config at startup.
+	{
+		vr := config.Validate(cfg)
+		for _, w := range vr.Warnings {
+			slog.Warn("config warning", "msg", w)
+		}
+		if len(vr.Errors) > 0 {
+			for _, e := range vr.Errors {
+				slog.Error("config error", "msg", e)
+			}
+			slog.Error("config validation failed — fix errors above and restart")
+			os.Exit(1)
+		}
+	}
+
 	// Start the Prometheus metrics server unless disabled.
 	var metricsSrv *http.Server
 	if cfg.MetricsPort > 0 {

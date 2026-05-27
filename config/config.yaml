@@ -83,6 +83,17 @@ max_bets_per_cycle: 5
 # Env override: MIN_HOURS_TO_EXPIRY=6
 min_hours_to_expiry: 6.0
 
+# ── Kelly bet sizing (TASK-080) ───────────────────────────────────────────────
+# Fraction of the full Kelly criterion to apply (0.25=quarter, 0.5=half, 1.0=full).
+# Half-Kelly (0.5) is the industry default: ~75% of full-Kelly EV with ~50% less variance.
+# Env override: KELLY_FRACTION=0.5
+kelly_fraction: 0.5
+
+# Hard cap on fraction of bankroll risked per single bet (5% default).
+# Kelly can recommend large bets on high-edge markets; this limits single-bet exposure.
+# Env override: MAX_KELLY_FRACTION=0.05
+max_kelly_fraction: 0.05
+
 # ── Polymarket CLOB credentials ───────────────────────────────────────────────
 # These are sensitive — prefer ENV variables or .env file over this yaml.
 # Env overrides: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS, POLYMARKET_API_KEY,
