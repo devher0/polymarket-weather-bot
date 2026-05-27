@@ -2,14 +2,18 @@
 //
 // Usage:
 //
-//	go run ./cmd/dashboard positions  — show open positions (from bets_history.csv)
-//	go run ./cmd/dashboard pnl        — P&L summary from data/bets_history.csv
-//	go run ./cmd/dashboard next       — top-5 bet candidates right now
-//	go run ./cmd/dashboard explain    — full decision audit table for all current markets
-//	go run ./cmd/dashboard all        — run all sub-commands
+//	go run ./cmd/dashboard positions            — show open positions (from bets_history.csv)
+//	go run ./cmd/dashboard pnl                  — P&L summary from data/bets_history.csv
+//	go run ./cmd/dashboard next                 — top-5 bet candidates right now
+//	go run ./cmd/dashboard explain              — full decision audit table for all current markets
+//	go run ./cmd/dashboard report               — export market evaluation snapshot to JSON (stdout)
+//	go run ./cmd/dashboard report --output=r.json — write to file instead of stdout
+//	go run ./cmd/dashboard all                  — run all sub-commands
 package main
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -476,6 +480,12 @@ func main() {
 		cmdCacheStats(dataRoot)
 	case "explain":
 		cmdExplain(dataRoot)
+	case "report":
+		// Parse --output flag from remaining args (os.Args[2:]).
+		rFlags := flag.NewFlagSet("report", flag.ExitOnError)
+		outputFile := rFlags.String("output", "", "Write JSON report to this file (default: stdout)")
+		_ = rFlags.Parse(os.Args[2:])
+		cmdReport(dataRoot, *outputFile)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -493,13 +503,14 @@ func printUsage() {
 	fmt.Println("Usage: go run ./cmd/dashboard <command>")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  positions   Show open (unresolved) positions")
-	fmt.Println("  pnl         P&L history from data/bets_history.csv")
-	fmt.Println("  next        Top-5 bet candidates right now")
-	fmt.Println("  forecast    Fused weather forecast table for all cities")
-	fmt.Println("  cache       Show forecast cache status (age of cached data)")
-	fmt.Println("  explain     Full decision audit: why each market is BET or SKIP")
-	fmt.Println("  all         Run all sub-commands")
+	fmt.Println("  positions              Show open (unresolved) positions")
+	fmt.Println("  pnl                   P&L history from data/bets_history.csv")
+	fmt.Println("  next                  Top-5 bet candidates right now")
+	fmt.Println("  forecast              Fused weather forecast table for all cities")
+	fmt.Println("  cache                 Show forecast cache status (age of cached data)")
+	fmt.Println("  explain               Full decision audit: why each market is BET or SKIP")
+	fmt.Println("  report [--output=f]   Export market evaluation snapshot to JSON")
+	fmt.Println("  all                   Run all sub-commands")
 }
 
 // cmdExplain fetches all active markets and runs ExplainEvaluate on each,
@@ -649,6 +660,109 @@ func cmdCacheStats(dataRoot string) {
 	t.Render()
 	fmt.Printf("\n  Cache directory: %s/data/forecasts/\n", dataRoot)
 	fmt.Printf("  Total entries: %d\n", len(ages))
+}
+
+// ── report (TASK-052) ──────────────────────────────────────────────────────
+
+// reportMarketEntry is one market's evaluation in the JSON report.
+type reportMarketEntry struct {
+	ConditionID string  `json:"condition_id"`
+	Question    string  `json:"question"`
+	City        string  `json:"city"`
+	Signal      string  `json:"signal"`
+	YesPrice    float64 `json:"yes_price"`
+	NoPrice     float64 `json:"no_price"`
+	OurP        float64 `json:"our_probability"`
+	YesEdge     float64 `json:"yes_edge"`
+	NoEdge      float64 `json:"no_edge"`
+	Confidence  float64 `json:"confidence"`
+	EnsUnc      float64 `json:"ensemble_uncertainty"`
+	BestSide    string  `json:"best_side"`  // "YES", "NO", or ""
+	BestEdge    float64 `json:"best_edge"`
+	FinalSize   float64 `json:"final_size_usdc"`
+	Action      string  `json:"action"`
+	SkipReason  string  `json:"skip_reason,omitempty"`
+}
+
+// reportOutput is the full JSON document written by cmdReport.
+type reportOutput struct {
+	Timestamp       string              `json:"timestamp"`
+	MarketsTotal    int                 `json:"markets_total"`
+	BetsRecommended int                 `json:"bets_recommended"`
+	Markets         []reportMarketEntry `json:"markets"`
+}
+
+// cmdReport fetches current markets + forecasts, evaluates each via
+// ExplainEvaluate, and writes a JSON snapshot to outputPath (or stdout when
+// outputPath is "").
+func cmdReport(dataRoot, outputPath string) {
+	fusedForecasts, _ := collectors.AggregateAll(dataRoot)
+	mkt, err := markets.GetWeatherMarkets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error fetching markets: %v\n", err)
+		os.Exit(1)
+	}
+
+	const bankroll = 1000.0
+	const minEdge = 0.05
+	const maxBet = 25.0
+
+	var entries []reportMarketEntry
+	betCount := 0
+
+	for _, m := range mkt {
+		ff := fusedForecasts[m.City] // nil if city not present (pointer map)
+		r := strategy.ExplainEvaluate(m, ff, bankroll, minEdge, maxBet)
+		if r == nil {
+			continue
+		}
+		entry := reportMarketEntry{
+			ConditionID: m.ConditionID,
+			Question:    m.Question,
+			City:        m.City,
+			Signal:      m.Signal,
+			YesPrice:    m.YesPrice,
+			NoPrice:     m.NoPrice,
+			OurP:        r.FinalP,
+			YesEdge:     r.YesEdge,
+			NoEdge:      r.NoEdge,
+			Confidence:  r.Confidence,
+			EnsUnc:      r.EnsUnc,
+			BestSide:    r.BestSide,
+			BestEdge:    r.BestEdge,
+			FinalSize:   r.FinalSize,
+			Action:      r.Action,
+			SkipReason:  r.SkipReason,
+		}
+		entries = append(entries, entry)
+		if r.IsBet() {
+			betCount++
+		}
+	}
+
+	out := reportOutput{
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		MarketsTotal:    len(entries),
+		BetsRecommended: betCount,
+		Markets:         entries,
+	}
+
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "json marshal error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if outputPath == "" {
+		fmt.Println(string(data))
+		return
+	}
+
+	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing report to %s: %v\n", outputPath, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Report written to %s (%d markets, %d bets recommended)\n", outputPath, len(entries), betCount)
 }
 
 func truncate(s string, n int) string {

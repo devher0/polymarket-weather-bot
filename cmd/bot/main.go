@@ -165,6 +165,26 @@ func main() {
 		slog.Info("DRY RUN mode — no real orders will be placed")
 	} else {
 		slog.Warn("LIVE MODE — real money!")
+
+		// TASK-053: validate required credentials before risking real money.
+		var missingEnv []string
+		if cfg.PolyPrivateKey == "" {
+			missingEnv = append(missingEnv, "POLYMARKET_PRIVATE_KEY")
+		}
+		if cfg.PolyAddress == "" {
+			missingEnv = append(missingEnv, "POLYMARKET_ADDRESS")
+		}
+		if len(missingEnv) > 0 {
+			fmt.Fprintln(os.Stderr, "ERROR: --live mode requires the following environment variables to be set:")
+			for _, v := range missingEnv {
+				fmt.Fprintf(os.Stderr, "  %s\n", v)
+			}
+			fmt.Fprintln(os.Stderr, "\nSet them via .env file or export before running:")
+			for _, v := range missingEnv {
+				fmt.Fprintf(os.Stderr, "  export %s=<value>\n", v)
+			}
+			os.Exit(1)
+		}
 	}
 
 	// Print Brier score from past bets at startup
@@ -595,10 +615,15 @@ func main() {
 
 	result := run()
 	writeDryRunFile(result)
+	metrics.UpdateCycle(result.placed) // TASK-051: update /healthz state
 
 	if cfg.LoopSec > 0 {
 		baseInterval := time.Duration(cfg.LoopSec) * time.Second
 		slog.Info("loop mode (adaptive)", "base_interval", baseInterval)
+
+		// TASK-051: inform /healthz about the configured loop interval so it can
+		// compute degraded threshold (last_cycle_at > 2×loop_sec).
+		metrics.SetLoopSec(cfg.LoopSec)
 
 		// Start the auto-resolver goroutine: checks resolved markets every hour.
 		calibration.StartResolver(cfg.DataRoot, ctx)
@@ -647,6 +672,7 @@ func main() {
 			case <-timer.C:
 				loopResult := run()
 				writeDryRunFile(loopResult) // TASK-049
+				metrics.UpdateCycle(loopResult.placed) // TASK-051: update /healthz state
 
 				// Send daily digest at ~09:00 UTC
 				now := time.Now().UTC()

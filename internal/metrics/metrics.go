@@ -3,33 +3,73 @@
 //
 // Exported counters and gauges:
 //
-//   bets_placed_total    — cumulative bets placed (from bets_history.csv)
-//   bets_won_total       — cumulative bets won (resolved, outcome=true)
-//   brier_score          — current Brier score (0 = perfect)
-//   edge_avg             — average (ourP − marketPrice) on won bets
-//   bankroll_usdc        — sum of SizeUSDC for unresolved bets (money at risk)
+//	bets_placed_total    — cumulative bets placed (from bets_history.csv)
+//	bets_won_total       — cumulative bets won (resolved, outcome=true)
+//	brier_score          — current Brier score (0 = perfect)
+//	edge_avg             — average (ourP − marketPrice) on won bets
+//	bankroll_usdc        — sum of SizeUSDC for unresolved bets (money at risk)
+//
+// Additionally exposes:
+//
+//	GET /healthz  — JSON health check for Docker/k8s liveness probes (TASK-051)
+//	GET /metrics  — Prometheus exposition format
 //
 // Usage:
 //
-//   metrics.Start(":9090", ".")   // start HTTP server in background
+//	metrics.Start(":9090", ".")      // start HTTP server in background
+//	metrics.UpdateCycle(betsPlaced)  // call after each bot cycle
 package metrics
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 )
 
-// snapshot holds computed metric values for one scrape.
+// ── Runtime state (updated by main.go via UpdateCycle) ────────────────────
+
+// botState holds live runtime counters for the /healthz endpoint.
+// All fields are updated atomically so the HTTP handler can read them
+// without taking a lock.
+type botState struct {
+	startTime    time.Time
+	lastCycleAt  atomic.Int64 // Unix timestamp (0 = never)
+	cycleCount   atomic.Int64
+	betsPlaced   atomic.Int64
+	loopSec      atomic.Int64 // base loop interval for "degraded" detection
+}
+
+// global singleton — initialised when the package is first imported.
+var state = &botState{startTime: time.Now()}
+
+// UpdateCycle records that one bot cycle just completed and N bets were placed.
+// It is safe to call from any goroutine.
+func UpdateCycle(betsPlacedThisCycle int) {
+	state.lastCycleAt.Store(time.Now().Unix())
+	state.cycleCount.Add(1)
+	state.betsPlaced.Add(int64(betsPlacedThisCycle))
+}
+
+// SetLoopSec stores the configured base loop interval so /healthz can compute
+// the "degraded" threshold (last_cycle_at > 2×loop_sec ago).
+func SetLoopSec(sec int) {
+	state.loopSec.Store(int64(sec))
+}
+
+// ── snapshot holds computed metric values for one scrape ─────────────────
+
 type snapshot struct {
-	BetsPlaced  int
-	BetsWon     int
-	BrierScore  float64
-	EdgeAvg     float64
-	Bankroll    float64
+	BetsPlaced   int
+	BetsWon      int
+	OpenPositions int
+	BrierScore   float64
+	EdgeAvg      float64
+	Bankroll     float64
 }
 
 // collect computes current metrics from the bets_history CSV.
@@ -40,7 +80,7 @@ func collect(dataRoot string) snapshot {
 		return snapshot{}
 	}
 
-	var placed, won int
+	var placed, won, open int
 	var bankroll float64
 	var edgeSum float64
 	var edgeCount int
@@ -50,6 +90,7 @@ func collect(dataRoot string) snapshot {
 		if r.Outcome == nil {
 			// Unresolved = money still at risk.
 			bankroll += r.SizeUSDC
+			open++
 		} else if *r.Outcome {
 			won++
 			edgeSum += r.OurProbability - r.MarketPrice
@@ -65,16 +106,19 @@ func collect(dataRoot string) snapshot {
 	}
 
 	return snapshot{
-		BetsPlaced: placed,
-		BetsWon:    won,
-		BrierScore: score,
-		EdgeAvg:    edgeAvg,
-		Bankroll:   bankroll,
+		BetsPlaced:    placed,
+		BetsWon:       won,
+		OpenPositions: open,
+		BrierScore:    score,
+		EdgeAvg:       edgeAvg,
+		Bankroll:      bankroll,
 	}
 }
 
-// handler responds with Prometheus exposition format (text/plain; version=0.0.4).
-func handler(dataRoot string) http.HandlerFunc {
+// ── /metrics handler ──────────────────────────────────────────────────────
+
+// metricsHandler responds with Prometheus exposition format (text/plain; version=0.0.4).
+func metricsHandler(dataRoot string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s := collect(dataRoot)
 
@@ -109,12 +153,85 @@ func handler(dataRoot string) http.HandlerFunc {
 	}
 }
 
-// Start launches the /metrics HTTP server on addr (e.g. ":9090") in a
+// ── /healthz handler (TASK-051) ───────────────────────────────────────────
+
+// healthzPayload is the JSON body returned by GET /healthz.
+type healthzPayload struct {
+	Status         string  `json:"status"`           // "ok" | "degraded"
+	UptimeSec      int64   `json:"uptime_s"`
+	LastCycleAt    string  `json:"last_cycle_at"`    // RFC3339 or "never"
+	Cycles         int64   `json:"cycles"`
+	BetsPlaced     int64   `json:"bets_placed"`
+	OpenPositions  int     `json:"open_positions"`
+	BankrollUSDC   float64 `json:"bankroll_usdc"`
+}
+
+// healthzHandler returns a JSON summary of the bot's runtime health.
+// status = "degraded" when no cycle has completed within 2×loopSec.
+func healthzHandler(dataRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		uptime := int64(now.Sub(state.startTime).Seconds())
+
+		lastTS := state.lastCycleAt.Load()
+		var lastStr string
+		var statusOK = true
+
+		if lastTS == 0 {
+			lastStr = "never"
+			// Only flag degraded if loop is configured and enough time has passed.
+			ls := state.loopSec.Load()
+			if ls > 0 && uptime > 2*ls {
+				statusOK = false
+			}
+		} else {
+			lastTime := time.Unix(lastTS, 0)
+			lastStr = lastTime.UTC().Format(time.RFC3339)
+			// Degraded when last cycle is older than 2×loopSec.
+			ls := state.loopSec.Load()
+			if ls > 0 && now.Sub(lastTime) > time.Duration(2*ls)*time.Second {
+				statusOK = false
+			}
+		}
+
+		// Load open positions / bankroll from CSV (lightweight).
+		snap := collect(dataRoot)
+
+		status := "ok"
+		httpCode := http.StatusOK
+		if !statusOK {
+			status = "degraded"
+			httpCode = http.StatusServiceUnavailable
+		}
+
+		payload := healthzPayload{
+			Status:        status,
+			UptimeSec:     uptime,
+			LastCycleAt:   lastStr,
+			Cycles:        state.cycleCount.Load(),
+			BetsPlaced:    state.betsPlaced.Load(),
+			OpenPositions: snap.OpenPositions,
+			BankrollUSDC:  snap.Bankroll,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(httpCode)
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(payload)
+	}
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────
+
+// Start launches the metrics HTTP server on addr (e.g. ":9090") in a
 // background goroutine.  dataRoot is the repo root ("." when running normally).
 // The returned *http.Server can be shut down gracefully via srv.Shutdown(ctx).
 func Start(addr, dataRoot string) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", handler(dataRoot))
+	mux.HandleFunc("/metrics", metricsHandler(dataRoot))
+	mux.HandleFunc("/healthz", healthzHandler(dataRoot))
+	// Keep legacy /health for backwards compat.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
@@ -128,7 +245,7 @@ func Start(addr, dataRoot string) *http.Server {
 	}
 
 	go func() {
-		slog.Info("metrics server started", "addr", addr)
+		slog.Info("metrics server started", "addr", addr, "healthz", addr+"/healthz")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Warn("metrics server error", "err", err)
 		}

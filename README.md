@@ -104,19 +104,47 @@ make docker-backtest
 
 Все источники бесплатны и не требуют API ключей.
 
-## Настройки (.env)
+## Настройки (.env / Environment Variables)
 
-| Параметр | По умолчанию | Описание |
-|----------|-------------|----------|
-| `POLYMARKET_PRIVATE_KEY` | — | Ethereum wallet private key |
-| `POLYMARKET_ADDRESS` | — | Ethereum address (wallet) |
+Все параметры можно задать через `.env` файл **или** через переменные окружения напрямую.
+Переменные окружения имеют приоритет над `config.yaml` и `.env`.
+
+```bash
+# Скопировать шаблон и заполнить ключи
+cp .env.example .env
+```
+
+### Обязательные (только для `--live` режима)
+
+| Переменная | Описание |
+|-----------|----------|
+| `POLYMARKET_PRIVATE_KEY` | ⚠️ Ethereum wallet private key (hex, без 0x) |
+| `POLYMARKET_ADDRESS` | ⚠️ Ethereum адрес кошелька |
+
+> В dry-run (по умолчанию) ключи **не нужны**. При запуске `--live` без этих переменных бот выведет чёткое сообщение об ошибке и завершит работу.
+
+### Опциональные
+
+| Переменная | По умолчанию | Описание |
+|-----------|-------------|----------|
 | `POLYMARKET_API_KEY` | — | CLOB API key |
 | `POLYMARKET_API_SECRET` | — | CLOB API secret |
 | `POLYMARKET_API_PASSPHRASE` | — | CLOB API passphrase |
 | `MAX_BET_USDC` | `10.0` | Максимальная ставка (USDC) |
 | `MIN_EDGE` | `0.05` | Минимальный edge (5%) |
+| `LOOP_SEC` | `0` | Интервал цикла в секундах (0 = однократный запуск) |
+| `METRICS_PORT` | `9090` | Порт Prometheus `/metrics` и `/healthz` (0 = отключить) |
+| `DATA_ROOT` | `.` | Путь к папке с данными (`data/`, `bets_history.csv`) |
+| `CITIES` | все 9 | Список городов через запятую: `new_york,london,tokyo` |
+| `MAX_DAILY_BETS` | `20` | Максимум ставок в день |
+| `MAX_DAILY_LOSS_USDC` | `50.0` | Стоп-лосс за день (USDC) |
+| `MAX_OPEN_POSITIONS` | `30` | Максимум незакрытых позиций |
+| `MAX_FORECAST_AGE_HOURS` | `3.0` | Максимальный возраст прогноза перед пропуском ставки |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram бот токен (опционально) |
 | `TELEGRAM_CHAT_ID` | — | Telegram chat ID (опционально) |
+| `WEBHOOK_URL` | — | URL для POST-уведомлений о ставках (опционально) |
+| `LOG_LEVEL` | `info` | Уровень логирования: `debug`, `info`, `warn`, `error` |
+| `CONFIG_FILE` | `config/config.yaml` | Путь к конфигурационному файлу |
 
 ## Стратегия
 

@@ -477,20 +477,20 @@ type FusedForecast struct {
 - Только для US городов: new_york, miami, chicago, los_angeles, san_francisco
 - Логировать "alert boost applied: city=X level=Warning event=Y boost=+0.15"
 
-### [ ] TASK-051: /healthz HTTP endpoint
+### [x] 2026-05-27 — TASK-051: /healthz HTTP endpoint
 **Файлы:** `cmd/bot/main.go` (обновить), `internal/metrics/metrics.go` (обновить)
 - Добавить `/healthz` к существующему Prometheus HTTP серверу
 - Возвращает JSON: `{status, uptime_s, last_cycle_at, cycles, bets_placed, open_positions, bankroll_usdc}`
 - `status`: "ok" / "degraded" (если last_cycle_at > 2×loop_sec назад)
 - Полезно для Docker/k8s health checks и внешнего мониторинга
 
-### [ ] TASK-052: Batch market evaluation report — JSON export
+### [x] 2026-05-27 — TASK-052: Batch market evaluation report — JSON export
 **Файлы:** `cmd/dashboard/main.go` (обновить)
 - Новый sub-command: `dashboard report --output=report.json`
 - Экспортирует полный снимок оценок рынков: timestamp, все рынки с нашей вероятностью, edge, решением
 - Удобно для post-hoc анализа и интеграции с внешними системами
 
-### [ ] TASK-053: Конфигурация через переменные окружения без .env файла
+### [x] 2026-05-27 — TASK-053: Конфигурация через переменные окружения без .env файла
 **Файлы:** `cmd/bot/main.go` (обновить), README.md (обновить)
 - Документировать все ENV vars в README секции "Environment Variables"
 - Добавить валидацию обязательных ENV vars при старте в live-режиме: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS

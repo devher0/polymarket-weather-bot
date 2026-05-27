@@ -526,3 +526,38 @@
 **Итого строк добавлено:** ~301
 
 **Тесты:** `go test ./...` — все PASS; `go build ./...` — ✅
+
+---
+
+## 2026-05-27 18:10 UTC — TASK-051, TASK-052, TASK-053
+
+**Что сделано:**
+
+### TASK-051: /healthz HTTP endpoint
+- Добавлен `/healthz` эндпоинт к Prometheus HTTP серверу
+- Возвращает JSON: `{status, uptime_s, last_cycle_at, cycles, bets_placed, open_positions, bankroll_usdc}`
+- `status: "degraded"` если последний цикл был > 2×loop_sec назад (возвращает HTTP 503)
+- Добавлены функции `metrics.UpdateCycle(n)` и `metrics.SetLoopSec(sec)` для обновления состояния
+- main.go вызывает UpdateCycle после каждого цикла (и в loop-режиме, и при разовом запуске)
+- Сохранён legacy `/health` эндпоинт для обратной совместимости
+
+### TASK-052: dashboard report — JSON export
+- Новый sub-command `dashboard report [--output=file.json]`
+- Экспортирует полный снимок всех рынков: timestamp, condition_id, city/signal, наша вероятность, edges, уверенность, решение, причина пропуска
+- Без `--output` печатает в stdout; с флагом пишет в файл
+- Использует ExplainEvaluate — тот же pipeline что и `dashboard explain`
+
+### TASK-053: ENV validation + README
+- Добавлена валидация обязательных переменных при старте в `--live` режиме
+- Проверяет POLYMARKET_PRIVATE_KEY и POLYMARKET_ADDRESS
+- При отсутствии — чёткое сообщение с именами пропущенных vars + пример export команд, exit(1)
+- README.md: полная документация всех ENV-переменных (обязательные / опциональные)
+
+**Файлы:**
+- `internal/metrics/metrics.go` (+77 строк)
+- `cmd/bot/main.go` (+26 строк)
+- `cmd/dashboard/main.go` (+80 строк)
+- `README.md` (+32 строки)
+- `TASKS.md` (3 задачи → [x])
+
+**Итого:** ~215 строк. `go build ./...` ✅
