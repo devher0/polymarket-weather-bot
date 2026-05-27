@@ -285,6 +285,35 @@ type FusedForecast struct {
 
 ---
 
+## 🔴 ПРИОРИТЕТ 9 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-034: Ensemble uncertainty → proportional bet scaling
+**Файл:** `internal/strategy/strategy.go` (обновить)
+- Использовать `FusedForecast.EnsembleUncertainty` (°C stddev) для масштабирования ставки
+- `ensembleScale = clamp(1.0 - uncertainty/6.0, 0.30, 1.0)`: 0°C→1.0x, 3°C→0.5x, 6°C+→0.3x
+- Применять scale к `size` перед min-size-gate в `EvaluateFused()`
+- Добавить в Decision.Reason: `ensemble_scale=0.65 (unc=2.1°C)`
+- Тест: TestEnsembleScaling в strategy_test.go
+
+### [ ] TASK-035: Per-city/signal Brier breakdown
+**Файл:** `internal/calibration/calibration.go` (обновить), `cmd/dashboard/main.go` (обновить)
+- Добавить поля `City` и `Signal` в BetRecord (cols 8-9, backward-compat: пустые для старых записей)
+- Обновить `csvHeader`, `SaveBet`, `parseRow` — сохранять `d.Market.City`, `d.Market.Signal`
+- Новая функция `CityBreakdown(records)` → `map[string]BreakdownStats{Count, BrierSum, Wins}`
+- Новая функция `SignalBreakdown(records)` → `map[string]BreakdownStats`
+- Обновить `PrintBrierScore()` — показывать топ-5 городов и сигналов по точности
+- Обновить `cmd/dashboard/main.go` pnl sub-command — таблица per-city
+
+### [ ] TASK-036: Pre-order price refresh — свежие цены перед ставкой
+**Файл:** `cmd/bot/main.go` (обновить), `internal/markets/markets.go` (обновить)
+- Перед каждой реальной ставкой: GET Gamma API `/markets?condition_id={id}` → обновить YesPrice/NoPrice
+- Пересчитать edge с актуальными ценами; если edge упал ниже minEdge — пропустить ставку
+- Логировать "price refresh: yes=0.42→0.51 (stale by Xmin), edge reduced, skipped"
+- Timeout 2s: если Gamma недоступен — использовать старую цену с предупреждением
+- Защита от торговли на несвежих ценах в волатильных рынках
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config

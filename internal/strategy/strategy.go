@@ -105,6 +105,28 @@ func halfKelly(edge, odds, bankroll, maxFraction float64) float64 {
 // minConfidence is the threshold below which we skip the market.
 const minConfidence = 0.4
 
+// ensembleUncertaintyScale converts an ensemble temperature stddev (°C) into a
+// bet-size multiplier. High uncertainty → smaller position.
+//
+//	0°C stddev → 1.00 (no scaling)
+//	3°C stddev → 0.50
+//	6°C+ stddev → 0.30 (floor)
+//
+// Returns 1.0 when uncertainty is 0 (ensemble unavailable).
+func ensembleUncertaintyScale(uncertaintyC float64) float64 {
+	if uncertaintyC <= 0 {
+		return 1.0
+	}
+	scale := 1.0 - uncertaintyC/6.0
+	if scale < 0.30 {
+		return 0.30
+	}
+	if scale > 1.0 {
+		return 1.0
+	}
+	return scale
+}
+
 // EvaluateFused evaluates a market using a FusedForecast from the aggregator.
 // Returns nil when confidence is too low or there is no sufficient edge.
 // dataRoot is the project data directory (used to record per-source predictions
@@ -149,6 +171,31 @@ func EvaluateFused(
 	d := evaluate(m, ff.Forecast, bankroll, minEdge, maxBet, sourceNote)
 	if d == nil {
 		return nil
+	}
+
+	// TASK-034: scale bet size down when ensemble spread is high.
+	// High temperature stddev across 16 ensemble members signals low predictability.
+	if ff.EnsembleUncertainty > 0 {
+		scale := ensembleUncertaintyScale(ff.EnsembleUncertainty)
+		if scale < 1.0 {
+			original := d.SizeUSDC
+			d.SizeUSDC = math.Round(d.SizeUSDC*scale*100) / 100
+			d.Reason += fmt.Sprintf(" ensemble_scale=%.2f(unc=%.1f°C,%.2f→%.2f)",
+				scale, ff.EnsembleUncertainty, original, d.SizeUSDC)
+			slog.Info("ensemble scaling applied",
+				"conditionID", m.ConditionID,
+				"uncertainty_c", fmt.Sprintf("%.1f", ff.EnsembleUncertainty),
+				"scale", fmt.Sprintf("%.2f", scale),
+				"size_before", fmt.Sprintf("%.2f", original),
+				"size_after", fmt.Sprintf("%.2f", d.SizeUSDC),
+			)
+			// Re-check minimum size after scaling.
+			if d.SizeUSDC < 0.5 {
+				slog.Info("skipped: size below minimum after ensemble scaling",
+					"conditionID", m.ConditionID)
+				return nil
+			}
+		}
 	}
 
 	// TASK-032: record per-source probability predictions so accuracy can

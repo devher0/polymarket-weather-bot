@@ -227,6 +227,102 @@ func TestEvaluateFused_MultiSource(t *testing.T) {
 	}
 }
 
+// ─── ensembleUncertaintyScale tests (TASK-034) ───────────────────────────────
+
+func TestEnsembleUncertaintyScale_Zero(t *testing.T) {
+	// No ensemble data → no scaling (1.0).
+	if s := ensembleUncertaintyScale(0); s != 1.0 {
+		t.Errorf("expected 1.0 for 0°C uncertainty, got %.4f", s)
+	}
+}
+
+func TestEnsembleUncertaintyScale_Low(t *testing.T) {
+	// 1°C uncertainty → scale ≈ 0.833 (minimal reduction).
+	s := ensembleUncertaintyScale(1.0)
+	const want = 1.0 - 1.0/6.0
+	if s < want-0.001 || s > want+0.001 {
+		t.Errorf("expected ~%.4f for 1°C, got %.4f", want, s)
+	}
+}
+
+func TestEnsembleUncertaintyScale_Mid(t *testing.T) {
+	// 3°C → scale = 0.50.
+	s := ensembleUncertaintyScale(3.0)
+	if s < 0.499 || s > 0.501 {
+		t.Errorf("expected 0.50 for 3°C, got %.4f", s)
+	}
+}
+
+func TestEnsembleUncertaintyScale_Floor(t *testing.T) {
+	// 6°C+ → clamped to floor 0.30.
+	for _, unc := range []float64{6.0, 8.0, 20.0} {
+		s := ensembleUncertaintyScale(unc)
+		if s != 0.30 {
+			t.Errorf("expected 0.30 for %.0f°C, got %.4f", unc, s)
+		}
+	}
+}
+
+func TestEnsembleUncertaintyScale_Negative(t *testing.T) {
+	// Negative input (shouldn't happen but guard it) → 1.0.
+	if s := ensembleUncertaintyScale(-1.0); s != 1.0 {
+		t.Errorf("expected 1.0 for negative uncertainty, got %.4f", s)
+	}
+}
+
+func TestEvaluateFused_EnsembleScaling_ReducesSize(t *testing.T) {
+	// High ensemble uncertainty (4°C) should reduce the bet size.
+	fc := makeForecast("new_york", 20, 10, 90, 15, 80)
+	ff := makeFused(fc, 0.85)
+	ff.EnsembleUncertainty = 4.0 // scale = 1 - 4/6 = 0.333 → clamped to 0.333
+
+	m := rainMarket("new_york", 0.35, 0.65)
+
+	// Baseline: same market with no uncertainty.
+	ffBase := makeFused(fc, 0.85)
+	ffBase.EnsembleUncertainty = 0
+
+	dBase := EvaluateFused(m, ffBase, 1000, 0.05, 100, "")
+	dScaled := EvaluateFused(m, ff, 1000, 0.05, 100, "")
+
+	if dBase == nil || dScaled == nil {
+		t.Skip("no edge; skip size comparison")
+	}
+	if dScaled.SizeUSDC >= dBase.SizeUSDC {
+		t.Errorf("expected scaled size (%.2f) < baseline (%.2f)", dScaled.SizeUSDC, dBase.SizeUSDC)
+	}
+}
+
+func TestEvaluateFused_EnsembleScaling_ReasonAnnotated(t *testing.T) {
+	fc := makeForecast("miami", 30, 10, 85, 15, 80)
+	ff := makeFused(fc, 0.85)
+	ff.EnsembleUncertainty = 3.0 // scale = 0.50
+
+	m := rainMarket("miami", 0.30, 0.70)
+	d := EvaluateFused(m, ff, 1000, 0.05, 100, "")
+	if d == nil {
+		t.Skip("no edge at this price; skip reason check")
+	}
+	// Reason must include the ensemble_scale annotation.
+	if !containsStr(d.Reason, "ensemble_scale") {
+		t.Errorf("reason missing ensemble_scale annotation: %s", d.Reason)
+	}
+}
+
+// containsStr is a minimal helper to avoid importing strings in tests.
+func containsStr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && stringContains(s, sub))
+}
+
+func stringContains(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 // ─── halfKelly tests ──────────────────────────────────────────────────────────
 
 func TestHalfKelly_ZeroEdge(t *testing.T) {

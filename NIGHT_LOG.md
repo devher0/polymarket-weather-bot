@@ -1,5 +1,29 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 16:51 — TASK-034: Ensemble uncertainty → proportional bet scaling
+
+**Задача:** TASK-034
+
+**Файлы изменены:**
+- `internal/strategy/strategy.go` — новая функция `ensembleUncertaintyScale(uncertaintyC float64) float64`: formula `1.0 - unc/6.0`, clamped [0.30, 1.0]; интеграция в `EvaluateFused()`: после `evaluate()` проверяет `ff.EnsembleUncertainty`, применяет scale к `SizeUSDC`, логирует детали, аннотирует `Decision.Reason`; повторная проверка min-size gate после масштабирования; ~40 строк нетто
+- `internal/strategy/strategy_test.go` — 7 новых тестов: `TestEnsembleUncertaintyScale_Zero/Low/Mid/Floor/Negative`, `TestEvaluateFused_EnsembleScaling_ReducesSize`, `TestEvaluateFused_EnsembleScaling_ReasonAnnotated`; вспомогательные функции `containsStr`/`stringContains`; ~75 строк
+
+**Итого: 2 файла, ~115 строк**
+
+**Тесты:** 21/21 PASS в strategy пакете (7 новых + 14 существующих)
+
+`go build ./...` — ✅  `go test ./...` — ✅
+
+**Ключевой эффект:**
+- При EnsembleUncertainty=0°C (нет данных): scale=1.0, ставка не меняется — backward compat ✅
+- При EnsembleUncertainty=3°C (умеренная): ставка уменьшается вдвое ($50→$25)
+- При EnsembleUncertainty=6°C+ (высокая): ставка 70% меньше (floor 0.30), т.е. $50→$15
+- Если после scaling size < $0.50 — ставка отменяется с логом
+- Decision.Reason аннотируется: `ensemble_scale=0.50(unc=3.0°C,50.00→25.00)`
+- Новые задачи добавлены в TASKS.md: TASK-035 (per-city Brier), TASK-036 (pre-order price refresh)
+
+---
+
 ## 2026-05-27 16:37 — TASK-032, TASK-033: Per-source accuracy tracker + PnL-adaptive Kelly
 
 **Задачи:** TASK-032 (per-source accuracy tracker), TASK-033 (PnL-adaptive Kelly)
