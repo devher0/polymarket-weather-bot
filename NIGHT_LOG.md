@@ -303,3 +303,23 @@
 - `TASKS.md` — TASK-035 отмечена [x]
 
 **Строк добавлено:** ~295
+
+## 2026-05-27 17:00 UTC — TASK-036: Pre-order price refresh
+
+**Что сделано:**
+- `internal/markets/markets.go` — новая функция `RefreshPrices(m Market)`:
+  - GET CLOB `/markets/{conditionID}` с 2-секундным timeout
+  - Возвращает обновлённые YesPrice/NoPrice; при ошибке — graceful fallback (original prices)
+- `cmd/bot/main.go` — новая функция `preOrderRefresh(d, minEdge)`:
+  - Вызывается перед каждой реальной ставкой (только в live-режиме)
+  - Пересчитывает edge с актуальными ценами
+  - Если newEdge < minEdge — логирует "price refresh: edge reduced, skipping bet" и пропускает
+  - При API-ошибке — логирует warning, продолжает со старой ценой
+  - При движении цены — логирует "price moved, proceeding" с delta
+
+**Файлы:**
+- `internal/markets/markets.go` (+43 строки)
+- `cmd/bot/main.go` (+65 строк)
+- `TASKS.md` — TASK-036 отмечена [x]
+
+**Строк добавлено:** ~108

@@ -304,7 +304,7 @@ type FusedForecast struct {
 - Обновить `PrintBrierScore()` — показывать топ-5 городов и сигналов по точности
 - Обновить `cmd/dashboard/main.go` pnl sub-command — таблица per-city
 
-### [ ] TASK-036: Pre-order price refresh — свежие цены перед ставкой
+### [x] 2026-05-27 — TASK-036: Pre-order price refresh — свежие цены перед ставкой
 **Файл:** `cmd/bot/main.go` (обновить), `internal/markets/markets.go` (обновить)
 - Перед каждой реальной ставкой: GET Gamma API `/markets?condition_id={id}` → обновить YesPrice/NoPrice
 - Пересчитать edge с актуальными ценами; если edge упал ниже minEdge — пропустить ставку

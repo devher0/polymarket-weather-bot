@@ -223,3 +223,48 @@ func GetWeatherMarkets() ([]Market, error) {
 
 	return out, nil
 }
+
+// priceRefreshClient has a short timeout so stale-price checks don't block the
+// bet loop for more than 2 seconds per market.
+var priceRefreshClient = &http.Client{Timeout: 2 * time.Second}
+
+// RefreshPrices fetches the latest YES/NO prices for a single market from the
+// Polymarket CLOB API (GET /markets/{conditionID}).
+//
+// On success it returns an updated copy of m with fresh YesPrice/NoPrice and
+// refreshed=true. On any error (timeout, 4xx, parse failure) it returns the
+// original m unchanged with refreshed=false so the caller can decide whether
+// to proceed with the stale price or skip the bet.
+func RefreshPrices(m Market) (updated Market, refreshed bool, err error) {
+	url := polyHost + "/markets/" + m.ConditionID
+	resp, err := priceRefreshClient.Get(url)
+	if err != nil {
+		return m, false, fmt.Errorf("price refresh get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return m, false, fmt.Errorf("price refresh: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return m, false, fmt.Errorf("price refresh read: %w", err)
+	}
+
+	var pm polyMarket
+	if err := json.Unmarshal(body, &pm); err != nil {
+		return m, false, fmt.Errorf("price refresh parse: %w", err)
+	}
+
+	updated = m
+	for _, t := range pm.Tokens {
+		switch strings.ToLower(t.Outcome) {
+		case "yes":
+			updated.YesPrice = t.Price
+		case "no":
+			updated.NoPrice = t.Price
+		}
+	}
+	return updated, true, nil
+}

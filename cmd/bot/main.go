@@ -380,6 +380,16 @@ func main() {
 			)
 
 			if !dryRun {
+				// TASK-036: refresh prices immediately before placing the order.
+				// This guards against stale evaluation prices in volatile markets.
+				refreshed, skip := preOrderRefresh(d, cfg.MinEdge)
+				if skip {
+					continue // edge evaporated after price refresh
+				}
+				if refreshed != nil {
+					d = refreshed
+				}
+
 				if err := placeBet(d); err != nil {
 					slog.Error("order failed", "err", err)
 					_ = notifier.NotifyError("placeBet", err)
@@ -467,6 +477,70 @@ func main() {
 	if err := notifier.NotifyStop(summary); err != nil {
 		slog.Warn("telegram stop notification failed", "err", err)
 	}
+}
+
+// preOrderRefresh fetches the latest market prices immediately before placing
+// a real order (TASK-036).
+//
+//   - On success it returns an updated Decision with fresh prices/edge and skip=false.
+//   - If the refreshed edge drops below minEdge it logs a warning and returns
+//     nil, skip=true — the caller should skip this bet.
+//   - On API failure (timeout, 4xx, etc.) it logs a warning but returns nil,
+//     skip=false so the bot continues with the original (possibly stale) price.
+func preOrderRefresh(d *strategy.Decision, minEdge float64) (updated *strategy.Decision, skip bool) {
+	freshMkt, refreshed, err := markets.RefreshPrices(d.Market)
+	if err != nil {
+		slog.Warn("price refresh failed, using stale price",
+			"conditionID", d.Market.ConditionID, "err", err)
+		return nil, false // proceed with original price
+	}
+	if !refreshed {
+		return nil, false
+	}
+
+	// Compute new edge for our side.
+	var oldPrice, newPrice, newEdge float64
+	switch d.Side {
+	case "YES":
+		oldPrice = d.Market.YesPrice
+		newPrice = freshMkt.YesPrice
+		newEdge = d.OurProbability - newPrice
+	case "NO":
+		oldPrice = d.Market.NoPrice
+		newPrice = freshMkt.NoPrice
+		newEdge = (1 - d.OurProbability) - newPrice
+	default:
+		return nil, false
+	}
+
+	if newEdge < minEdge {
+		slog.Info("price refresh: edge reduced, skipping bet",
+			"side", d.Side,
+			"old_price", fmt.Sprintf("%.4f", oldPrice),
+			"new_price", fmt.Sprintf("%.4f", newPrice),
+			"old_edge", fmt.Sprintf("%+.4f", d.Edge),
+			"new_edge", fmt.Sprintf("%+.4f", newEdge),
+			"conditionID", d.Market.ConditionID,
+		)
+		return nil, true
+	}
+
+	if oldPrice != newPrice {
+		slog.Info("price refresh: price moved, proceeding",
+			"side", d.Side,
+			"old_price", fmt.Sprintf("%.4f", oldPrice),
+			"new_price", fmt.Sprintf("%.4f", newPrice),
+			"new_edge", fmt.Sprintf("%+.4f", newEdge),
+			"conditionID", d.Market.ConditionID,
+		)
+	}
+
+	// Return updated decision with fresh prices.
+	newDecision := *d
+	newDecision.Market = freshMkt
+	newDecision.MarketPrice = newPrice
+	newDecision.Edge = newEdge
+	return &newDecision, false
 }
 
 // placeBet submits an order to Polymarket CLOB using EIP-712 signing.
