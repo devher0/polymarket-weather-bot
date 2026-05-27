@@ -861,7 +861,7 @@ GFS (Global Forecast System) — базовая модель всех профе
 - Горизонт: до 16 дней (уникально — больше всех остальных источников)
 - Добавить поле `Forecast16Days []Forecast` для долгосрочных рынков
 
-### TASK-093: CME HDD/CDD индексы — стандарт weather derivatives
+### [x] 2026-05-27 — TASK-093: CME HDD/CDD индексы — стандарт weather derivatives
 **Файл:** `internal/collectors/cme_degree_days.go`
 Chicago Mercantile Exchange публикует Heating/Cooling Degree Day индексы — именно по ним торгуются погодные деривативы на $4.6 млрд рынке:
 - HDD = max(0, 65°F - средняя_температура) — heating degree days
@@ -888,7 +888,7 @@ MTG-Sounder запущен SpaceX в июле 2025 — даёт 3D карты а
 - Особенно ценно для winter/storm рынков в Европе
 - Регистрация на EUMETSAT бесплатна
 
-### TASK-096: Wind shear профиль — ветер на разных высотах
+### [x] 2026-05-27 — TASK-096: Wind shear профиль — ветер на разных высотах
 **Файл:** `internal/collectors/wind_shear.go`
 Вертикальный сдвиг ветра — ключевой параметр для storm/hurricane рынков:
 - Фетчить из Open-Meteo: wind_speed_80m, wind_speed_120m, wind_speed_180m (hourly)
@@ -905,7 +905,7 @@ Speedwell Climate — институциональный провайдер дл
 - Использовать как ground truth для бэктеста temperature-based рынков
 - Бесплатный доступ к историческим данным через их портал
 
-### TASK-098: Apparent temperature — feels-like для всех городов (расширение TASK-084)
+### [x] 2026-05-27 — TASK-098: Apparent temperature — feels-like для всех городов (расширение TASK-084)
 **Файл:** `internal/collectors/aggregator.go` (обновить)
 Дополнить apparent temperature данными из нескольких источников:
 - Open-Meteo: apparent_temperature (уже есть в API, просто добавить)

@@ -50,7 +50,8 @@ type openMeteoResp struct {
 		PrecipitationProbabilityMax []float64 `json:"precipitation_probability_max"`
 		WindSpeed10MMax             []float64 `json:"wind_speed_10m_max"`
 		WeatherCode                 []int     `json:"weather_code"`
-		UVIndexMax                  []float64 `json:"uv_index_max"` // TASK-083
+		UVIndexMax                  []float64 `json:"uv_index_max"`           // TASK-083
+		ApparentTempMax             []float64 `json:"apparent_temperature_max"` // TASK-098
 	} `json:"daily"`
 }
 
@@ -66,7 +67,8 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 	url := fmt.Sprintf(
 		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"+
 			"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,"+
-			"precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max"+
+			"precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max,"+
+			"apparent_temperature_max"+ // TASK-098: feels-like max temperature
 			"&forecast_days=%d&timezone=UTC",
 		c.Lat, c.Lon, days,
 	)
@@ -89,16 +91,21 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 		if i < len(m.Daily.UVIndexMax) {
 			uvMax = m.Daily.UVIndexMax[i]
 		}
+		var apparentMax float64
+		if i < len(m.Daily.ApparentTempMax) {
+			apparentMax = m.Daily.ApparentTempMax[i]
+		}
 		out = append(out, Forecast{
-			City:                    city,
-			Date:                    date,
-			MaxTempC:                m.Daily.Temperature2MMax[i],
-			MinTempC:                m.Daily.Temperature2MMin[i],
-			PrecipitationMM:         m.Daily.PrecipitationSum[i],
+			City:                     city,
+			Date:                     date,
+			MaxTempC:                 m.Daily.Temperature2MMax[i],
+			MinTempC:                 m.Daily.Temperature2MMin[i],
+			PrecipitationMM:          m.Daily.PrecipitationSum[i],
 			PrecipitationProbability: m.Daily.PrecipitationProbabilityMax[i],
-			WindSpeedKMH:            m.Daily.WindSpeed10MMax[i],
-			WeatherCode:             m.Daily.WeatherCode[i],
-			UVIndexMax:              uvMax,
+			WindSpeedKMH:             m.Daily.WindSpeed10MMax[i],
+			WeatherCode:              m.Daily.WeatherCode[i],
+			UVIndexMax:               uvMax,
+			ApparentMaxTempC:         apparentMax, // TASK-098: from Open-Meteo directly
 		})
 	}
 	return out, nil

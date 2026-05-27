@@ -1100,3 +1100,48 @@
 **Сборка:** `go build ./...` — OK
 
 **Строк добавлено:** 158 (gfs.go) + ~25 (aggregator)
+
+---
+
+## 2026-05-27 — TASK-093: CME HDD/CDD indices
+
+**Файл:** `internal/collectors/cme_degree_days.go` (110 строк, новый)
+
+**Что сделано:**
+- `ComputeDegreeDays(f)` → HDD/CDD/AvgTempC по CME-определению (65°F = 18.33°C базис)
+- `ComputeAccumulatedDegreeDays(forecasts)` — накопленные HDD/CDD за период
+- `HeatProbabilityFromCDD()` и `ColdProbabilityFromHDD()` — вероятности для degree-day рынков
+- Константа `CMEBaselineTempC = 18.333°C`
+
+**Сборка:** `go build ./...` — OK
+
+**Строк добавлено:** 110
+
+---
+
+## 2026-05-27 — TASK-096: Wind shear profile
+
+**Файл:** `internal/collectors/wind_shear.go` (175 строк, новый)
+
+**Что сделано:**
+- `WindShearProfile` struct: Wind10M, Wind80M, Wind120M, Wind180M, ShearLow, ShearMid
+- `GetWindShearProfile(city)` — fetch wind_speed_80m/120m/180m из Open-Meteo hourly + 3h кэш
+- `WindShearBoost()` — буст 0..+0.20 для wind рынков при сильном shear (>20 km/h)
+- `WindShear(low, high)` — утилитарная функция
+- Интеграция в strategy: shear boost для wind рынков перед lightning boost
+
+**Строк добавлено:** 175
+
+---
+
+## 2026-05-27 — TASK-098: Apparent temperature from Open-Meteo
+
+**Файлы:** `internal/weather/weather.go`
+
+**Что сделано:**
+- Добавлен `apparent_temperature_max` в URL Open-Meteo daily request
+- Добавлено поле `ApparentTempMax` в `openMeteoResp.Daily` struct
+- `ApparentMaxTempC` теперь заполняется прямо из API (не только через формулу Steadman)
+- NASA POWER и агрегатор по-прежнему пересчитывают apparent temp для кросс-валидации
+
+**Строк добавлено:** ~15

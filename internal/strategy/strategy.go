@@ -365,6 +365,23 @@ func EvaluateFused(
 		}
 	}
 
+	// TASK-096: apply vertical wind shear boost for wind markets.
+	// Strong boundary-layer shear (180m vs 10m) indicates atmospheric coupling
+	// that amplifies surface gusts beyond what the 10m model output shows.
+	if m.Signal == "wind" {
+		shearProfile := collectors.GetWindShearProfile(m.City)
+		shearBoost := shearProfile.WindShearBoost()
+		if shearBoost > 0 {
+			alertForecast.WindSpeedKMH += shearBoost * 60.0
+			slog.Info("wind shear boost applied",
+				"city", m.City,
+				"shear_low_kmh", fmt.Sprintf("%.1f", shearProfile.ShearLow),
+				"boost", fmt.Sprintf("+%.0f%%", shearBoost*100),
+			)
+			sourceNote += fmt.Sprintf(" shear_boost=+%.0f%%(%.1fkm/h)", shearBoost*100, shearProfile.ShearLow)
+		}
+	}
+
 	// TASK-088: apply Blitzortung lightning risk boost for storm and wind markets.
 	// When LightningRisk > 0.30 (>10 strikes/30min within 200km) we nudge
 	// precipitation probability and wind speed to reflect active convection.
