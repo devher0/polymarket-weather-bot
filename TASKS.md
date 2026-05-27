@@ -870,7 +870,7 @@ Chicago Mercantile Exchange публикует Heating/Cooling Degree Day инд
 - Данные: https://www.cmegroup.com/markets/weather.html (парсить публичную страницу)
 - Или вычислять самостоятельно из наших прогнозов и сравнивать с CME settlement
 
-### TASK-094: NLDN + Vaisala — National Lightning Detection Network
+### [x] 2026-05-27 — TASK-094: NLDN + Vaisala — National Lightning Detection Network
 **Файл:** `internal/collectors/lightning_nldn.go`
 Vaisala NLDN — профессиональная сеть детекции молний, которую использует 45th Weather Squadron:
 - Публичный доступ через: https://www.weather.gov/lmk/lightning (NWS отображение)

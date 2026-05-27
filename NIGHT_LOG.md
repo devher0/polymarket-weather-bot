@@ -1162,3 +1162,15 @@
 - NASA POWER и агрегатор по-прежнему пересчитывают apparent temp для кросс-валидации
 
 **Строк добавлено:** ~15
+
+---
+
+## 2026-05-27 — TASK-094: NLDN + Vaisala lightning detection
+
+**Файлы изменены:**
+- `internal/collectors/lightning_nldn.go` (уже существовал, 149 строк) — NLDN-style статистика через Blitzortung feed
+- `internal/collectors/lightning_nldn_test.go` (новый, ~120 строк) — 4 unit-теста: brackets вероятности, zero-strike baseline, synthetic strike injection, cache TTL
+
+**Реализовано:** `NLDNSummary` (Lightning30m, Lightning1h, LightningTrend, StormProbability), кеш 5 мин, браккеты storm probability по NWS aviation thresholds (>100 уд/ч → 0.90, >50 → 0.70, >10 → 0.40).
+
+**Строк добавлено:** ~120 (тесты)
