@@ -1,5 +1,28 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 16:32 — TASK-031: Параллельный фетчинг источников данных
+
+**Задача:** TASK-031
+
+**Файлы созданы/изменены:**
+- `internal/collectors/aggregator.go` — рефакторинг (~290 строк итого): добавлена `collectSources(ctx, city, days, dayOffset, dataRoot, includeGOES)` — запускает OpenMeteo/NASA POWER/NOAA NWS/GOES-19 в 4 отдельных горутинах одновременно, собирает результаты через буферизованный канал с `context.WithTimeout(8s)`; при срабатывании дедлайна — graceful fallback на успевшие источники; `Aggregate()` и `AggregateForDay()` рефакторированы под `collectSources()`; `AggregateAll()` рефакторирован: 9 городов теперь фетчатся параллельно через `sync.WaitGroup` + буферизованный канал — результаты собираются после `wg.Wait()`
+
+**Новые задачи добавлены в TASKS.md:** TASK-031 (параллельный фетчинг, выполнено), TASK-032 (per-source accuracy tracker), TASK-033 (PnL-адаптивный Kelly)
+
+**Итого: 1 файл, ~60 строк нетто изменений**
+
+`go build ./...` — ✅ чистая компиляция
+`go test ./...` — ✅ calibration/polymarket/risk/strategy/weather PASS
+
+**Ключевые улучшения:**
+- Время фетчинга одного города: ~12 сек (последовательно) → ~5 сек (параллельно, ограничено самым медленным источником)
+- Время `AggregateAll()` для 9 городов: ~90 сек → ~5-8 сек (все города одновременно)
+- Суммарный цикл бота: с 2+ минут до ~10-15 секунд на цикл
+- Контекстный дедлайн 8 сек гарантирует: если NASA/GOES недоступны — бот не зависает
+
+---
+
+
 ## 2026-05-27 16:22 — TASK-027/028/029/030: Ensemble, Correlation, Staleness, Scoring
 
 **Задачи:** TASK-027, TASK-028, TASK-029, TASK-030

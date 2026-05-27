@@ -258,6 +258,33 @@ type FusedForecast struct {
 
 ---
 
+## 🔴 ПРИОРИТЕТ 8 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-031: Параллельный фетчинг источников данных в aggregator
+**Файл:** `internal/collectors/aggregator.go` (обновить)
+- Сейчас: 4 HTTP-вызова последовательные → 8-12 сек на цикл
+- Рефакторить: `collectSources()` запускает OpenMeteo/NASA/NOAA/GOES в отдельных горутинах одновременно
+- Context timeout 8 сек: если источник не ответил — graceful fallback на доступные
+- `AggregateAll()` тоже параллелизовать: все 9 городов одновременно (с `errgroup`)
+- Результат: цикл бота должен занимать ~3-5 сек вместо 30-60 сек
+
+### [ ] TASK-032: Per-source accuracy tracker — динамические веса по точности
+**Файл:** `internal/collectors/source_accuracy.go` (новый), `internal/collectors/aggregator.go` (обновить)
+- После resolve рынка — сохранять какой источник был ближе к исходу в `data/source_accuracy.json`
+- `LoadSourceAccuracy(dataRoot)` → map[source]AccuracyStats{Count, BrierSum}
+- `DynamicWeights(accuracy)` → пересчитывать веса: если NASA стабильно точнее OpenMeteo — поднять его вес
+- Минимальный вес = 0.05 (не выключать источник полностью при недостатке данных < 10 бетов)
+- Обновлять веса раз в цикл, логировать "dynamic weights: openmeteo=0.38 nasa=0.31 ..."
+
+### [ ] TASK-033: PnL-адаптивный Kelly — масштабировать bankroll по Brier score
+**Файл:** `internal/calibration/calibration.go` (обновить), `internal/strategy/strategy.go` (обновить)
+- `BankrollMultiplier(brierScore float64) float64` — если score < 0.10 → 1.5x, если > 0.22 → 0.5x, иначе линейно
+- Передавать скорректированный bankroll в EvaluateFused/Evaluate вместо фиксированного
+- Загружать Brier score при старте и передавать через config или параметр
+- Лимит: multiplier clamped [0.25, 2.0]
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config
