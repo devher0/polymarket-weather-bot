@@ -599,3 +599,33 @@ type FusedForecast struct {
 - Score = clamp((maxTemp - rolling_avg) / (2 * rolling_stddev), 0, 1) для heat
 - В aggregator: если anomalyScore > 0.7 → boost confidence: ff.Confidence = max(ff.Confidence, 0.70)
 - Логировать "climate anomaly: city=X maxTemp=39°C norm=28°C score=0.85 → confidence boosted"
+
+---
+
+## 🔴 ПРИОРИТЕТ 17 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-065: Market loss blacklist — не входить повторно в рынки где недавно проиграли
+**Файлы:** `internal/markets/blacklist.go` (новый), `cmd/bot/main.go` (обновить), `config/config.go` (обновить)
+- После резолва проигрышной ставки — добавить conditionID в `data/blacklist.json` на N дней (default=5)
+- `LoadBlacklist`, `IsBlacklisted`, `AddToBlacklist`, `PurgeExpired`, `SaveBlacklist`
+- В cmd/bot/main.go: после загрузки истории — автообновление blacklist из lost bets; перед оценкой рынка — проверить IsBlacklisted
+- Конфиг: `loss_blacklist_days` (yaml) / `LOSS_BLACKLIST_DAYS` (env), default=5
+- Логировать "blacklisted: market {conditionID} until {date}"
+
+### [x] 2026-05-27 — TASK-066: Adaptive min_edge — динамический порог входа по rolling Brier score
+**Файлы:** `internal/calibration/adaptive_edge.go` (новый), `cmd/bot/main.go` (обновить)
+- Rolling window: последние 20 разрешённых ставок
+- Brier < 0.10 → factor 0.90 (расслабить на 10%); Brier > 0.22 → factor 1.20 (ужесточить на 20%)
+- Линейная интерполяция между крайними значениями
+- Результат зажат в [base × 0.75, base × 1.50]
+- Нужно минимум 5 разрешённых ставок — иначе возвращать base без изменений
+- Логировать "adaptive min_edge: base=0.05 rolling_brier=0.09 factor=0.90 adjusted=0.045"
+
+### [x] 2026-05-27 — TASK-069: Peak drawdown circuit-breaker — снижать ставки при просадке
+**Файлы:** `internal/calibration/drawdown.go` (новый), `cmd/bot/main.go` (обновить), `config/config.go` (обновить)
+- Отслеживать максимальный bankroll за всё время в `data/bankroll_peak.json`
+- Просадка < 10% → multiplier 1.00 (без изменений)
+- Просадка 10–30% → линейно от 1.00 до 0.20
+- Просадка > 30% → multiplier 0.20 (защитный минимум)
+- Конфиг: `max_drawdown_fraction` (yaml) / `MAX_DRAWDOWN_FRACTION` (env), default=0.30
+- Логировать "drawdown guard: peak=X current=Y drawdown=Z% mult=M"

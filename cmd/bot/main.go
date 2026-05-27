@@ -334,6 +334,23 @@ func main() {
 			history = nil
 		}
 
+		// TASK-065: build/refresh the market loss blacklist from recent lost bets.
+		// Any bet resolved as a loss within the last LossBlacklistDays days is added.
+		if cfg.LossBlacklistDays > 0 {
+			for _, r := range history {
+				if r.Outcome != nil && !*r.Outcome {
+					age := time.Since(r.ResolvedAt)
+					if age < time.Duration(cfg.LossBlacklistDays)*24*time.Hour {
+						_ = markets.AddToBlacklist(r.ConditionID, r.City, r.Signal, cfg.LossBlacklistDays, cfg.DataRoot)
+					}
+				}
+			}
+		}
+		blacklist := markets.LoadBlacklist(cfg.DataRoot)
+		if len(blacklist) > 0 {
+			slog.Info("blacklist loaded", "active_entries", len(blacklist))
+		}
+
 		// TASK-044: load persisted bankroll (updated across sessions via bankroll.json).
 		// Apply the Brier-score multiplier on top of the persisted amount so that
 		// a well-calibrated bot naturally bets larger as it proves itself.
@@ -347,6 +364,34 @@ func main() {
 			"multiplier", fmt.Sprintf("%.2f", bankrollMultiplier),
 			"effective", fmt.Sprintf("%.2f USDC", effectiveBankroll),
 		)
+
+		// TASK-069: peak drawdown circuit-breaker.
+		// Update the all-time peak, then reduce effectiveBankroll if we are in a
+		// significant drawdown. This scales down bet sizes automatically without
+		// halting the bot entirely.
+		peakBankroll, _ := calibration.UpdatePeakBankroll(baseBankroll, cfg.DataRoot)
+		drawdownFrac := calibration.DrawdownFraction(peakBankroll, baseBankroll)
+		drawdownMult := calibration.DrawdownMultiplier(drawdownFrac, cfg.MaxDrawdownFraction)
+		if drawdownMult < 1.0 {
+			calibration.LogDrawdown(peakBankroll, baseBankroll)
+			effectiveBankroll *= drawdownMult
+			slog.Warn("drawdown guard: bet sizes reduced",
+				"drawdown_pct", fmt.Sprintf("%.1f%%", drawdownFrac*100),
+				"drawdown_mult", fmt.Sprintf("%.2f", drawdownMult),
+				"effective_bankroll", fmt.Sprintf("%.2f USDC", effectiveBankroll),
+			)
+		}
+
+		// TASK-066: compute adaptive min_edge based on rolling Brier performance.
+		// This relaxes the threshold when we're well-calibrated and tightens it
+		// when recent performance has been poor.
+		adaptiveMinEdge := calibration.AdaptiveMinEdge(history, cfg.MinEdge)
+		if adaptiveMinEdge != cfg.MinEdge {
+			slog.Info("adaptive min_edge applied",
+				"base", cfg.MinEdge,
+				"adjusted", fmt.Sprintf("%.4f", adaptiveMinEdge),
+			)
+		}
 
 		// Risk summary at cycle start.
 		slog.Info(risk.Summary(history, risk.Config{
@@ -587,6 +632,17 @@ func main() {
 				continue
 			}
 
+			// TASK-065: skip markets on the loss blacklist.
+			if cfg.LossBlacklistDays > 0 {
+				if bl, until := markets.IsBlacklisted(m.ConditionID, blacklist); bl {
+					slog.Info("skipped: loss-blacklisted market",
+						"conditionID", m.ConditionID,
+						"until", until.Format(time.DateOnly),
+						"question", truncate(m.Question, 60))
+					continue
+				}
+			}
+
 			// TASK-028: skip if a correlated city has already been bet this cycle.
 			if corr, reason := risk.CorrelatedCitiesOpen(m, placedThisCycle); corr {
 				slog.Info("skipped: "+reason, "conditionID", m.ConditionID)
@@ -602,7 +658,7 @@ func main() {
 
 			var d *strategy.Decision
 			if ff != nil {
-				d = strategy.EvaluateFused(m, ff, effectiveBankroll, cfg.MinEdge, cfg.MaxBet, cfg.DataRoot)
+				d = strategy.EvaluateFused(m, ff, effectiveBankroll, adaptiveMinEdge, cfg.MaxBet, cfg.DataRoot)
 			}
 			if d == nil {
 				d = strategy.Evaluate(m, legacyForecasts, effectiveBankroll, cfg.MinEdge, cfg.MaxBet)
