@@ -1,5 +1,28 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 16:12 — TASK-026: Risk Manager — дневные лимиты потерь
+
+**Задача:** TASK-026
+
+**Файлы созданы/изменены:**
+- `internal/risk/risk.go` — НОВЫЙ (~115 строк): пакет `risk`; `Manager.AllowBet(records)` — проверка 3 лимитов (daily bet cap, daily P&L loss limit, open-position cap); `DailyStats()` — подсчёт сегодняшних ставок и realised P&L; `OpenPositionsCount()` — счётчик open positions; `Summary()` — однострочный риск-статус для лога
+- `internal/risk/risk_test.go` — НОВЫЙ (~165 строк): 13 unit-тестов — empty history, yesterday bets ignored, today mix (win+unresolved), loss P&L, cap edge cases, zero limits = unlimited, Summary fields
+- `config/config.go` — добавлены поля `MaxDailyLossUSDC`, `MaxDailyBets`, `MaxOpenPositions` в struct + defaults (50/20/30) + ENV overlay (MAX_DAILY_LOSS_USDC, MAX_DAILY_BETS, MAX_OPEN_POSITIONS)
+- `config/config.yaml` — секция `── Risk management ──` с документированными полями
+- `cmd/bot/main.go` — инициализация `riskMgr` из cfg; `LoadHistory()` заменяет `LoadOpenPositions()` (один вызов для dedup + risk); risk.Summary() в лог каждого цикла; pre-cycle gate (весь цикл пропускается) + per-bet gate (break loop при срабатывании)
+
+**Итого: 5 файлов, ~270 строк нетто**
+
+`go build ./...` — ✅  `go test ./...` — ✅ (13 новых тестов + все предыдущие PASS)
+
+**Ключевые улучшения:**
+- При 20+ ставках за день — бот автоматически замолкает до следующего UTC-дня
+- При убытке >50 USDC за день — весь цикл пропускается с логом "risk gate blocked entire cycle"
+- При ≥30 открытых позициях — per-bet check ломает цикл (`break`), не тратит API calls
+- Риск-статус виден в каждом цикле: `risk [daily_bets=3 daily_pnl=+2.50 USDC open=7 | limits: ...]`
+
+**Новые задачи добавлены в TASKS.md:** TASK-027 (ensemble uncertainty), TASK-028 (correlation guard), TASK-029 (staleness guard), TASK-030 (market score ranking)
+
 ## 2026-05-27 16:10 — TASK-023, 024, 025: Liquidity filter, Graceful shutdown, Extreme weather confidence
 
 **Задачи:** TASK-023, TASK-024, TASK-025
