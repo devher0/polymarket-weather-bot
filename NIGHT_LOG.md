@@ -701,3 +701,27 @@
 **Сборка:** `go build ./...` — OK (0 ошибок)
 
 **Строк добавлено:** ~210
+
+---
+
+## 2026-05-27 18:58 UTC — TASK-065, TASK-066, TASK-069
+
+**Задачи:** TASK-065 (Market loss blacklist), TASK-066 (Adaptive min_edge), TASK-069 (Peak drawdown circuit-breaker)
+
+**Контекст:** все предыдущие задачи (TASK-001 – TASK-064) выполнены. Добавлены новые задачи ПРИОРИТЕТ 17 и сразу реализованы.
+
+**Файлы созданы/изменены:**
+- `internal/markets/blacklist.go` — НОВЫЙ (~115 строк): `BlacklistEntry` struct; `LoadBlacklist` (читает `data/blacklist.json`, удаляет просроченные); `PurgeExpired`; `IsBlacklisted(conditionID, blacklist) (bool, time.Time)`; `AddToBlacklist(conditionID, city, signal, days, dataRoot)` — заменяет существующую запись, сохраняет; `SaveBlacklist`
+- `internal/calibration/adaptive_edge.go` — НОВЫЙ (~80 строк): `AdaptiveMinEdge(records, baseMinEdge)` — rolling Brier score за последние 20 разрешённых ставок → factor 0.90 (хорошо) до 1.20 (плохо); минимум 5 ставок для активации; результат зажат в [base×0.75, base×1.50]
+- `internal/calibration/drawdown.go` — НОВЫЙ (~110 строк): `LoadPeakBankroll/UpdatePeakBankroll` (файл `data/bankroll_peak.json`); `DrawdownFraction(peak, current)`; `DrawdownMultiplier(fraction, maxFraction)` — <10%→1.00, linear→0.20 на пороге, min 0.20; `LogDrawdown`
+- `config/config.go` — добавлены поля `LossBlacklistDays int` (default=5, env `LOSS_BLACKLIST_DAYS`) и `MaxDrawdownFraction float64` (default=0.30, env `MAX_DRAWDOWN_FRACTION`); ~10 строк
+- `cmd/bot/main.go` — (~55 строк нетто): в начале цикла: (1) сканирует историю на lost bets < N дней → `AddToBlacklist`; (2) загружает blacklist; (3) `UpdatePeakBankroll` + `DrawdownMultiplier` → масштабирует `effectiveBankroll`; (4) `AdaptiveMinEdge` → `adaptiveMinEdge`; в цикле оценки: TASK-065 guard `IsBlacklisted` перед allowed-open-positions check; `EvaluateFused` теперь использует `adaptiveMinEdge`
+
+**Ключевые эффекты:**
+- TASK-065: если рынок проигран — он блокируется на 5 дней (по умолчанию), избегая повторных ошибок на тех же условиях
+- TASK-066: при rolling Brier < 0.10 порог входа снижается до 0.045 (было 0.05); при Brier > 0.22 — повышается до 0.06+; автоматически адаптируется к качеству прогнозов
+- TASK-069: если bankroll упал на >30% от пика — ставки масштабируются до минимума 20% от базы; это circuit-breaker без полной остановки торговли
+
+**Тесты:** `go test ./...` — all OK (8 пакетов), `go build ./...` — OK, pushed to GitHub
+
+**Строк добавлено:** ~370 (новые файлы: ~305, изменения: ~65)
