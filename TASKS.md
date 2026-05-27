@@ -841,3 +841,74 @@ CAPE (Convective Available Potential Energy) — лучший физически
 - LaunchRules compliance — 11 официальных Launch Commit Criteria
 - Использовать для storm/wind/rain рынков: низкий compliance % → высокий риск плохой погоды
 - Если парсинг недоступен — graceful skip
+
+### TASK-091: ECMWF AIFS — лучшая мировая AI-модель прогноза
+**Файл:** `internal/collectors/ecmwf_aifs.go`
+С октября 2025 ECMWF открыл полный доступ к данным IFS + AIFS (AI Forecasting System).
+AIFS обгоняет классические модели на 5-15% по точности, лучше предсказывает тропические циклоны:
+- URL: https://data.ecmwf.int/forecasts/ (open data, без ключа)
+- Параметры: 2m_temperature, total_precipitation, 10m_wind_speed, mean_sea_level_pressure
+- Горизонт: до 10 дней, 6-часовые шаги
+- Добавить как источник с весом 0.25, повысить до первого места по весу
+- Graceful fallback если ECMWF API недоступен
+
+### TASK-092: NOAA GFS — глобальный прогноз 16 дней
+**Файл:** `internal/collectors/gfs.go`
+GFS (Global Forecast System) — базовая модель всех профессиональных weather трейдеров:
+- Через Open-Meteo: `?models=gfs_seamless` — уже агрегирует GFS
+- Или напрямую: NOAA NOMADS https://nomads.ncep.noaa.gov/
+- Параметры: temperature, precipitation, wind, convective_inhibition
+- Горизонт: до 16 дней (уникально — больше всех остальных источников)
+- Добавить поле `Forecast16Days []Forecast` для долгосрочных рынков
+
+### TASK-093: CME HDD/CDD индексы — стандарт weather derivatives
+**Файл:** `internal/collectors/cme_degree_days.go`
+Chicago Mercantile Exchange публикует Heating/Cooling Degree Day индексы — именно по ним торгуются погодные деривативы на $4.6 млрд рынке:
+- HDD = max(0, 65°F - средняя_температура) — heating degree days
+- CDD = max(0, средняя_температура - 65°F) — cooling degree days
+- Использовать для рынков с формулировкой "average temperature above/below X"
+- Данные: https://www.cmegroup.com/markets/weather.html (парсить публичную страницу)
+- Или вычислять самостоятельно из наших прогнозов и сравнивать с CME settlement
+
+### TASK-094: NLDN + Vaisala — National Lightning Detection Network
+**Файл:** `internal/collectors/lightning_nldn.go`
+Vaisala NLDN — профессиональная сеть детекции молний, которую использует 45th Weather Squadron:
+- Публичный доступ через: https://www.weather.gov/lmk/lightning (NWS отображение)
+- Или через Blitzortung API как альтернатива (TASK-088)
+- Cloud-to-ground strikes в radius 300км, за последний час
+- Lightning30min, Lightning1h, LightningTrend (растёт/падает)
+- Storm probability: >100 ударов/час = 0.90, >50 = 0.70, >10 = 0.40
+
+### TASK-095: ESA MTG-S1 — новый европейский спутник (запущен SpaceX июль 2025)
+**Файл:** `internal/collectors/esa_mtg.go`
+MTG-Sounder запущен SpaceX в июле 2025 — даёт 3D карты атмосферы над Европой и Африкой:
+- Покрытие: Лондон, Париж, Берлин — наши европейские города
+- Данные через Copernicus EUMETSAT: https://data.eumetsat.int
+- Атмосферный профиль: температура и влажность на 100+ уровнях высоты
+- Особенно ценно для winter/storm рынков в Европе
+- Регистрация на EUMETSAT бесплатна
+
+### TASK-096: Wind shear профиль — ветер на разных высотах
+**Файл:** `internal/collectors/wind_shear.go`
+Вертикальный сдвиг ветра — ключевой параметр для storm/hurricane рынков:
+- Фетчить из Open-Meteo: wind_speed_80m, wind_speed_120m, wind_speed_180m (hourly)
+- WindShear(low, high float64) float64 — разница скоростей между слоями
+- Высокий shear (>30 km/h между 10m и 180m) → подавляет торнадо, но усиливает обычные шторма
+- Добавить в wind/storm signal как модификатор вероятности
+- Критично для: "Will wind speed exceed X in Chicago?" (город у озера, сильный shear)
+
+### TASK-097: Speedwell Climate HDD/CDD settlement data
+**Файл:** `internal/collectors/speedwell.go`
+Speedwell Climate — институциональный провайдер для weather derivatives трейдеров:
+- Публичные исторические HDD/CDD индексы: https://portal.speedwellclimate.com
+- Парсить исторические значения для калибровки наших temperature рынков
+- Использовать как ground truth для бэктеста temperature-based рынков
+- Бесплатный доступ к историческим данным через их портал
+
+### TASK-098: Apparent temperature — feels-like для всех городов (расширение TASK-084)
+**Файл:** `internal/collectors/aggregator.go` (обновить)
+Дополнить apparent temperature данными из нескольких источников:
+- Open-Meteo: apparent_temperature (уже есть в API, просто добавить)
+- NASA POWER: уже есть RH2M для расчёта heat index
+- Сравнивать apparent_temperature из разных источников для confidence
+- Рынки типа "feels like above 105°F in Phoenix" — точность +15%
