@@ -153,6 +153,7 @@ func NASAGetForecast(city string, days int) ([]weather.Forecast, error) {
 			PrecipitationProbability: precipProb,
 			WindSpeedKMH:             windKMH,
 			WeatherCode:              nasaWeatherCode(precipMM, maxT, windKMH),
+			HumidityPct:              rhPct, // TASK-084: RH2M from NASA POWER
 		})
 	}
 

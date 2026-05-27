@@ -185,9 +185,19 @@ func ComputeOurP(m markets.Market, f weather.Forecast) float64 {
 	case "rain":
 		p = weather.RainProbability(f)
 	case "heat":
-		p = weather.HeatProbability(f, heatThreshold)
+		// TASK-084: use apparent temperature (heat index) when hot+humid.
+		heatF := f
+		if f.HumidityPct > 50 && f.ApparentMaxTempC > 0 {
+			heatF.MaxTempC = f.ApparentMaxTempC
+		}
+		p = weather.HeatProbability(heatF, heatThreshold)
 	case "cold":
-		p = 1 - weather.HeatProbability(f, coldThreshold)
+		// TASK-084: apparent temperature may be colder than dry-bulb (wind chill).
+		coldF := f
+		if f.HumidityPct > 50 && f.ApparentMaxTempC > 0 {
+			coldF.MaxTempC = f.ApparentMaxTempC
+		}
+		p = 1 - weather.HeatProbability(coldF, coldThreshold)
 	case "snow":
 		p = (1 - weather.HeatProbability(f, 2.0)) * weather.RainProbability(f) * 0.8
 	case "wind":
@@ -458,9 +468,19 @@ func evaluate(
 	case "rain":
 		ourP = weather.RainProbability(f)
 	case "heat":
-		ourP = weather.HeatProbability(f, heatThreshold)
+		// TASK-084: use apparent temperature (heat index) when hot+humid.
+		heatF := f
+		if f.HumidityPct > 50 && f.ApparentMaxTempC > 0 {
+			heatF.MaxTempC = f.ApparentMaxTempC
+		}
+		ourP = weather.HeatProbability(heatF, heatThreshold)
 	case "cold":
-		ourP = 1 - weather.HeatProbability(f, coldThreshold)
+		// TASK-084: apparent temperature may be colder than dry-bulb (wind chill).
+		coldF := f
+		if f.HumidityPct > 50 && f.ApparentMaxTempC > 0 {
+			coldF.MaxTempC = f.ApparentMaxTempC
+		}
+		ourP = 1 - weather.HeatProbability(coldF, coldThreshold)
 	case "snow":
 		coldP := 1 - weather.HeatProbability(f, 2.0)
 		ourP = coldP * weather.RainProbability(f) * 0.8

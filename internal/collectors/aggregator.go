@@ -266,6 +266,10 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		wPrecipP float64
 		wWind    float64
 		wCode    float64
+		// TASK-084: humidity — only average from sources that have non-zero RH data
+		// (currently only NASA POWER provides RH2M).
+		wHumidity     float64
+		humidityWt    float64
 
 		sourceNames []string
 		precipProbs []float64 // for confidence calc
@@ -298,6 +302,17 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		wWind += r.forecast.WindSpeedKMH * w
 		wCode += float64(r.forecast.WeatherCode) * w
 		precipProbs = append(precipProbs, r.forecast.PrecipitationProbability/100.0)
+		// TASK-084: accumulate humidity only from sources that have valid RH data.
+		if r.forecast.HumidityPct > 0 {
+			wHumidity += r.forecast.HumidityPct * r.weight
+			humidityWt += r.weight
+		}
+	}
+
+	// TASK-084: compute fused humidity (only from contributing sources).
+	fusedHumidity := 0.0
+	if humidityWt > 0 {
+		fusedHumidity = wHumidity / humidityWt
 	}
 
 	// Pick representative date from highest-weight source.
@@ -326,6 +341,9 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		perSourceForecasts[r.name] = r.forecast
 	}
 
+	// TASK-084: compute apparent max temperature from fused values.
+	apparentMaxT := weather.ApparentTempC(wMaxTemp, fusedHumidity, wWind)
+
 	fused := &FusedForecast{
 		Forecast: weather.Forecast{
 			City:                     city,
@@ -336,6 +354,8 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 			PrecipitationProbability: wPrecipP,
 			WindSpeedKMH:             wWind,
 			WeatherCode:              int(math.Round(wCode)),
+			HumidityPct:              fusedHumidity,   // TASK-084
+			ApparentMaxTempC:         apparentMaxT,    // TASK-084
 		},
 		Confidence:         confidence,
 		Sources:            sourceNames,

@@ -26,22 +26,24 @@ type HourlyPoint struct {
 	Time        time.Time
 	TempC       float64
 	PrecipMM    float64
-	PrecipProb  float64 // 0–100 %
+	PrecipProb  float64  // 0–100 %
 	WindKMH     float64
-	CloudCover  float64 // 0–100 %
+	CloudCover  float64  // 0–100 %
 	WeatherCode int
+	PressureHPa float64  // TASK-085: surface pressure in hPa (hectopascals); 0 if unavailable
 }
 
 // openMeteoHourlyResp is the JSON envelope returned by the Open-Meteo hourly API.
 type openMeteoHourlyResp struct {
 	Hourly struct {
-		Time          []string  `json:"time"`
-		Temperature2M []float64 `json:"temperature_2m"`
-		Precipitation []float64 `json:"precipitation"`
-		PrecipProb    []float64 `json:"precipitation_probability"`
-		WindSpeed10M  []float64 `json:"wind_speed_10m"`
-		CloudCover    []float64 `json:"cloud_cover"`
-		WeatherCode   []int     `json:"weather_code"`
+		Time            []string  `json:"time"`
+		Temperature2M   []float64 `json:"temperature_2m"`
+		Precipitation   []float64 `json:"precipitation"`
+		PrecipProb      []float64 `json:"precipitation_probability"`
+		WindSpeed10M    []float64 `json:"wind_speed_10m"`
+		CloudCover      []float64 `json:"cloud_cover"`
+		WeatherCode     []int     `json:"weather_code"`
+		SurfacePressure []float64 `json:"surface_pressure"` // TASK-085: hPa
 	} `json:"hourly"`
 }
 
@@ -66,7 +68,7 @@ func FetchHourlyForecast(city string, days int) ([]HourlyPoint, error) {
 		"https://api.open-meteo.com/v1/forecast"+
 			"?latitude=%.4f&longitude=%.4f"+
 			"&hourly=temperature_2m,precipitation,precipitation_probability,"+
-			"wind_speed_10m,cloud_cover,weather_code"+
+			"wind_speed_10m,cloud_cover,weather_code,surface_pressure"+ // TASK-085: added surface_pressure
 			"&forecast_days=%d&timezone=UTC",
 		c.Lat, c.Lon, days,
 	)
@@ -119,6 +121,7 @@ func FetchHourlyForecast(city string, days int) ([]HourlyPoint, error) {
 			WindKMH:     safeFloat(m.Hourly.WindSpeed10M, i),
 			CloudCover:  safeFloat(m.Hourly.CloudCover, i),
 			WeatherCode: safeInt(m.Hourly.WeatherCode, i),
+			PressureHPa: safeFloat(m.Hourly.SurfacePressure, i), // TASK-085
 		})
 	}
 
@@ -243,6 +246,70 @@ func RainWindowProbability(points []HourlyPoint, fromUTC, toUTC time.Time) float
 	return hourlyRainProbability(windowed)
 }
 
+// PressureTrendBoost analyses the last 6 hourly pressure readings and returns
+// a probability adjustment for the precipitation forecast.
+//
+// Physical basis: a falling pressure front indicates an approaching low-pressure
+// system → increased rain probability; rising pressure signals clearing skies.
+//
+// Returns:
+//   +0.08 when pressure falls  > 2 hPa / 3 h  (approaching front)
+//   −0.05 when pressure rises  > 2 hPa / 3 h  (clearing conditions)
+//    0    otherwise, or when pressure data is unavailable.
+//
+// TASK-085.
+func PressureTrendBoost(points []HourlyPoint) float64 {
+	n := len(points)
+	if n < 2 {
+		return 0
+	}
+	// Use at most the last 6 points.
+	start := n - 6
+	if start < 0 {
+		start = 0
+	}
+	window := points[start:]
+
+	// Verify that pressure data is present in this window.
+	hasPressure := false
+	for _, p := range window {
+		if p.PressureHPa > 0 {
+			hasPressure = true
+			break
+		}
+	}
+	if !hasPressure {
+		return 0
+	}
+
+	first := window[0]
+	last := window[len(window)-1]
+	hours := last.Time.Sub(first.Time).Hours()
+	if hours < 1 {
+		return 0
+	}
+
+	// Change per 3-hour period (matches NOAA surface analysis convention).
+	dPer3h := (last.PressureHPa - first.PressureHPa) / hours * 3.0
+
+	switch {
+	case dPer3h < -2.0:
+		slog.Info("pressure trend: rain boost applied",
+			"delta_hpa_per_3h", fmt.Sprintf("%.1f", dPer3h),
+			"boost", "+0.08",
+		)
+		return 0.08
+	case dPer3h > 2.0:
+		slog.Info("pressure trend: rain reduction applied",
+			"delta_hpa_per_3h", fmt.Sprintf("%.1f", dPer3h),
+			"boost", "-0.05",
+		)
+		return -0.05
+	default:
+		return 0
+	}
+}
+
 // RefineWithHourly overwrites key fields in a FusedForecast with higher-accuracy
 // intraday values derived from hourly data.
 //
@@ -266,6 +333,19 @@ func RefineWithHourly(ff *FusedForecast, points []HourlyPoint) {
 	newRainP := hourlyRainProbability(points)
 	newPrecip := hourlyTotalPrecip(points)
 	newWind := hourlyMaxWind(points)
+
+	// TASK-085: apply barometric pressure trend as a rain probability adjustment.
+	// A rapidly falling pressure front → boost; rising → mild reduction.
+	if pressureBoost := PressureTrendBoost(points); pressureBoost != 0 {
+		adjusted := newRainP + pressureBoost
+		if adjusted > 0.97 {
+			adjusted = 0.97
+		}
+		if adjusted < 0 {
+			adjusted = 0
+		}
+		newRainP = adjusted
+	}
 
 	// TASK-079: compute a business-hours rain window (06–18 UTC) so that
 	// same-day markets with early expiry get a more accurate probability.

@@ -770,7 +770,7 @@ type FusedForecast struct {
 - В `strategy.go ScoreMarket`: case "uv" → аналогично
 - Экспандирует рынки, которые бот может оценивать (пример: "Will UV index exceed 8 in Miami today?")
 
-### [ ] TASK-084: Apparent temperature — heat index / wind chill для heat/cold рынков
+### [x] 2026-05-27 — TASK-084: Apparent temperature — heat index / wind chill для heat/cold рынков
 **Файлы:** `internal/weather/apparent.go` (новый), `internal/collectors/aggregator.go` (обновить), `internal/collectors/nasa_power.go` (обновить)
 - `HeatIndexC(tempC, relHumidityPct float64) float64` — формула Steadman/Rothfusz (корректна при tempC>27, humidity>40%)
 - `WindChillC(tempC, windKMH float64) float64` — формула NOAA (корректна при tempC<10, wind>4.8 km/h)
@@ -780,7 +780,7 @@ type FusedForecast struct {
 - В `HeatProbability` / `ComputeOurP`: для сигнала "heat" использовать ApparentMaxTempC если humidity > 50%
 - Эффект: +5-10% точность для жаркихи/холодных рынков
 
-### [ ] TASK-085: Barometric pressure trend — физический сигнал для rain-рынков
+### [x] 2026-05-27 — TASK-085: Barometric pressure trend — физический сигнал для rain-рынков
 **Файлы:** `internal/collectors/openmeteo_hourly.go` (обновить), `internal/collectors/aggregator.go` (обновить)
 - Добавить `PressureHPa float64` в `HourlyPoint`
 - Фетчить `surface_pressure` в `FetchHourlyForecast()` из Open-Meteo hourly

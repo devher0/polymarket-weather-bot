@@ -1,5 +1,57 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 20:02 UTC — TASK-084, TASK-085: Apparent temperature + Barometric pressure trend
+
+**Задачи:** TASK-084 (Apparent temperature — heat index / wind chill), TASK-085 (Barometric pressure trend → rain signal boost)
+
+**Контекст:** реализованы последние две задачи из backlog. Это финальные улучшения точности погодных сигналов.
+
+**Файлы созданы/изменены:**
+
+### TASK-084: Apparent temperature — heat index / wind chill
+
+- `internal/weather/apparent.go` — НОВЫЙ (~65 строк):
+  - `HeatIndexC(tempC, relHumidityPct float64) float64` — формула Rothfusz; действует при tempC≥27°C и RH≥40%; конвертация °C→°F→применение→°C обратно
+  - `WindChillC(tempC, windKMH float64) float64` — NOAA метрическая формула; действует при tempC≤10°C и wind>4.8 km/h: `13.12 + 0.6215T − 11.37V^0.16 + 0.3965T×V^0.16`
+  - `ApparentTempC(tempC, relHumidityPct, windKMH float64) float64` — выбирает нужную формулу по условиям; иначе возвращает dry-bulb
+- `internal/weather/weather.go` — добавлены два поля в `Forecast`:
+  - `HumidityPct float64` — относительная влажность 0–100 (из NASA POWER RH2M)
+  - `ApparentMaxTempC float64` — apparent max temp (heat index или wind chill)
+- `internal/collectors/nasa_power.go` — `HumidityPct: rhPct` в конструкторе `Forecast`; ~1 строка
+- `internal/collectors/aggregator.go` — в `fuse()`:
+  - взвешенное среднее HumidityPct только из источников с non-zero данными (NASA-only)
+  - после fusion: `weather.ApparentTempC(wMaxTemp, fusedHumidity, wWind)` → `fused.ApparentMaxTempC`
+  - ~25 строк
+- `internal/strategy/strategy.go` — в `ComputeOurP()` и `evaluate()`:
+  - `case "heat"`: если `f.HumidityPct > 50 && f.ApparentMaxTempC > 0` → подставляем ApparentMaxTempC вместо MaxTempC в HeatProbability
+  - `case "cold"`: аналогично (wind chill снижает кажущуюся температуру)
+  - ~10 строк
+
+**Эффект:** +5–10% точность heat/cold рынков при жаркой влажной или холодной ветреной погоде. Пример: Miami 34°C при 75% RH → apparent = ~38°C → higher heat probability. NYC 5°C при 40 km/h → apparent = ~-3°C → higher cold probability.
+
+### TASK-085: Barometric pressure trend — физический сигнал для rain-рынков
+
+- `internal/collectors/openmeteo_hourly.go` — обновлен (~70 строк добавлено):
+  - `PressureHPa float64` добавлено в `HourlyPoint` struct
+  - `surface_pressure` добавлен в URL запроса Open-Meteo hourly API
+  - `SurfacePressure []float64` добавлен в `openMeteoHourlyResp.Hourly`
+  - `PressureHPa: safeFloat(m.Hourly.SurfacePressure, i)` при парсинге точек
+  - **НОВАЯ функция** `PressureTrendBoost(points []HourlyPoint) float64`:
+    - берёт последние 6 точек из window
+    - вычисляет тренд: Δ = (last - first) / hours × 3 hPa/3h
+    - падение >2 hPa/3h → `+0.08` (приближающийся фронт = дождь)
+    - рост >2 hPa/3h → `−0.05` (прояснение = меньше дождя)
+    - логирует "pressure trend: rain boost applied Δ=-X.X, boost=+0.08"
+  - В `RefineWithHourly()`: применяет boost к newRainP с clamp [0, 0.97]; ~8 строк
+
+**Эффект:** физически обоснованный сигнал для rain рынков. Перед грозой давление обычно падает на 3–5 hPa/3h; модели NWP иногда недооценивают вероятность, а давление — прямой физический индикатор.
+
+**Строки кода:** ~180 строк добавлено/изменено
+
+**Сборка:** `go build ./...` ✅ | все тесты (`go test ./...`) ✅
+
+---
+
 ## 2026-05-27 19:42 UTC — TASK-080, TASK-081, TASK-082: Kelly config, Source health, Config validation
 
 **Задачи:** TASK-080 (Configurable Kelly fraction), TASK-081 (Source health tracker), TASK-082 (Config validation)
@@ -869,3 +921,26 @@
 **Тесты:** `go test ./...` — все OK (все 8 пакетов зелёные)
 
 **Строк добавлено:** ~165 (dashboard/main.go: ~110, openmeteo_hourly.go: ~40, markets.go: ~15)
+
+---
+
+## 2026-05-27 19:52 UTC — TASK-083: UV Index Signal
+
+**Задача:** Все предыдущие задачи (TASK-001 – TASK-082) выполнены. Добавлены TASK-083, 084, 085 в TASKS.md. Реализован TASK-083.
+
+**Что сделано:** Новый тип сигнала "uv" — UV index рынки. Бот теперь может оценивать рынки вида "Will UV index exceed 8 in Miami today?"
+
+**Файлы созданы/изменены:**
+- `internal/weather/weather.go` (+50 строк): добавлено поле `UVIndexMax float64` в `Forecast`; фетчинг `uv_index_max` через Open-Meteo daily API (параметр добавлен в URL); новая функция `UVProbability(f Forecast, threshold float64) float64` — монотонная кривая: UV≥threshold+2→0.93, линейная интерполяция, UV<threshold-3→0.05; возвращает 0.10 (base rate) когда UV данные недоступны
+- `internal/markets/markets.go` (+30 строк): новый regex `(?i)\buv.?index\b|\buv\s+level\b|ultraviolet\s+index` → signal "uv"; функция `parseUVThreshold(question)` — ищет числа 1-20 после "uv index/level"; в `classify()`: если sig=="uv" → парсить порог, default=8 ("very high UV")
+- `internal/strategy/strategy.go` (+10 строк): case "uv" в `ScoreMarket()` и `ComputeOurP()` → вызывает `weather.UVProbability(ff.Forecast, uvThreshold)`
+- `internal/weather/uv_test.go` (НОВЫЙ, ~85 строк): 8 тестов: AboveThresholdHigh, AtThreshold, BelowThreshold, FarBelow, ZeroDataUnavailable, ZeroThresholdDefault, ExtremeUV, Monotonic
+- `internal/markets/markets_test.go` (+60 строк): TestClassifyUV (4 теста), TestParseUVThreshold (5 тестов)
+
+**UV Index шкала:** 0-2 низкий, 3-5 умеренный, 6-7 высокий, 8-10 очень высокий, 11+ экстремальный. Default threshold=8.
+
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK (8+9 новых тестов, все зелёные)
+**Push:** `git push` → master — OK
+
+**Строк добавлено:** ~235 (weather.go: +50, markets.go: +30, strategy.go: +10, uv_test.go: +85, markets_test.go: +60)

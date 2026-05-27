@@ -10,15 +10,17 @@ import (
 )
 
 type Forecast struct {
-	City                    string
-	Date                    string
-	MaxTempC                float64
-	MinTempC                float64
-	PrecipitationMM         float64
+	City                     string
+	Date                     string
+	MaxTempC                 float64
+	MinTempC                 float64
+	PrecipitationMM          float64
 	PrecipitationProbability float64 // 0–100
-	WindSpeedKMH            float64
-	WeatherCode             int
-	UVIndexMax              float64 // TASK-083: daily maximum UV index (0–12+); 0 if not available
+	WindSpeedKMH             float64
+	WeatherCode              int
+	UVIndexMax               float64 // TASK-083: daily maximum UV index (0–12+); 0 if not available
+	HumidityPct              float64 // TASK-084: relative humidity 0–100; populated from NASA POWER (RH2M) when available
+	ApparentMaxTempC         float64 // TASK-084: apparent ("feels like") max temp; heat index when humid, wind chill when cold+windy
 }
 
 type City struct {
