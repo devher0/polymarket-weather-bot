@@ -965,7 +965,7 @@ type SuperForecast struct {
 - Интегрировать в strategy: при ConsensusIndex < 0.3 → skip bet regardless of edge
 - При ConsensusIndex > 0.8 → увеличить Kelly fraction на 20%
 
-### TASK-103: Исторический базис — насколько каждый источник точен по городам
+### [x] 2026-05-27 — TASK-103: Исторический базис — насколько каждый источник точен по городам
 **Файл:** `internal/aggregation/source_accuracy.go` (расширить)
 Трекать точность каждого источника отдельно по каждому городу и сигналу:
 ```

@@ -1,5 +1,20 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-103: Исторический базис — per-source/city/signal accuracy
+
+**Файлы:** `internal/aggregation/source_accuracy.go` (215 строк), `internal/aggregation/source_accuracy_test.go` (165 строк)
+
+**Что сделано:**
+- `SourceAccuracyRegistry` — thread-safe реестр Brier score по (source, city, signal) ключам
+- `Record(source, city, signal, predicted, outcome)` — обновляет статистику после резолюции рынка
+- `Weight(source, city, signal)` — возвращает вес источника: domain baseline + эмпирическая поправка по Brier
+- Domain rules: NOAA+US+heat → 0.40, ECMWF+Europe+rain → 0.45, OpenMeteo global → 0.30
+- При N≥10 вес корректируется: `baseline × (1 − brierScore/0.25)`
+- `WeightedBeliefs(city, signal, preds)` — конвертирует веса в `[]SourceBelief` для BayesianEnsemble
+- `PrometheusLines()` — экспортирует `source_brier_score`, `source_observation_count`, `source_weight` метрики
+- `Summary()` — human-readable таблица всех отслеживаемых источников
+- 14 тестов, все зелёные
+
 ## 2026-05-27 — TASK-101: Gradient boosting калибровка (XGBoost-style в Go)
 
 **Файлы:** `internal/aggregation/gradient_boost.go` (290 строк), `internal/aggregation/gradient_boost_test.go` (115 строк)
