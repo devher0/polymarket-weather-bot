@@ -88,6 +88,117 @@ type dryRunOutput struct {
 	Decisions          []dryRunRecord `json:"decisions"`
 }
 
+// profitAlertsFile is the JSON file that tracks which condition IDs have
+// already received a profit-opportunity Telegram alert (TASK-061).
+const profitAlertsFile = "data/profit_alerts.json"
+
+// loadProfitAlerts reads the set of condition IDs that were already alerted.
+// Returns an empty map on any error or when the file doesn't exist.
+func loadProfitAlerts(dataRoot string) map[string]bool {
+	path := profitAlertsFile
+	if dataRoot != "" && dataRoot != "." {
+		path = dataRoot + "/" + profitAlertsFile
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]bool{}
+	}
+	var alerted []string
+	if err := json.Unmarshal(data, &alerted); err != nil {
+		return map[string]bool{}
+	}
+	m := make(map[string]bool, len(alerted))
+	for _, id := range alerted {
+		m[id] = true
+	}
+	return m
+}
+
+// saveProfitAlerts persists the set of alerted condition IDs to disk.
+func saveProfitAlerts(dataRoot string, alerted map[string]bool) {
+	path := profitAlertsFile
+	if dataRoot != "" && dataRoot != "." {
+		path = dataRoot + "/" + profitAlertsFile
+	}
+	ids := make([]string, 0, len(alerted))
+	for id := range alerted {
+		ids = append(ids, id)
+	}
+	data, err := json.Marshal(ids)
+	if err != nil {
+		slog.Warn("profit_alerts: marshal failed", "err", err)
+		return
+	}
+	if err := os.MkdirAll("data", 0o755); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// checkProfitAlerts scans open positions for profitable exits and sends
+// Telegram notifications for newly profitable ones (TASK-061).
+//
+// A position is flagged when the current price for our side is ≥0.25 higher
+// than our entry price (market_price field in BetRecord).
+// Each condition ID is alerted at most once (tracked in data/profit_alerts.json).
+func checkProfitAlerts(
+	history []calibration.BetRecord,
+	mktPrices map[string]markets.Market, // conditionID → market with current prices
+	dataRoot string,
+) {
+	alerted := loadProfitAlerts(dataRoot)
+	const profitThreshold = 0.25
+
+	changed := false
+	for _, rec := range history {
+		// Only open (unresolved) positions.
+		if rec.Outcome != nil {
+			continue
+		}
+		// Already alerted for this position.
+		if alerted[rec.ConditionID] {
+			continue
+		}
+		m, ok := mktPrices[rec.ConditionID]
+		if !ok {
+			continue
+		}
+		// Determine current price for our side.
+		var currentPrice float64
+		switch rec.Side {
+		case "YES":
+			currentPrice = m.YesPrice
+		case "NO":
+			currentPrice = m.NoPrice
+		default:
+			continue
+		}
+		// Entry price is the market price recorded at bet time.
+		entry := rec.MarketPrice
+		if entry <= 0 {
+			continue
+		}
+		gain := currentPrice - entry
+		if gain >= profitThreshold {
+			slog.Info("profit opportunity detected",
+				"conditionID", rec.ConditionID,
+				"side", rec.Side,
+				"entry", fmt.Sprintf("%.2f", entry),
+				"current", fmt.Sprintf("%.2f", currentPrice),
+				"gain", fmt.Sprintf("%.2f", gain),
+			)
+			if err := notifier.NotifyProfitOpportunity(rec.ConditionID, rec.Side, entry, currentPrice); err != nil {
+				slog.Warn("profit alert send failed", "conditionID", rec.ConditionID, "err", err)
+			}
+			alerted[rec.ConditionID] = true
+			changed = true
+		}
+	}
+
+	if changed {
+		saveProfitAlerts(dataRoot, alerted)
+	}
+}
+
 func main() {
 	live            := flag.Bool("live", false, "Disable dry-run (real money)")
 	loopFlag        := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once; overrides config)")
@@ -359,6 +470,16 @@ func main() {
 			if len(openTokens) > 0 {
 				markets.SnapshotOpenPositions(openTokens, cfg.DataRoot)
 			}
+		}
+
+		// TASK-061: check profit-taking opportunities for all open positions.
+		// Build a lookup map from conditionID to current Market prices.
+		{
+			mktByCondID := make(map[string]markets.Market, len(mkt))
+			for _, m := range mkt {
+				mktByCondID[m.ConditionID] = m
+			}
+			checkProfitAlerts(history, mktByCondID, cfg.DataRoot)
 		}
 
 		// 4. Enrich markets with liquidity data (order book depth).

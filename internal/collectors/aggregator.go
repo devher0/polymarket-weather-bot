@@ -324,6 +324,46 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 	return fused
 }
 
+// confidenceDecayFactors maps dayOffset to a multiplicative decay factor.
+// Based on typical NWP skill decay: near-perfect at day 0-1, significantly
+// degraded by day 5-6. (TASK-062)
+var confidenceDecayFactors = [7]float64{
+	1.00, // day 0 — today
+	1.00, // day 1 — tomorrow (still very reliable)
+	0.95, // day 2
+	0.88, // day 3
+	0.78, // day 4
+	0.65, // day 5
+	0.55, // day 6
+}
+
+// applyConfidenceDecay adjusts ff.Confidence using the day-offset decay table.
+// The raw confidence and adjusted value are logged for auditability (TASK-062).
+func applyConfidenceDecay(ff *FusedForecast, dayOffset int) {
+	if ff == nil {
+		return
+	}
+	if dayOffset < 0 {
+		dayOffset = 0
+	}
+	if dayOffset >= len(confidenceDecayFactors) {
+		dayOffset = len(confidenceDecayFactors) - 1
+	}
+	factor := confidenceDecayFactors[dayOffset]
+	if factor >= 1.0 {
+		return // no decay needed
+	}
+	raw := ff.Confidence
+	ff.Confidence = raw * factor
+	slog.Debug("confidence decay applied",
+		"city", ff.City,
+		"raw_confidence", fmt.Sprintf("%.2f", raw),
+		"decay_factor", fmt.Sprintf("%.2f", factor),
+		"adj_confidence", fmt.Sprintf("%.2f", ff.Confidence),
+		"day", dayOffset,
+	)
+}
+
 // AggregateForDay fetches a fused forecast for a specific day offset:
 // dayOffset=0 → today, dayOffset=1 → tomorrow, up to dayOffset=6.
 // GOES satellite data (cloud cover) is only available for today (dayOffset=0).
@@ -376,6 +416,26 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 		ff.AlertLevel = alertSummary.Level
 		ff.AlertEvents = alertSummary.Events
 	}
+
+	// TASK-064: boost confidence when MaxTemp is anomalously high vs recent history.
+	// Extreme conditions tend to be better-resolved by NWP models.
+	if anomaly := weather.ClimateAnomalyScore(city, ff.Forecast.MaxTempC, dataRoot); anomaly > 0.7 {
+		const anomalyConfidenceFloor = 0.70
+		if ff.Confidence < anomalyConfidenceFloor {
+			slog.Info("climate anomaly: confidence boosted",
+				"city", city,
+				"max_temp_c", fmt.Sprintf("%.1f", ff.Forecast.MaxTempC),
+				"anomaly_score", fmt.Sprintf("%.2f", anomaly),
+				"old_confidence", fmt.Sprintf("%.2f", ff.Confidence),
+				"new_confidence", fmt.Sprintf("%.2f", anomalyConfidenceFloor),
+			)
+			ff.Confidence = anomalyConfidenceFloor
+		}
+	}
+
+	// TASK-062: apply confidence decay based on how far ahead this forecast is.
+	// A 6-day forecast is significantly less reliable than today's — decay accordingly.
+	applyConfidenceDecay(ff, dayOffset)
 
 	// TASK-042: detect and log significant forecast changes before overwriting cache.
 	if shift := DetectForecastShift(city, dayOffset, ff, dataRoot); shift != nil && shift.Significant {

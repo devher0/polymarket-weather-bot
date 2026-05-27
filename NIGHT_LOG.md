@@ -676,3 +676,28 @@
 **Тесты:** 8/8 PASS, `go test ./...` — all OK, `go build ./...` — OK
 
 **Строк добавлено:** ~215
+
+---
+
+## 2026-05-27 18:47 UTC — TASK-061, 062, 063, 064: Profit alerts, confidence decay, stale detector, climate anomaly
+
+**Задачи:** TASK-061, TASK-062, TASK-063, TASK-064
+
+**Файлы изменены:**
+- `internal/notifier/telegram.go` — добавлена `NotifyProfitOpportunity(condID, side, entry, current)` (~35 строк): форматирует Telegram-алерт с implied P&L%
+- `cmd/bot/main.go` — добавлена функция `checkProfitAlerts()` (~75 строк): сканирует открытые позиции, сравнивает текущую цену с entry, алертит при gain ≥ 0.25; de-dupe через `data/profit_alerts.json`; подключена в основной цикл после SnapshotOpenPositions
+- `internal/collectors/aggregator.go` — добавлена `applyConfidenceDecay(ff, dayOffset)` (~40 строк) с decay таблицей [1.00, 1.00, 0.95, 0.88, 0.78, 0.65, 0.55]; вызывается в `AggregateForDay()` после ансамбль-корректуры; также TASK-064 boost при anomaly > 0.7
+- `internal/weather/seasonal.go` — добавлена `ClimateAnomalyScore(city, maxTemp, dataRoot)` (~60 строк): читает data/historical/{city}.json, берёт последние 30 записей, считает rolling mean+stddev, score = clamp((maxTemp-mu)/(2*sigma), 0, 1)
+- `internal/markets/markets.go` — Market struct: добавлены поля `Stale bool`, `LastTradeTime time.Time`; polyMarket struct: добавлены `LastTradePrice`, `LastTradeSize`, `LastTradedAt`; парсинг LastTradedAt при загрузке рынков
+- `internal/markets/liquidity.go` — в `EnrichWithLiquidity()`: после spread check устанавливаем `Stale=true` когда `age(LastTradeTime) > 24h AND spread > 0.08`
+- `internal/strategy/strategy.go` — в `EvaluateFused()`: новый guard в начале — skip + logPrediction("SKIP:stale") для рынков с `m.Stale=true`
+
+**Логика:**
+- TASK-061: gain = currentPrice - entryPrice; если ≥ 0.25 → Telegram + запись в profit_alerts.json (один раз)
+- TASK-062: decay factors per dayOffset; day 6 → ×0.55 confidence
+- TASK-063: stale = no trades >24h + spread >0.08 → skip in strategy
+- TASK-064: 30-day rolling avg/stddev из историч. данных; score>0.7 → confidence boosted до 0.70
+
+**Сборка:** `go build ./...` — OK (0 ошибок)
+
+**Строк добавлено:** ~210

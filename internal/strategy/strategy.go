@@ -227,6 +227,20 @@ func EvaluateFused(
 		}, dataRoot)
 	}
 
+	// TASK-063: skip stale markets (no trades >24h + wide spread).
+	if m.Stale {
+		q := m.Question
+		if len(q) > 60 {
+			q = q[:60] + "…"
+		}
+		slog.Info("skipped: stale market (no trades >24h)",
+			"conditionID", m.ConditionID,
+			"question", q,
+		)
+		logPrediction("SKIP:stale", 0, "stale market: no trades >24h")
+		return nil
+	}
+
 	// Confidence gate: skip if sources disagree too much
 	if ff.Confidence < minConfidence {
 		logPrediction("SKIP:confidence", 0, fmt.Sprintf("confidence=%.2f < %.2f", ff.Confidence, minConfidence))

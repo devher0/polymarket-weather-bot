@@ -570,14 +570,14 @@ type FusedForecast struct {
 - В cmd/bot/main.go: если favorable → логировать "momentum boost: side moving in our favor"; если adverse+strong (>0.6) → требовать edge +0.03
 - Добавить в Decision.Reason: "momentum=favorable(0.8)" или "momentum=adverse(0.7, +0.03 edge req)"
 
-### [ ] TASK-061: Position profit-taking alert — Telegram алерт когда позиция в хорошем плюсе
+### [x] 2026-05-27 — TASK-061: Position profit-taking alert — Telegram алерт когда позиция в хорошем плюсе
 **Файл:** `cmd/bot/main.go` (обновить), `internal/notifier/telegram.go` (обновить)
 - После SnapshotOpenPositions: для каждой открытой позиции сравнить текущую цену с entry price (market_price из BetRecord)
 - Если текущая цена нашей стороны выросла на ≥0.25 от entry → отправить Telegram-алерт: "💰 Profit opportunity: {condID} side={side} entry={entry:.2f} now={now:.2f} (+{pnl:.0f}% implied P&L)"
 - Не спамить: сохранять set notified conditionIDs в data/profit_alerts.json, алертить один раз
 - Добавить `NotifyProfitOpportunity(condID, side string, entry, current float64) error` в telegram.go
 
-### [ ] TASK-062: Forecast confidence time-decay — снижать уверенность для дальних прогнозов
+### [x] 2026-05-27 — TASK-062: Forecast confidence time-decay — снижать уверенность для дальних прогнозов
 **Файл:** `internal/collectors/aggregator.go` (обновить)
 - После fuse(): применять time-decay к Confidence на основе dayOffset параметра
 - Decay table: dayOffset 0-1→×1.00, 2→×0.95, 3→×0.88, 4→×0.78, 5→×0.65, 6→×0.55
@@ -585,14 +585,14 @@ type FusedForecast struct {
 - Реализовать в AggregateForDay(): после получения FusedForecast применять `applyConfidenceDecay(ff, dayOffset)`
 - Рационал: 6-дневный прогноз значительно менее надёжен чем сегодняшний
 
-### [ ] TASK-063: Market stale detector — пропускать рынки без торгов >24h
+### [x] 2026-05-27 — TASK-063: Market stale detector — пропускать рынки без торгов >24h
 **Файл:** `internal/markets/markets.go` (обновить)
 - Парсить `last_trade_price` и предположительно дату последнего трейда из Gamma API ответа
 - Если рынок не торговался >24h И spread > 0.08 → помечать Market.Stale = true
 - В strategy.go: логировать "skipped: stale market (no trades >24h)" и return nil для стейл рынков
 - Помогает избежать неликвидных рынков которые просто "висят"
 
-### [ ] TASK-064: Per-city climate anomaly score — буст уверенности при экстремальных отклонениях от нормы
+### [x] 2026-05-27 — TASK-064: Per-city climate anomaly score — буст уверенности при экстремальных отклонениях от нормы
 **Файл:** `internal/weather/seasonal.go` (обновить), `internal/collectors/aggregator.go` (обновить)
 - Использовать данные из data/historical/{city}.json для вычисления rolling avg и stddev за последние 30 дней
 - `ClimateAnomalyScore(city, forecastDate, maxTemp float64, dataRoot string) float64` → 0-1

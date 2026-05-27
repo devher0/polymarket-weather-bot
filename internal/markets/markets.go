@@ -16,18 +16,20 @@ const polyHost = "https://clob.polymarket.com"
 
 // Market represents a single Polymarket weather prediction market.
 type Market struct {
-	ConditionID   string
-	Question      string
-	YesTokenID    string
-	NoTokenID     string
-	YesPrice      float64
-	NoPrice       float64
-	City          string  // may be empty if no city matched
-	Signal        string  // rain|heat|cold|snow|wind|sunny
-	EndDate       string
-	ThresholdC    float64 // parsed temperature threshold in Celsius (0 = not set)
-	ThinLiquidity bool    // true when top-of-book bid-ask spread > 0.10 (set by EnrichWithLiquidity)
-	Spread        float64 // top-of-book bid-ask spread (set by EnrichWithLiquidity)
+	ConditionID    string
+	Question       string
+	YesTokenID     string
+	NoTokenID      string
+	YesPrice       float64
+	NoPrice        float64
+	City           string  // may be empty if no city matched
+	Signal         string  // rain|heat|cold|snow|wind|sunny
+	EndDate        string
+	ThresholdC     float64    // parsed temperature threshold in Celsius (0 = not set)
+	ThinLiquidity  bool       // true when top-of-book bid-ask spread > 0.10 (set by EnrichWithLiquidity)
+	Spread         float64    // top-of-book bid-ask spread (set by EnrichWithLiquidity)
+	Stale          bool       // TASK-063: no trades >24h AND spread > 0.08
+	LastTradeTime  time.Time  // TASK-063: timestamp of last recorded trade (zero if unknown)
 }
 
 type signal struct {
@@ -155,12 +157,16 @@ type polyToken struct {
 }
 
 type polyMarket struct {
-	ConditionID string      `json:"condition_id"`
-	Question    string      `json:"question"`
-	Closed      bool        `json:"closed"`
-	Archived    bool        `json:"archived"`
-	Tokens      []polyToken `json:"tokens"`
-	EndDateISO  string      `json:"end_date_iso"`
+	ConditionID    string      `json:"condition_id"`
+	Question       string      `json:"question"`
+	Closed         bool        `json:"closed"`
+	Archived       bool        `json:"archived"`
+	Tokens         []polyToken `json:"tokens"`
+	EndDateISO     string      `json:"end_date_iso"`
+	LastTradePrice string      `json:"last_trade_price"` // TASK-063: decimal string; "" if never traded
+	LastTradeSize  string      `json:"last_trade_size"`  // TASK-063: decimal string; unused but kept for completeness
+	// Polymarket Gamma API uses "last_traded_at" (RFC3339); CLOB API may omit it.
+	LastTradedAt string `json:"last_traded_at"` // TASK-063: RFC3339 timestamp or ""
 }
 
 type polyResp struct {
@@ -267,17 +273,26 @@ func GetWeatherMarkets() ([]Market, error) {
 				continue
 			}
 
+			// TASK-063: parse last trade timestamp to determine staleness.
+			var lastTrade time.Time
+			if m.LastTradedAt != "" {
+				if t, err := time.Parse(time.RFC3339, m.LastTradedAt); err == nil {
+					lastTrade = t
+				}
+			}
+
 			out = append(out, Market{
-				ConditionID: m.ConditionID,
-				Question:    m.Question,
-				YesTokenID:  yes.TokenID,
-				NoTokenID:   no.TokenID,
-				YesPrice:    yes.Price,
-				NoPrice:     no.Price,
-				City:        city,
-				Signal:      sig,
-				EndDate:     m.EndDateISO,
-				ThresholdC:  thresholdC,
+				ConditionID:   m.ConditionID,
+				Question:      m.Question,
+				YesTokenID:    yes.TokenID,
+				NoTokenID:     no.TokenID,
+				YesPrice:      yes.Price,
+				NoPrice:       no.Price,
+				City:          city,
+				Signal:        sig,
+				EndDate:       m.EndDateISO,
+				ThresholdC:    thresholdC,
+				LastTradeTime: lastTrade,
 			})
 		}
 

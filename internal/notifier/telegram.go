@@ -373,6 +373,44 @@ func NotifyForecastShift(city string, oldMaxTemp, newMaxTemp, oldPrecipP, newPre
 	return cfg.send(msg)
 }
 
+// NotifyProfitOpportunity sends a Telegram alert when an open position's
+// current price has risen significantly above the entry price, suggesting
+// a good time to close/take profit.
+//
+// condID is the Polymarket condition ID, side is "YES" or "NO", entry is the
+// price at which we bet, and current is the current market mid-price for our
+// side. The implied P&L percentage is (current-entry)/entry*100.
+//
+// No-op if Telegram is not configured.
+func NotifyProfitOpportunity(condID, side string, entry, current float64) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	pnlPct := 0.0
+	if entry > 0 {
+		pnlPct = (current - entry) / entry * 100
+	}
+
+	msg := fmt.Sprintf(
+		"<b>💰 Profit Opportunity</b>\n\n"+
+			"Market: <code>%s</code>\n"+
+			"Side: <b>%s</b>\n"+
+			"Entry: %.2f  →  Now: %.2f\n"+
+			"Implied P&amp;L: <b>+%.0f%%</b>\n\n"+
+			"<i>Consider closing this position.</i>\n"+
+			"<i>%s UTC</i>",
+		condID,
+		side,
+		entry, current,
+		pnlPct,
+		time.Now().UTC().Format("2006-01-02 15:04"),
+	)
+
+	return cfg.send(msg)
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 func truncate(s string, n int) string {

@@ -92,5 +92,28 @@ func EnrichWithLiquidity(mkts []Market) {
 				"question", q,
 			)
 		}
+
+		// TASK-063: mark stale markets — no trades for >24h AND wide spread.
+		// The stale flag is used by strategy.EvaluateFused to skip illiquid markets.
+		const (
+			staleTradeWindow = 24 * time.Hour
+			staleSpreadMin   = 0.08
+		)
+		if !mkts[i].LastTradeTime.IsZero() && spread > staleSpreadMin {
+			age := time.Since(mkts[i].LastTradeTime)
+			if age > staleTradeWindow {
+				mkts[i].Stale = true
+				q := mkts[i].Question
+				if len(q) > 60 {
+					q = q[:60] + "…"
+				}
+				slog.Info("stale market detected (no trades >24h)",
+					"conditionID", mkts[i].ConditionID,
+					"last_trade_age", age.Round(time.Minute).String(),
+					"spread", fmt.Sprintf("%.3f", spread),
+					"question", q,
+				)
+			}
+		}
 	}
 }

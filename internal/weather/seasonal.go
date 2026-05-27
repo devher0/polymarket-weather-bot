@@ -15,8 +15,11 @@
 package weather
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -193,4 +196,87 @@ func SeasonalSummary(city string, month time.Month) string {
 	}
 	return fmt.Sprintf("%s %s: maxTemp=%.0f°C rain=%.0f%% sun=%.0f%%",
 		city, month, mc.AvgMaxTempC, mc.RainProb*100, mc.SunProb*100)
+}
+
+// ── TASK-064: Per-city climate anomaly score ───────────────────────────────
+
+// historicalFileShape is a minimal struct for deserialising the historical
+// JSON files written by collectors.CollectHistory (data/historical/{city}.json).
+// We only need the MaxTempC fields for anomaly computation.
+// NOTE: Forecast struct has no json tags, so Go serialises field names as-is
+// (PascalCase). HistoricalRecord embeds Forecast so the records JSON looks like
+// {"MaxTempC": 32.1, "Date": "2026-05-01", ...}.
+type historicalFileShape struct {
+	Records []struct {
+		MaxTempC float64 `json:"MaxTempC"`
+		Date     string  `json:"Date"`
+	} `json:"records"`
+}
+
+// ClimateAnomalyScore returns a 0–1 score reflecting how extreme the given
+// maxTemp is compared to the recent historical baseline for this city.
+//
+// Algorithm:
+//  1. Load the last 30 days of observed MaxTempC from data/historical/{city}.json
+//  2. Compute rolling mean (mu) and population standard deviation (sigma)
+//  3. score = clamp((maxTemp - mu) / (2 * sigma), 0, 1)
+//     score ≈ 0 → near average; score ≈ 1 → 2+ standard deviations above norm
+//
+// Returns 0 when historical data is unavailable (file missing, fewer than 7 records).
+func ClimateAnomalyScore(city string, maxTemp float64, dataRoot string) float64 {
+	if dataRoot == "" {
+		dataRoot = "."
+	}
+	path := filepath.Join(dataRoot, "data", "historical", city+".json")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+
+	var hf historicalFileShape
+	if err := json.Unmarshal(data, &hf); err != nil {
+		return 0
+	}
+
+	// Collect at most the last 30 records.
+	recs := hf.Records
+	if len(recs) == 0 {
+		return 0
+	}
+	const window = 30
+	const minRecs = 7
+	if len(recs) > window {
+		recs = recs[len(recs)-window:]
+	}
+	if len(recs) < minRecs {
+		return 0
+	}
+
+	// Compute mean and population standard deviation.
+	sum := 0.0
+	for _, r := range recs {
+		sum += r.MaxTempC
+	}
+	mu := sum / float64(len(recs))
+
+	varSum := 0.0
+	for _, r := range recs {
+		d := r.MaxTempC - mu
+		varSum += d * d
+	}
+	sigma := math.Sqrt(varSum / float64(len(recs)))
+	if sigma <= 0 {
+		return 0
+	}
+
+	// Normalise: score approaches 1 at 2 standard deviations above the mean.
+	score := (maxTemp - mu) / (2 * sigma)
+	if score < 0 {
+		score = 0
+	}
+	if score > 1 {
+		score = 1
+	}
+	return score
 }
