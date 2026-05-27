@@ -1004,3 +1004,21 @@
 **Push:** `git push` → master — OK
 
 **Строк добавлено:** ~70 (cape_test.go: +70)
+
+---
+
+## 2026-05-27 — TASK-090: 45th Weather Squadron launch forecasts парсер
+
+**Файл:** `internal/collectors/launch_weather.go` (203 строки)
+
+**Что сделано:**
+- Реализован парсер страницы 45th Weather Squadron (Patrick SFB) для Launch Commit Criteria
+- `FetchLaunchWeather()` — HTTP fetch с кэшем 30 мин, graceful skip при недоступности
+- `parseLaunchWeatherPage()` — regex-извлечение ViolationProbability, GoRules/NoGoRules, Summary
+- `LaunchWeatherBoost(city)` — boost +0..+0.15 для "miami" рынков storm/wind/rain
+- `stripHTMLTags()` — утилита для очистки HTML перед парсингом
+
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK
+
+**Строк добавлено:** 203 (launch_weather.go: новый файл)

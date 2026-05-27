@@ -391,6 +391,51 @@ func EvaluateFused(
 		sourceNote += fmt.Sprintf(" lightning_boost=+%.0f%%(strikes=%d)", lightningBoost*100, ff.LightningStrikes)
 	}
 
+	// TASK-089: apply CAPE-based convective boost for wind/storm and rain markets.
+	// High CAPE indicates atmospheric instability that can amplify storm events;
+	// we apply a proportional boost to wind speed or precipitation probability.
+	if ff.Forecast.CapeJkg > 0 && (m.Signal == "wind" || m.Signal == "rain") {
+		capeP := weather.CAPEStormProbability(ff.Forecast.CapeJkg)
+		if capeP > 0.10 {
+			// Scale boost proportionally; cap at +0.12 to remain conservative.
+			capeBoost := math.Min(capeP*0.15, 0.12)
+			switch m.Signal {
+			case "wind":
+				alertForecast.WindSpeedKMH += capeBoost * 60.0 // ≤ +7.2 km/h
+			case "rain":
+				alertForecast.PrecipitationProbability = math.Min(97,
+					alertForecast.PrecipitationProbability+capeBoost*100)
+			}
+			slog.Info("cape boost applied",
+				"city", m.City,
+				"signal", m.Signal,
+				"cape_jkg", fmt.Sprintf("%.0f", ff.Forecast.CapeJkg),
+				"cape_storm_p", fmt.Sprintf("%.2f", capeP),
+				"boost", fmt.Sprintf("+%.0f%%", capeBoost*100),
+			)
+			sourceNote += fmt.Sprintf(" cape_boost=+%.0f%%(%.0fJ/kg)", capeBoost*100, ff.Forecast.CapeJkg)
+		}
+	}
+
+	// TASK-090: apply 45th Weather Squadron LCC violation boost for miami city.
+	// When the Cape Canaveral launch weather shows high rule violation probability
+	// it signals active convective/electrical weather over South Florida.
+	if lwBoost := collectors.LaunchWeatherBoost(m.City); lwBoost > 0 &&
+		(m.Signal == "rain" || m.Signal == "wind") {
+		switch m.Signal {
+		case "rain":
+			alertForecast.PrecipitationProbability = math.Min(97,
+				alertForecast.PrecipitationProbability+lwBoost*100)
+		case "wind":
+			alertForecast.WindSpeedKMH += lwBoost * 30.0
+		}
+		slog.Info("launch weather boost applied",
+			"city", m.City, "signal", m.Signal,
+			"boost", fmt.Sprintf("+%.0f%%", lwBoost*100),
+		)
+		sourceNote += fmt.Sprintf(" lcc_boost=+%.0f%%", lwBoost*100)
+	}
+
 	// TASK-055: adjust minEdge based on forecast confidence.
 	// High-confidence forecasts (sources agree) can enter with smaller edge;
 	// low-confidence forecasts require a larger edge as safety margin.

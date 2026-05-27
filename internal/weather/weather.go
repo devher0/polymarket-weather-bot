@@ -21,6 +21,7 @@ type Forecast struct {
 	UVIndexMax               float64 // TASK-083: daily maximum UV index (0–12+); 0 if not available
 	HumidityPct              float64 // TASK-084: relative humidity 0–100; populated from NASA POWER (RH2M) when available
 	ApparentMaxTempC         float64 // TASK-084: apparent ("feels like") max temp; heat index when humid, wind chill when cold+windy
+	CapeJkg                  float64 // TASK-089: convective available potential energy (J/kg); 0 if unavailable
 }
 
 type City struct {
@@ -182,6 +183,33 @@ func UVProbability(f Forecast, threshold float64) float64 {
 		return clamp(0.70+diff*0.133, 0.05, 0.70)
 	default:
 		return 0.05
+	}
+}
+
+// CAPEStormProbability returns a 0–1 probability of convective storm activity
+// based on CAPE (Convective Available Potential Energy) in J/kg.
+//
+// CAPE thresholds (TASK-089):
+//
+//	< 500  J/kg → 0.05 (weak/negligible convective potential)
+//	500–1500     → 0.25 (moderate — showers possible)
+//	1500–3000    → 0.60 (high — thunderstorm likely)
+//	> 3000 J/kg  → 0.90 (very high — severe thunderstorm/tornado risk)
+//
+// Returns 0 when cape == 0 (data unavailable).
+func CAPEStormProbability(cape float64) float64 {
+	switch {
+	case cape <= 0:
+		return 0 // no data
+	case cape < 500:
+		return 0.05
+	case cape < 1500:
+		return 0.05 + (cape-500)/1000.0*0.20 // 0.05→0.25
+	case cape < 3000:
+		return 0.25 + (cape-1500)/1500.0*0.35 // 0.25→0.60
+	default:
+		extra := min((cape-3000)/2000.0, 1.0) // cap at 5000 J/kg
+		return 0.60 + extra*0.30              // 0.60→0.90
 	}
 }
 

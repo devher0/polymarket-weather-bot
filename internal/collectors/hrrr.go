@@ -163,6 +163,7 @@ func HRRRGetForecast(city string, days int) ([]weather.Forecast, error) {
 			PrecipitationProbability: precipProb,
 			WindSpeedKMH:             windKMH,
 			WeatherCode:              wcode,
+			CapeJkg:                  capeMax, // TASK-089: expose CAPE for storm probability
 		})
 	}
 

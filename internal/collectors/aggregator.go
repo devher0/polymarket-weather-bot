@@ -316,8 +316,10 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		wCode    float64
 		// TASK-084: humidity — only average from sources that have non-zero RH data
 		// (currently only NASA POWER provides RH2M).
-		wHumidity     float64
-		humidityWt    float64
+		wHumidity  float64
+		humidityWt float64
+		// TASK-089: CAPE — only from HRRR (US cities); take max across sources.
+		maxCapeJkg float64
 
 		sourceNames []string
 		precipProbs []float64 // for confidence calc
@@ -354,6 +356,10 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		if r.forecast.HumidityPct > 0 {
 			wHumidity += r.forecast.HumidityPct * r.weight
 			humidityWt += r.weight
+		}
+		// TASK-089: track maximum CAPE across all sources (HRRR for US cities).
+		if r.forecast.CapeJkg > maxCapeJkg {
+			maxCapeJkg = r.forecast.CapeJkg
 		}
 	}
 
@@ -402,8 +408,9 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 			PrecipitationProbability: wPrecipP,
 			WindSpeedKMH:             wWind,
 			WeatherCode:              int(math.Round(wCode)),
-			HumidityPct:              fusedHumidity,   // TASK-084
-			ApparentMaxTempC:         apparentMaxT,    // TASK-084
+			HumidityPct:              fusedHumidity, // TASK-084
+			ApparentMaxTempC:         apparentMaxT,  // TASK-084
+			CapeJkg:                  maxCapeJkg,    // TASK-089: max CAPE across sources
 		},
 		Confidence:         confidence,
 		Sources:            sourceNames,

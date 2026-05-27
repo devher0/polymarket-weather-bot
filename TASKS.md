@@ -833,7 +833,7 @@ CAPE (Convective Available Potential Energy) — лучший физически
   - cape > 3000  → 0.90 (очень высокий, торнадо-опасность)
 - Интегрировать в storm/wind strategy как дополнительный буст
 
-### TASK-090: 45th Weather Squadron launch forecasts парсер
+### [x] 2026-05-27 — TASK-090: 45th Weather Squadron launch forecasts парсер
 **Файл:** `internal/collectors/launch_weather.go`
 45th Weather Squadron (Patrick AFB) публикует GO/NO-GO критерии для запусков — те же данные что использует SpaceX:
 - URL: https://www.patrick.spaceforce.mil/About/Weather/ (публичная страница)
