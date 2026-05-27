@@ -788,3 +788,56 @@ type FusedForecast struct {
 - В `RefineWithHourly()`: применять `PrecipP += PressureTrendBoost(points)` (clamped to 0.97)
 - Логировать "pressure trend: Δ=-3.2 hPa/3h → rain boost +0.08"
 - Физическое обоснование: падение давления = приближение фронта = дождь; рост = прояснение
+
+---
+
+## 🚀 ПРИОРИТЕТ 5 — Аэрокосмические источники (SpaceX-level данные)
+
+### TASK-086: NOAA HRRR — высокоточная модель (3км, обновление каждый час)
+**Файл:** `internal/collectors/hrrr.go`
+Подключить NOAA High-Resolution Rapid Refresh через Open-Meteo HRRR endpoint:
+- URL: https://api.open-meteo.com/v1/forecast?models=gfs_seamless (или hrrr)
+- Параметры: temperature_2m, precipitation_probability, wind_speed_10m, cape (конвективная энергия)
+- Только США (new_york, miami) — HRRR покрывает только Северную Америку
+- Обновляется каждый час → кэш не более 60 минут
+- Добавить как 5-й источник в aggregator с весом 0.15 (перераспределить остальные)
+- HRRR особенно точен для storm/wind рынков (конвективные события)
+
+### TASK-087: Радиозонды RAOB — профиль атмосферы по высотам
+**Файл:** `internal/collectors/raob.go`
+Подключить данные метеозондов через rucsoundings.noaa.gov:
+- URL: https://rucsoundings.noaa.gov/get_soundings.cgi?data_source=GFS&airport={lat},{lon}
+- Парсить: ветер на высотах 850/700/500 hPa (≈1.5/3/5.5 км)
+- Возвращать AtmosphericProfile{WindKMH850hPa, WindKMH700hPa, WindKMH500hPa, MaxWindShear}
+- Использовать в wind-рынках: если ветер на высоте 850hPa > 50km/h → boost wind probability
+- Graceful fallback если данные недоступны
+
+### TASK-088: Blitzortung — детекция молний в реальном времени
+**Файл:** `internal/collectors/lightning.go`
+Подключить глобальную сеть детекции молний blitzortung.org:
+- WebSocket: wss://ws8.blitzortung.org (публичный, без ключа)
+- Считать количество ударов молний за последние 30 минут в radius 200км от города
+- LightningRisk(city, strikes30min) float64 — высокий риск при >50 ударов
+- Использовать как сигнал для storm/wind рынков: lightning risk → boost storm probability
+- Хранить в data/lightning/{city}_{hour}.json
+
+### TASK-089: CAPE индекс — конвективная энергия (storm predictor)
+**Файл:** `internal/collectors/aggregator.go` (обновить), `internal/weather/weather.go` (обновить)
+CAPE (Convective Available Potential Energy) — лучший физический предиктор гроз:
+- Добавить поле `CapeJkg float64` в `weather.Forecast`
+- Фетчить `cape` из Open-Meteo (доступен в hourly параметрах)
+- CAPEStormProbability(cape float64) float64:
+  - cape < 500  → 0.05 (слабый риск)
+  - cape 500-1500 → 0.25 (умеренный)
+  - cape 1500-3000 → 0.60 (высокий)
+  - cape > 3000  → 0.90 (очень высокий, торнадо-опасность)
+- Интегрировать в storm/wind strategy как дополнительный буст
+
+### TASK-090: 45th Weather Squadron launch forecasts парсер
+**Файл:** `internal/collectors/launch_weather.go`
+45th Weather Squadron (Patrick AFB) публикует GO/NO-GO критерии для запусков — те же данные что использует SpaceX:
+- URL: https://www.patrick.spaceforce.mil/About/Weather/ (публичная страница)
+- Парсить: облачность на высотах, электрические поля, вероятность выполнения правил
+- LaunchRules compliance — 11 официальных Launch Commit Criteria
+- Использовать для storm/wind/rain рынков: низкий compliance % → высокий риск плохой погоды
+- Если парсинг недоступен — graceful skip
