@@ -197,6 +197,45 @@ type FusedForecast struct {
 - Причина: при очевидных экстремумах все модели обычно соглашаются, даже если у нас только 1-2 источника
 - Добавить тег "extreme: heat_wave|heavy_rain|storm" в FusedForecast.Sources
 
+## 🔴 ПРИОРИТЕТ 7 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-026: Risk Manager — дневные лимиты потерь
+**Файл:** `internal/risk/risk.go` (новый), `internal/risk/risk_test.go` (новый), `config/config.go` (обновить), `config/config.yaml` (обновить), `cmd/bot/main.go` (обновить)
+- `Manager.AllowBet(records)` — проверка 3 лимитов: дневной cap ставок, дневной лимит потерь, cap открытых позиций
+- `DailyStats(records)` → (count, netPnL) — считает только сегодняшние resolved ставки
+- `Summary(records, cfg)` — однострочный риск-статус в лог
+- Интеграция в bot: pre-cycle check + per-bet check, break loop при срабатывании
+- Новые поля в Config: max_daily_loss_usdc, max_daily_bets, max_open_positions
+- 13 unit-тестов в risk_test.go
+
+### [ ] TASK-027: Open-Meteo Ensemble (16 members) для точной неопределённости
+**Файл:** `internal/collectors/openmeteo_ensemble.go` (новый), `internal/collectors/aggregator.go` (обновить)
+- Endpoint: https://ensemble-api.open-meteo.com/v1/ensemble с models=icon_seamless
+- Парсить 16 членов ансамбля → stddev температуры и осадков
+- Использовать stddev как более точный сигнал для Confidence (вместо межмодельного разброса)
+- Добавить EnsembleUncertainty float64 в FusedForecast
+- Обновить aggregator: если ensemble доступен, заменить confidence на ensemble-based
+
+### [ ] TASK-028: Portfolio correlation guard — не ставить на коррелированные города
+**Файл:** `internal/risk/correlation.go` (новый), `cmd/bot/main.go` (обновить)
+- Карта корреляций: (new_york, miami)=0.7, (london, paris)=0.8, (los_angeles, san_francisco)=0.85
+- `CorrelatedCitiesOpen(market, openBets)` — есть ли открытая ставка в коррелированном городе?
+- Если correlation > 0.75 И тот же сигнал — пропускать второй рынок
+- Логировать "skipped: correlated position in {city} (r=X)"
+
+### [ ] TASK-029: Forecast staleness guard — пропускать ставки по старым данным
+**Файл:** `internal/collectors/aggregator.go` (обновить), `internal/collectors/openmeteo.go` (проверить)
+- Добавить FetchedAt time.Time в FusedForecast
+- Если age > 3 часов — логировать "stale forecast, skipping market" и return nil из EvaluateFused
+- Порог настраивается через config: max_forecast_age_hours (default: 3)
+
+### [ ] TASK-030: Market score ranking — сортировка рынков перед оценкой
+**Файл:** `internal/markets/markets.go` (обновить), `internal/strategy/strategy.go` (обновить)
+- `ScoreMarket(m Market, ff FusedForecast)` → float64 = edge × confidence × daysUntilExpiry_factor
+- Сортировать рынки по Score desc перед циклом ставок
+- Лимит: ставить не более TopN (config: max_bets_per_cycle, default 5) лучших рынков за цикл
+- Предотвращает ситуацию когда утренний цикл "съедает" весь дневной лимит на плохих рынках
+
 ## 🟣 ПРИОРИТЕТ 5 — Новые улучшения
 
 ### [x] 2026-05-27 — TASK-019: Rate limiting + retry для HTTP-клиентов
@@ -220,6 +259,8 @@ type FusedForecast struct {
 ---
 
 ## ✅ ВЫПОЛНЕНО
+
+- [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config
 
 - [x] 2026-05-27 — TASK-000: Базовый бот на Go (internal/weather, internal/markets, internal/strategy, cmd/bot)
 - [x] 2026-05-27 — TASK-001: NASA POWER API collector (internal/collectors/nasa_power.go)

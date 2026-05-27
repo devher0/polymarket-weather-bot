@@ -36,6 +36,11 @@ type Config struct {
 	LogLevel    string `yaml:"log_level"`    // "debug" | "info" | "warn" | "error"
 	DataRoot    string `yaml:"data_root"`    // root dir for data/ files (default ".")
 
+	// Risk management
+	MaxDailyLossUSDC float64 `yaml:"max_daily_loss_usdc"` // stop if today's P&L < -this (0 = disabled)
+	MaxDailyBets     int     `yaml:"max_daily_bets"`      // max bets per UTC day (0 = disabled)
+	MaxOpenPositions int     `yaml:"max_open_positions"`  // max unresolved bets at once (0 = disabled)
+
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
 	PolyAddress      string `yaml:"poly_address"`
@@ -55,12 +60,15 @@ func defaults() Config {
 			"new_york", "london", "tokyo", "miami", "paris",
 			"chicago", "los_angeles", "san_francisco", "berlin",
 		},
-		MinEdge:     0.05,
-		MaxBet:      10.0,
-		LoopSec:     0,
-		MetricsPort: 9090,
-		LogLevel:    "info",
-		DataRoot:    ".",
+		MinEdge:          0.05,
+		MaxBet:           10.0,
+		LoopSec:          0,
+		MetricsPort:      9090,
+		LogLevel:         "info",
+		DataRoot:         ".",
+		MaxDailyLossUSDC: 50.0,
+		MaxDailyBets:     20,
+		MaxOpenPositions: 30,
 	}
 }
 
@@ -154,6 +162,17 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("POLYMARKET_API_PASSPHRASE"); v != "" {
 		cfg.PolyAPIPassphrase = v
+	}
+
+	// Risk management
+	if v := envFloat("MAX_DAILY_LOSS_USDC"); v != nil {
+		cfg.MaxDailyLossUSDC = *v
+	}
+	if v := envInt("MAX_DAILY_BETS"); v != nil {
+		cfg.MaxDailyBets = *v
+	}
+	if v := envInt("MAX_OPEN_POSITIONS"); v != nil {
+		cfg.MaxOpenPositions = *v
 	}
 
 	// Telegram

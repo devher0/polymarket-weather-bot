@@ -40,6 +40,20 @@ log_level: info
 # Env override: DATA_ROOT=.
 data_root: "."
 
+# ── Risk management ──────────────────────────────────────────────────────────
+# Stop betting for the rest of the UTC calendar day when today's realised P&L
+# falls below -max_daily_loss_usdc (0 = disabled).
+# Env override: MAX_DAILY_LOSS_USDC=50
+max_daily_loss_usdc: 50.0
+
+# Maximum number of bets per UTC calendar day (0 = unlimited).
+# Env override: MAX_DAILY_BETS=20
+max_daily_bets: 20
+
+# Maximum number of simultaneously open (unresolved) positions (0 = unlimited).
+# Env override: MAX_OPEN_POSITIONS=30
+max_open_positions: 30
+
 # ── Polymarket CLOB credentials ───────────────────────────────────────────────
 # These are sensitive — prefer ENV variables or .env file over this yaml.
 # Env overrides: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS, POLYMARKET_API_KEY,

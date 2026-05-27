@@ -29,6 +29,7 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/metrics"
 	"github.com/devher0/polymarket-weather-bot/internal/notifier"
 	"github.com/devher0/polymarket-weather-bot/internal/polymarket"
+	"github.com/devher0/polymarket-weather-bot/internal/risk"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
@@ -138,17 +139,44 @@ func main() {
 	// Print Brier score from past bets at startup
 	calibration.PrintBrierScore(cfg.DataRoot)
 
+	// Initialise risk manager from config.
+	riskMgr := risk.New(risk.Config{
+		MaxDailyLossUSDC: cfg.MaxDailyLossUSDC,
+		MaxDailyBets:     cfg.MaxDailyBets,
+		MaxOpenPositions: cfg.MaxOpenPositions,
+	})
+
 	sess := &sessionStats{startTime: time.Now()}
 
 	run := func() {
 		sess.cycleCount.Add(1)
 		slog.Info("=== cycle start", "time", time.Now().Format(time.RFC3339))
 
-		// 0. Load open positions to avoid double-betting the same conditionID.
-		openPositions, err := calibration.LoadOpenPositions(cfg.DataRoot)
+		// 0. Load bet history for dedup and risk checks.
+		history, err := calibration.LoadHistory(cfg.DataRoot)
 		if err != nil {
-			slog.Warn("failed to load open positions, proceeding without dedup", "err", err)
-			openPositions = make(map[string]bool)
+			slog.Warn("failed to load bet history, proceeding without dedup/risk", "err", err)
+			history = nil
+		}
+
+		// Risk summary at cycle start.
+		slog.Info(risk.Summary(history, risk.Config{
+			MaxDailyLossUSDC: cfg.MaxDailyLossUSDC,
+			MaxDailyBets:     cfg.MaxDailyBets,
+			MaxOpenPositions: cfg.MaxOpenPositions,
+		}))
+
+		// Pre-check: if already over a session-level limit, skip entire cycle.
+		if err := riskMgr.AllowBet(history); err != nil {
+			slog.Warn("risk gate blocked entire cycle", "reason", err.Error())
+			return
+		}
+
+		openPositions := make(map[string]bool, len(history))
+		for _, r := range history {
+			if r.Outcome == nil {
+				openPositions[r.ConditionID] = true
+			}
 		}
 		slog.Info("open positions loaded", "count", len(openPositions))
 
@@ -250,6 +278,12 @@ func main() {
 			}
 			if d == nil {
 				continue
+			}
+
+			// Per-bet risk gate: re-evaluate after each bet (history may grow).
+			if err := riskMgr.AllowBet(history); err != nil {
+				slog.Warn("risk gate blocked bet", "reason", err.Error())
+				break // stop placing more bets this cycle
 			}
 
 			prefix := ""
