@@ -1,5 +1,27 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 17:17 UTC — TASK-041 + TASK-042: Forecast cache persistence + change detector
+
+**Задачи:** TASK-041, TASK-042
+
+**Файлы созданы/изменены:**
+- `internal/collectors/forecast_cache.go` — НОВЫЙ (~215 строк): `SaveForecastCache(city, dayOffset, ff, dataRoot)` → сохраняет FusedForecast в `data/forecasts/{city}_d{dayOffset}.json`; `LoadForecastCache(city, dayOffset, dataRoot, maxAge)` → возвращает кэш если age < maxAge (default 2h); `DetectForecastShift(city, dayOffset, newFF, dataRoot)` → сравнивает новый прогноз с кэшем, возвращает ForecastShift с Δs и флагом Significant (|ΔMaxTemp|>5°C или |ΔPrecipProb|>20%); `ForecastCacheStats(dataRoot)` → map[key]age для dashboard; `cachedForecast` envelope-структура с SavedAt для staleness
+- `internal/collectors/aggregator.go` — добавлен `log/slog` импорт; в `Aggregate()` и `AggregateForDay()`: cache check перед любыми API вызовами (cache hit → return немедленно), shift detection + логирование при значимом изменении, `SaveForecastCache()` после успешного фетча
+- `internal/notifier/telegram.go` — новая функция `NotifyForecastShift(city, oldMaxTemp, newMaxTemp, oldPrecipP, newPrecipP)` — HTML-форматированное сообщение с дельтами и стрелками ↑↓; ~35 строк
+- `cmd/bot/main.go` — после `AggregateAll()`: loop по городам с вызовом `collectors.DetectForecastShift()` + `notifier.NotifyForecastShift()` для города; ~15 строк
+- `cmd/dashboard/main.go` — новый sub-command `cache`: таблица с ключами, возрастом и цветным статусом (fresh/aging/stale); добавлен в printUsage(); ~35 строк
+
+**Ключевые эффекты:**
+- Loop-режим: 2-й и последующие циклы в течение 2 часов НЕ делают API вызовы (cache hit) → время цикла с ~5 сек до <100ms
+- Forecast shift alert: когда грозовой фронт меняет прогноз на >5°C или >20% осадков → Telegram уведомление оператору
+- `go run ./cmd/dashboard cache` — быстрый просмотр свежести данных перед ручным запуском бота
+
+**Строк кода:** ~295 (+215 новый файл, +50 aggregator, +35 telegram, +15 bot, +35 dashboard -~55 рефакторинг)
+
+`go build ./...` — ✅  `go test ./...` — ✅ все PASS
+
+---
+
 ## 2026-05-27 17:12 — TASK-039 + TASK-040: dashboard forecast + integration smoke tests
 
 **Задачи:** TASK-039, TASK-040

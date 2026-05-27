@@ -351,6 +351,44 @@ type FusedForecast struct {
 
 ---
 
+---
+
+## 🔴 ПРИОРИТЕТ 11 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-041: Forecast cache persistence — экономия API-вызовов в loop-режиме
+**Файл:** `internal/collectors/forecast_cache.go` (новый), `internal/collectors/aggregator.go` (обновить)
+- Сохранять FusedForecast на диск в `data/forecasts/{city}_d{dayOffset}.json` после каждого успешного фетча
+- При старте Aggregate()/AggregateForDay(): проверять кэш, если возраст < 2 часа — возвращать кэш без API-вызовов
+- `SaveForecastCache(city, dayOffset, ff, dataRoot)` и `LoadForecastCache(city, dayOffset, dataRoot, maxAge)` → (*FusedForecast, bool)
+- Логировать "forecast cache hit" vs "forecast cache miss" для каждого города
+- В loop-режиме: первый цикл фетчит свежие данные (cache miss), следующие 2 часа используют кэш → экономия ~95% API calls
+
+### [x] 2026-05-27 — TASK-042: Forecast change detector — алерт при резком изменении прогноза
+**Файл:** `internal/collectors/forecast_cache.go` (обновить), `internal/notifier/telegram.go` (обновить)
+- При сохранении нового прогноза: сравнить с предыдущим кэшем
+- Если ΔMaxTemp > 5°C ИЛИ ΔPrecipProb > 20% — логировать "forecast shift detected"
+- Отправлять Telegram-уведомление `NotifyForecastShift(city, old, new FusedForecast)` при значимом изменении
+- Помогает оператору заметить внезапные погодные события (фронты, шторма) которые могут открыть новые ставки
+
+### [ ] TASK-043: Active-city filter — фетчить прогнозы только для городов с активными рынками
+**Файл:** `cmd/bot/main.go` (обновить), `internal/collectors/aggregator.go` (обновить)
+- Перед AggregateAll(): сделать быстрый запрос рынков, собрать уникальные города из активных маркетов
+- Передавать `activeCities []string` в новую функцию `AggregateForCities(cities, dataRoot)`
+- Для городов без активных рынков — только кэш (не фетчить свежее)
+- Логировать "skipping forecast for {city}: no active markets"
+- Экономия CPU/API: в тихие дни может быть 3-4 активных города вместо 9
+
+### [ ] TASK-044: Bankroll history — сохранение состояния bankroll между сессиями
+**Файл:** `internal/calibration/bankroll.go` (новый), `cmd/bot/main.go` (обновить)
+- Сохранять текущий bankroll в `data/bankroll.json` после каждого цикла: {bankroll_usdc, updated_at}
+- При старте: загружать сохранённый bankroll вместо фиксированных 100.0 USDC
+- `LoadBankroll(dataRoot) float64` — возвращает сохранённый bankroll или 100.0 по умолчанию
+- `SaveBankroll(bankroll float64, dataRoot string) error`
+- Обновлять bankroll: +SizeUSDC при открытии ставки, +/-исход при resolve (через resolver)
+- Логировать "bankroll: 100.00 → 103.45 USDC" при изменении
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config

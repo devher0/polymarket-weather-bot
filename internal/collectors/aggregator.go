@@ -9,6 +9,7 @@ package collectors
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"sync"
 	"time"
@@ -152,8 +153,16 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 }
 
 // Aggregate fetches forecasts from all available sources and fuses them.
-// dataRoot is used for GOES cache. Pass "" to use current directory.
+// dataRoot is used for GOES cache and the forecast disk cache. Pass "" to use current directory.
+//
+// TASK-041: checks the on-disk forecast cache first; returns a cached result
+// when it is < 2 hours old, skipping all upstream API calls.
 func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
+	// TASK-041: try disk cache before making any network calls.
+	if cached, ok := LoadForecastCache(city, 0, dataRoot, 0); ok {
+		return cached, nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), sourceFetchTimeout)
 	defer cancel()
 
@@ -172,6 +181,22 @@ func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
 		ff.Confidence = EnsembleToConfidence(er.TempStdDev)
 		ff.EnsembleUncertainty = er.TempStdDev
 		ff.Sources = append(ff.Sources, "ensemble")
+	}
+
+	// TASK-042: detect and log significant forecast changes before overwriting cache.
+	// Telegram notifications for shifts are sent from cmd/bot/main.go to avoid
+	// an import cycle (collectors → notifier → calibration → collectors).
+	if shift := DetectForecastShift(city, 0, ff, dataRoot); shift != nil && shift.Significant {
+		slog.Warn("significant forecast shift detected",
+			"city", city,
+			"delta_max_temp_c", fmt.Sprintf("%+.1f", shift.DeltaMaxTempC),
+			"delta_precip_p", fmt.Sprintf("%+.1f", shift.DeltaPrecipP),
+		)
+	}
+
+	// TASK-041: persist to disk cache for future cycles.
+	if err := SaveForecastCache(city, 0, ff, dataRoot); err != nil {
+		slog.Warn("forecast cache save failed", "city", city, "err", err)
 	}
 
 	return ff, nil
@@ -289,6 +314,8 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 // AggregateForDay fetches a fused forecast for a specific day offset:
 // dayOffset=0 → today, dayOffset=1 → tomorrow, up to dayOffset=6.
 // GOES satellite data (cloud cover) is only available for today (dayOffset=0).
+//
+// TASK-041: checks the on-disk forecast cache first (TTL 2h) before hitting APIs.
 func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecast, error) {
 	if dayOffset < 0 {
 		dayOffset = 0
@@ -296,6 +323,12 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 	if dayOffset > 6 {
 		dayOffset = 6
 	}
+
+	// TASK-041: try disk cache before making any network calls.
+	if cached, ok := LoadForecastCache(city, dayOffset, dataRoot, 0); ok {
+		return cached, nil
+	}
+
 	days := dayOffset + 1 // need at least dayOffset+1 forecast days
 
 	ctx, cancel := context.WithTimeout(context.Background(), sourceFetchTimeout)
@@ -321,6 +354,21 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 		ff.Confidence = EnsembleToConfidence(er.TempStdDev)
 		ff.EnsembleUncertainty = er.TempStdDev
 		ff.Sources = append(ff.Sources, "ensemble")
+	}
+
+	// TASK-042: detect and log significant forecast changes before overwriting cache.
+	if shift := DetectForecastShift(city, dayOffset, ff, dataRoot); shift != nil && shift.Significant {
+		slog.Warn("significant forecast shift detected",
+			"city", city,
+			"day_offset", dayOffset,
+			"delta_max_temp_c", fmt.Sprintf("%+.1f", shift.DeltaMaxTempC),
+			"delta_precip_p", fmt.Sprintf("%+.1f", shift.DeltaPrecipP),
+		)
+	}
+
+	// TASK-041: persist to disk cache for future cycles.
+	if err := SaveForecastCache(city, dayOffset, ff, dataRoot); err != nil {
+		slog.Warn("forecast cache save failed", "city", city, "day_offset", dayOffset, "err", err)
 	}
 
 	return ff, nil

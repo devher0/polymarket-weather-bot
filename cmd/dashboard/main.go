@@ -471,6 +471,8 @@ func main() {
 		cmdNext(dataRoot)
 	case "forecast":
 		cmdForecast(dataRoot)
+	case "cache":
+		cmdCacheStats(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -492,7 +494,43 @@ func printUsage() {
 	fmt.Println("  pnl         P&L history from data/bets_history.csv")
 	fmt.Println("  next        Top-5 bet candidates right now")
 	fmt.Println("  forecast    Fused weather forecast table for all cities")
+	fmt.Println("  cache       Show forecast cache status (age of cached data)")
 	fmt.Println("  all         Run all sub-commands")
+}
+
+// cmdCacheStats shows the age of each cached fused forecast in data/forecasts/.
+func cmdCacheStats(dataRoot string) {
+	header("FORECAST CACHE STATUS")
+
+	ages := collectors.ForecastCacheStats(dataRoot)
+	if len(ages) == 0 {
+		fmt.Println("  No cached forecasts found in", dataRoot+"/data/forecasts/")
+		fmt.Println("  Run: go run ./cmd/bot --collect-history   or let the bot run once.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Key", "Age", "Status"})
+
+	keys := make([]string, 0, len(ages))
+	for k := range ages {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		age := ages[k]
+		status := styleWin.Sprint("fresh")
+		if age > 2*time.Hour {
+			status = styleLoss.Sprint("stale (>2h)")
+		} else if age > time.Hour {
+			status = styleNeutral.Sprint("aging (>1h)")
+		}
+		t.AppendRow(table.Row{k, age.Round(time.Second).String(), status})
+	}
+	t.Render()
+	fmt.Printf("\n  Cache directory: %s/data/forecasts/\n", dataRoot)
+	fmt.Printf("  Total entries: %d\n", len(ages))
 }
 
 func truncate(s string, n int) string {

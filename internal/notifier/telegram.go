@@ -263,6 +263,44 @@ func SendTestMessage() error {
 	return cfg.send("✅ <b>Polymarket Weather Bot</b> — Telegram notifications active!")
 }
 
+// NotifyForecastShift sends a Telegram alert when the new forecast differs
+// significantly from the previous cached one (TASK-042).
+//
+// Triggers when ΔMaxTemp > 5°C or ΔPrecipProb > 20%.
+// No-op if Telegram is not configured.
+func NotifyForecastShift(city string, oldMaxTemp, newMaxTemp, oldPrecipP, newPrecipP float64) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	dTemp := newMaxTemp - oldMaxTemp
+	dPrecip := newPrecipP - oldPrecipP
+
+	tempArrow := "↑"
+	if dTemp < 0 {
+		tempArrow = "↓"
+	}
+	precipArrow := "↑"
+	if dPrecip < 0 {
+		precipArrow = "↓"
+	}
+
+	msg := fmt.Sprintf(
+		"<b>⚠️ Forecast Shift — %s</b>\n\n"+
+			"MaxTemp: <b>%.1f°C %s %.1f°C</b> (Δ%+.1f°C)\n"+
+			"RainProb: <b>%.0f%% %s %.0f%%</b> (Δ%+.0f%%)\n\n"+
+			"<i>Markets for this city may need re-evaluation.</i>\n"+
+			"<i>%s UTC</i>",
+		city,
+		oldMaxTemp, tempArrow, newMaxTemp, dTemp,
+		oldPrecipP, precipArrow, newPrecipP, dPrecip,
+		time.Now().UTC().Format("2006-01-02 15:04"),
+	)
+
+	return cfg.send(msg)
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 func truncate(s string, n int) string {

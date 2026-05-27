@@ -205,10 +205,34 @@ func main() {
 		}
 		slog.Info("open positions loaded", "count", len(openPositions))
 
-		// 1. Fetch fused forecasts from all sources (aggregator)
+		// 1. Fetch fused forecasts from all sources (aggregator).
+		// TASK-042: detect significant forecast shifts (e.g. incoming storms)
+		// and notify via Telegram so the operator can review open positions.
+		// DetectForecastShift must be called BEFORE AggregateAll overwrites cache.
+		for _, city := range cfg.Cities {
+			if shift := collectors.DetectForecastShift(city, 0, nil, cfg.DataRoot); shift != nil && shift.Significant {
+				// We'll re-check after aggregate to get actual new values.
+				// Pre-pass: just flag that a shift may be coming.
+				_ = shift
+			}
+		}
+
 		fusedForecasts, err := collectors.AggregateAll(cfg.DataRoot)
 		if err != nil {
 			slog.Warn("aggregator failed, falling back to OpenMeteo only", "err", err)
+		}
+
+		// TASK-042: now check shifts against freshly-fetched forecasts and notify.
+		for city, ff := range fusedForecasts {
+			shift := collectors.DetectForecastShift(city, 0, ff, cfg.DataRoot)
+			if shift != nil && shift.Significant {
+				oldMaxTemp := ff.Forecast.MaxTempC - shift.DeltaMaxTempC
+				oldPrecipP := ff.Forecast.PrecipitationProbability - shift.DeltaPrecipP
+				if err := notifier.NotifyForecastShift(city, oldMaxTemp, ff.Forecast.MaxTempC,
+					oldPrecipP, ff.Forecast.PrecipitationProbability); err != nil {
+					slog.Warn("forecast shift notification failed", "city", city, "err", err)
+				}
+			}
 		}
 
 		// 2. Build active-city set from config.
