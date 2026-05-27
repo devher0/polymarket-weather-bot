@@ -1,5 +1,15 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-104: Real-time re-weighting при расхождении источников
+
+**Файл:** `internal/collectors/super_aggregator.go` (~120 строк добавлено)
+
+**Что сделано:**
+- `reweightForOutliers(sourceProbs, weights)` — обнаруживает источники с отклонением >2σ от среднего; понижает их вес до `outlierWeightFloor=0.05`; для ECMWF — наоборот, повышает вес на `ecmwfOutlierBoost=1.5×`; ренормализует веса
+- `logAndRecordOutliers(outliers, dataRoot)` — логирует каждый outlier (формат: "NOAA outlier detected (0.82 vs mean 0.45), weight reduced to 0.05"); записывает Brier-вклад в `source_accuracy.json` для долгосрочного учёта
+- `AggregateSuperForecast` — вызывает re-weighting перед weighted fusion, после сбора всех источников
+- Структура `outlierRecord` для передачи метаданных outlier между функциями
+
 ## 2026-05-27 — TASK-103: Исторический базис — per-source/city/signal accuracy
 
 **Файлы:** `internal/aggregation/source_accuracy.go` (215 строк), `internal/aggregation/source_accuracy_test.go` (165 строк)

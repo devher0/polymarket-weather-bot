@@ -978,7 +978,7 @@ NOAA      / miami    / heat → Brier: 0.08, N=20 (отличный)
 - ECMWF хорош для Европы → вес 0.45 для london/rain
 - Экспортировать в dashboard и Prometheus /metrics
 
-### TASK-104: Real-time re-weighting при расхождении источников
+### [x] 2026-05-27 — TASK-104: Real-time re-weighting при расхождении источников
 **Файл:** `internal/collectors/super_aggregator.go` (обновить)
 Когда источники сильно расходятся — не усреднять, а анализировать:
 - Если 1 источник outlier (отклонение > 2σ от остальных) → понизить его вес в текущем цикле

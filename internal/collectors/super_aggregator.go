@@ -7,10 +7,17 @@
 // pipeline never blocks.  Dynamic weights are read from source_accuracy.json;
 // sources with better Brier scores over the last 30 days receive higher weight
 // automatically.
+//
+// TASK-104: Real-time re-weighting when sources diverge significantly.  When
+// a single source is an outlier (deviation > 2σ from the group mean), its
+// weight is reduced to outlierWeightFloor for the current cycle.  Exception:
+// ECMWF is treated as the authoritative source — if it is the outlier, its
+// weight is boosted instead of penalised.
 package collectors
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"time"
@@ -22,6 +29,19 @@ import (
 // AggregateSuperForecast.  Generous enough for slow APIs (RAOB, MTG) but
 // short enough to keep the overall pipeline under ~12 s.
 const superSourceTimeout = 10 * time.Second
+
+// outlierSigmaThreshold is the number of standard deviations a source must
+// deviate from the group mean to be classified as an outlier.
+const outlierSigmaThreshold = 2.0
+
+// outlierWeightFloor is the weight assigned to a non-ECMWF outlier source in
+// the current cycle (overrides its normal weight).
+const outlierWeightFloor = 0.05
+
+// ecmwfOutlierBoost multiplies the ECMWF weight when ECMWF is the outlier
+// (ECMWF is typically the most accurate global model and is trusted over
+// the ensemble when it diverges).
+const ecmwfOutlierBoost = 1.5
 
 // SourceResult holds the contribution of a single weather data source.
 type SourceResult struct {
@@ -106,6 +126,151 @@ func superWeights(dataRoot string) map[string]float64 {
 		}
 	}
 	return merged
+}
+
+// outlierRecord tracks a single detected outlier for logging and Brier history.
+type outlierRecord struct {
+	source  string
+	value   float64
+	mean    float64
+	sigma   float64
+	ecmwf   bool // true when the outlier is ECMWF (treated differently)
+}
+
+// reweightForOutliers analyses per-source rain probabilities and returns a
+// copy of weights with adjustments applied for any detected outliers.
+//
+// Algorithm:
+//  1. Compute the overall mean and stddev of all available rain probabilities.
+//  2. For each source whose |value − mean| > 2σ, mark it as an outlier.
+//  3. Non-ECMWF outliers: reduce weight to outlierWeightFloor.
+//  4. ECMWF outlier: multiply its weight by ecmwfOutlierBoost instead, because
+//     ECMWF is typically the highest-resolution global model and is trusted when
+//     it disagrees with the lower-resolution ensemble members.
+//  5. After adjustments, re-normalise so all weights still sum to 1.
+//
+// The function also returns a slice of outlierRecord for the caller to log.
+// When fewer than 3 sources are available the function returns weights unchanged
+// (too few points to compute a meaningful stddev).
+func reweightForOutliers(
+	sourceProbs map[string]float64, // source → rain probability
+	weights map[string]float64, // source → current weight (may be modified)
+) (adjusted map[string]float64, outliers []outlierRecord) {
+	if len(sourceProbs) < 3 {
+		return weights, nil
+	}
+
+	// Collect available probabilities.
+	probs := make([]float64, 0, len(sourceProbs))
+	for _, p := range sourceProbs {
+		probs = append(probs, p)
+	}
+	mean := 0.0
+	for _, p := range probs {
+		mean += p
+	}
+	mean /= float64(len(probs))
+	sigma := stddev(probs)
+
+	// No meaningful spread — nothing to adjust.
+	if sigma == 0 {
+		return weights, nil
+	}
+
+	// Build adjusted copy.
+	adjusted = make(map[string]float64, len(weights))
+	for k, v := range weights {
+		adjusted[k] = v
+	}
+
+	for src, p := range sourceProbs {
+		deviation := math.Abs(p - mean)
+		if deviation <= outlierSigmaThreshold*sigma {
+			continue // within normal range
+		}
+		rec := outlierRecord{
+			source: src,
+			value:  p,
+			mean:   mean,
+			sigma:  sigma,
+		}
+		if src == "ecmwf" {
+			rec.ecmwf = true
+			// ECMWF outlier → boost its weight.
+			if w, ok := adjusted[src]; ok {
+				adjusted[src] = w * ecmwfOutlierBoost
+			}
+		} else {
+			// Other outlier → reduce weight to floor.
+			adjusted[src] = outlierWeightFloor
+		}
+		outliers = append(outliers, rec)
+	}
+
+	if len(outliers) == 0 {
+		return weights, nil // nothing changed
+	}
+
+	// Re-normalise.
+	total := 0.0
+	for _, w := range adjusted {
+		total += w
+	}
+	if total > 0 {
+		for k := range adjusted {
+			adjusted[k] /= total
+		}
+	}
+	return adjusted, outliers
+}
+
+// logAndRecordOutliers emits a log line for each detected outlier and appends
+// the event to source_accuracy.json so long-term Brier history reflects
+// systematic outlier behaviour.  dataRoot may be "" (uses current directory).
+func logAndRecordOutliers(outliers []outlierRecord, dataRoot string) {
+	for _, o := range outliers {
+		if o.ecmwf {
+			slog.Info("super_aggregator: ECMWF diverges from ensemble — weight boosted",
+				"source", o.source,
+				"value", fmt.Sprintf("%.2f", o.value),
+				"group_mean", fmt.Sprintf("%.2f", o.mean),
+				"sigma", fmt.Sprintf("%.2f", o.sigma),
+			)
+		} else {
+			slog.Info(fmt.Sprintf("super_aggregator: %s outlier detected (%.2f vs mean %.2f), weight reduced to %.2f",
+				o.source, o.value, o.mean, outlierWeightFloor),
+				"source", o.source,
+				"value", fmt.Sprintf("%.2f", o.value),
+				"group_mean", fmt.Sprintf("%.2f", o.mean),
+				"sigma", fmt.Sprintf("%.2f", o.sigma),
+			)
+		}
+	}
+
+	// Persist outlier events by recording a synthetic Brier contribution:
+	// treat the outlier's prediction as the "bet probability" and the group
+	// mean as the "outcome proxy".  This will gradually lower the weight of
+	// persistent outlier sources through the existing Brier-score mechanism.
+	if len(outliers) == 0 || dataRoot == "" {
+		return
+	}
+	accuracyMu.Lock()
+	defer accuracyMu.Unlock()
+	accuracy := loadSourceAccuracyLocked(dataRoot)
+	for _, o := range outliers {
+		if o.ecmwf {
+			continue // do not penalise ECMWF in Brier history
+		}
+		diff := o.value - o.mean // deviation from consensus
+		brier := diff * diff
+		st := accuracy[o.source]
+		st.Count++
+		st.BrierSum += brier
+		accuracy[o.source] = st
+	}
+	if err := saveSourceAccuracyLocked(accuracy, dataRoot); err != nil {
+		slog.Warn("super_aggregator: failed to persist outlier brier stats", "err", err)
+	}
 }
 
 // AggregateSuperForecast fetches all available weather sources in parallel and
@@ -247,6 +412,18 @@ func AggregateSuperForecast(city string, dayOffset int, dataRoot string) (*Super
 			"max_wind_shear", raobProfile.MaxWindShear,
 		)
 	}
+
+	// TASK-104: Real-time re-weighting when sources diverge.
+	// Build a map of available source rain probabilities so we can detect
+	// outliers before the weighted fusion step.
+	sourceProbs := make(map[string]float64, len(raws))
+	for _, r := range raws {
+		if r.ok {
+			sourceProbs[r.name] = r.forecast.PrecipitationProbability / 100.0
+		}
+	}
+	weights, outliers := reweightForOutliers(sourceProbs, weights)
+	logAndRecordOutliers(outliers, dataRoot)
 
 	// Build per-source results and compute fused values.
 	sourceResults := make([]SourceResult, 0, len(raws))
