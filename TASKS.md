@@ -995,7 +995,7 @@ Spread между источниками = мера неопределённос
 - SpreadScale(sources []float64) float64 — стандартное отклонение → scaling factor
 - Эффект: автоматически больше ставим когда уверены, меньше когда сомневаемся
 
-### TASK-106: Nowcasting — прогноз на следующие 2-6 часов
+### [x] 2026-05-27 — TASK-106: Nowcasting — прогноз на следующие 2-6 часов
 **Файл:** `internal/collectors/nowcast.go`
 Для рынков которые закрываются сегодня — нужен nowcast а не daily forecast:
 - Open-Meteo minutely_15 endpoint: 15-минутные интервалы на 2 суток

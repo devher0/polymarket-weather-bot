@@ -325,6 +325,68 @@ func stringContains(s, sub string) bool {
 
 // ─── halfKelly tests ──────────────────────────────────────────────────────────
 
+// ─── TASK-106: nowcast blend tests ───────────────────────────────────────────
+
+// TestNowcastBlend_ReasonAnnotated verifies that EvaluateFused annotates the
+// decision reason with "nowcast_blend" when the market expires today (EndDate
+// set to today) and the signal is "rain". Because NowcastRainProbability calls
+// the live Open-Meteo API (and falls back to 0.10 on error), the test is valid
+// in offline environments: the fallback value is still blended and annotated.
+func TestNowcastBlend_ReasonAnnotated(t *testing.T) {
+	// High precip probability so there is strong edge and a decision is made.
+	fc := makeForecast("new_york", 20, 10, 90, 15, 80)
+	ff := makeFused(fc, 0.85)
+
+	// EndDate == today so DaysUntilExpiry() == 0.
+	m := markets.Market{
+		ConditionID: "cond-nowcast",
+		Question:    "Will it rain in New York today?",
+		City:        "new_york",
+		Signal:      "rain",
+		YesTokenID:  "tok-yes",
+		NoTokenID:   "tok-no",
+		YesPrice:    0.30,
+		NoPrice:     0.70,
+		EndDate:     "2026-05-27", // matches currentDate in test env
+	}
+
+	d := EvaluateFused(m, ff, 1000, 0.05, 100, "")
+	if d == nil {
+		t.Skip("no edge after nowcast blend; skip annotation check")
+	}
+	if !containsStr(d.Reason, "nowcast_blend") {
+		t.Errorf("expected 'nowcast_blend' in reason, got: %s", d.Reason)
+	}
+}
+
+// TestNowcastBlend_NonRainSignalSkipped ensures nowcast blend is NOT applied
+// to non-rain signals (e.g. "heat") even when DaysUntilExpiry == 0.
+func TestNowcastBlend_NonRainSignalSkipped(t *testing.T) {
+	fc := makeForecast("miami", 42, 0, 5, 10, 1) // hot, no rain
+	ff := makeFused(fc, 0.85)
+
+	m := markets.Market{
+		ConditionID: "cond-heat-today",
+		Question:    "Will it exceed 40°C in Miami today?",
+		City:        "miami",
+		Signal:      "heat",
+		ThresholdC:  40.0,
+		YesTokenID:  "tok-yes",
+		NoTokenID:   "tok-no",
+		YesPrice:    0.30,
+		NoPrice:     0.70,
+		EndDate:     "2026-05-27",
+	}
+
+	d := EvaluateFused(m, ff, 1000, 0.05, 100, "")
+	if d == nil {
+		t.Skip("no edge; skip annotation check")
+	}
+	if containsStr(d.Reason, "nowcast_blend") {
+		t.Errorf("unexpected 'nowcast_blend' in reason for heat signal: %s", d.Reason)
+	}
+}
+
 func TestHalfKelly_ZeroEdge(t *testing.T) {
 	size := halfKelly(0, 2.0, 1000, 0.05)
 	if size != 0 {

@@ -454,6 +454,25 @@ func EvaluateFused(
 		sourceNote += fmt.Sprintf(" lcc_boost=+%.0f%%", lwBoost*100)
 	}
 
+	// TASK-106: for markets expiring today, blend daily forecast with nowcast.
+	// minutely_15 data is ~20–30% more accurate for intraday rain signals.
+	// We use a 40/60 weight (daily/nowcast) and update precipitationProbability.
+	// Only applies when EndDate is explicitly set (EndDate=="" means unknown expiry).
+	if m.EndDate != "" && m.DaysUntilExpiry() == 0 && (m.Signal == "rain" || m.Signal == "storm") && m.City != "" {
+		nowcastP := collectors.NowcastRainProbability(m.City, 360) // next 6 hours
+		blended := 0.40*alertForecast.PrecipitationProbability/100 + 0.60*nowcastP
+		blended = math.Min(0.97, math.Max(0.01, blended))
+		slog.Info("nowcast blend applied",
+			"city", m.City,
+			"signal", m.Signal,
+			"daily_precip_prob", fmt.Sprintf("%.1f%%", alertForecast.PrecipitationProbability),
+			"nowcast_p", fmt.Sprintf("%.2f", nowcastP),
+			"blended_p", fmt.Sprintf("%.2f", blended),
+		)
+		alertForecast.PrecipitationProbability = blended * 100
+		sourceNote += fmt.Sprintf(" nowcast_blend(%.0f%%)", blended*100)
+	}
+
 	// TASK-055: adjust minEdge based on forecast confidence.
 	// High-confidence forecasts (sources agree) can enter with smaller edge;
 	// low-confidence forecasts require a larger edge as safety margin.

@@ -1,5 +1,19 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-106: Nowcasting — прогноз на следующие 2-6 часов
+
+**Файлы изменены:**
+- `internal/collectors/nowcast.go` (уже существовал, 170 строк — core logic NowcastRainProbability/GetNowcast/buildNowcastSummary)
+- `internal/collectors/nowcast_test.go` (новый, 110 строк — 7 unit-тестов на buildNowcastSummary + fallback + precipBoost)
+- `internal/strategy/strategy.go` (+17 строк — TASK-106 blend block в EvaluateFused)
+- `internal/strategy/strategy_test.go` (+50 строк — TestNowcastBlend_ReasonAnnotated, TestNowcastBlend_NonRainSignalSkipped)
+
+**Что сделано:**
+- Интегрировал `NowcastRainProbability` в `EvaluateFused`: для рынков с `EndDate != ""` и `DaysUntilExpiry() == 0` и signal `rain`/`storm` применяется blend 40% daily + 60% nowcast (minutely_15, следующие 6 часов)
+- Guard: `EndDate != ""` предотвращает случайный blend для рынков без даты закрытия
+- Результат логируется + аннотируется в `Decision.Reason` как `nowcast_blend(XX%)`
+- Все тесты проходят
+
 ## 2026-05-27 — TASK-104: Real-time re-weighting при расхождении источников
 
 **Файл:** `internal/collectors/super_aggregator.go` (~120 строк добавлено)
