@@ -1189,3 +1189,34 @@ Spread между источниками = мера неопределённос
 - Для каждого города показывает drift factor по day-0 и day-1: City | D+0 Factor | D+1 Factor | Last ΔTemp | Last ΔPrecip% | Stability
 - Stability label: "stable" (factor ≥ 0.95), "moderate" (0.85–0.95), "unstable" (<0.85)
 - Помогает оператору понять какие города сейчас в состоянии метеорологической неопределённости
+
+---
+
+## 🔴 ПРИОРИТЕТ 27 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-127: Signal-type exposure concentration guard
+**Файлы:** `internal/risk/signal_concentration.go` (новый), `internal/risk/signal_concentration_test.go` (новый), `internal/risk/risk.go` (обновить), `cmd/bot/main.go` (обновить)
+Текущий риск-менеджер не контролирует суммарную экспозицию по типу сигнала. Если у нас 70% USDC в "rain" ставках, а модель дождя систематически ошибается — все ставки проигрывают одновременно.
+- `CheckSignalConcentration(records, signal, newSize) error` — считает (sигнал_exposure + newSize) / (total_exposure + newSize); если > MaxSignalExposurePct → error
+- `SignalExposureBreakdown(records) map[string]float64` — суммарный USDC по сигналам для аналитики
+- `MaxSignalExposurePct float64` в Config (default: 0.40, т.е. не более 40% в одном типе)
+- Вызывать в cmd/bot после CheckCorrelation
+- 8 unit-тестов: пустая история, один сигнал, несколько сигналов, граничный случай, disabled (0), breakdown функция
+
+### [ ] TASK-128: CLOB depth-weighted fair-value enrichment
+**Файлы:** `internal/markets/fair_value.go` (новый), `internal/markets/fair_value_test.go` (новый), `internal/markets/markets.go` (обновить), `internal/markets/liquidity.go` (обновить)
+Текущий `m.YesPrice` берётся из Gamma API как последняя цена — может быть stale. VWAP по лучшим N уровням CLOB даёт более точную оценку справедливой цены и улучшает расчёт edge.
+- `DepthWeightedPrice(levels []bookLevel, topN int) float64` — VWAP по topN=5 уровням
+- `FetchFairValue(tokenID string) (fairYes, fairNo float64, err error)` — запрос CLOB, вычисление VWAP для bid/ask, mid = (vwap_bid + vwap_ask) / 2
+- Добавить `FairYesPrice, FairNoPrice float64` в Market struct
+- В `EnrichWithLiquidity()` — вызывать FetchFairValue и заполнять поля
+- В `strategy.EvaluateFused()` — использовать FairYesPrice если != 0
+- Тесты с mock httptest.Server
+
+### [ ] TASK-129: Dead-heat resolver — ставки на ничью в погодных рынках
+**Файл:** `internal/strategy/deadheat.go` (новый)
+Некоторые рынки сформулированы как "exactly X°C" или "between X and Y mm". Если наш прогноз близко к boundary — вероятность should быть ближе к 50% (dead-heat zone).
+- `IsNearBoundary(ff *FusedForecast, m Market) bool` — true если прогноз в ±σ от порога
+- `DeadHeatAdjust(p float64, distanceToThreshold, sigma float64) float64` — сжать вероятность к 0.5 пропорционально близости к порогу
+- Вызывать в `evaluate()` перед seasonal correction
+- Предотвращает ставки когда "coin flip" — снижает bankroll drain

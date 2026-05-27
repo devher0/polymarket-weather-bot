@@ -48,6 +48,12 @@ type Config struct {
 	// MaxExposureUSDC is the hard cap on the total USDC currently at risk
 	// across all open (unresolved) positions. 0 = disabled.
 	MaxExposureUSDC float64
+
+	// MaxSignalExposurePct is the maximum fraction of total open USDC exposure
+	// that any single signal type (rain, heat, cold, etc.) may represent.
+	// For example, 0.40 means no more than 40% of open exposure in "rain" bets.
+	// 0 = disabled.
+	MaxSignalExposurePct float64
 }
 
 // DefaultConfig returns conservative risk limits suitable for a small bankroll.
@@ -58,6 +64,7 @@ func DefaultConfig() Config {
 		MaxDailyBets:          20,
 		MaxOpenPositions:      30,
 		MaxSameCitySignalBets: 2,
+		MaxSignalExposurePct:  0.40, // no more than 40% of open exposure in one signal type
 	}
 }
 

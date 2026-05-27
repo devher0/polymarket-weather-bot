@@ -1577,3 +1577,25 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 `go build ./...` — OK | `go test ./...` — OK (все пакеты зелёные)
 
 **Строк:** ~430 (platt.go: ~180, telegram_commands.go: +95, first_seen.go: ~110, bot/main.go: +45)
+
+## 2026-05-28 01:37 UTC — TASK-127
+
+**Файлы изменены:**
+- `internal/risk/signal_concentration.go` (новый, 103 строки) — signal concentration guard
+- `internal/risk/signal_concentration_test.go` (новый, 96 строк) — 10 unit-тестов
+- `internal/risk/risk.go` (+9 строк) — MaxSignalExposurePct в Config, default 0.40
+- `cmd/bot/main.go` (+13 строк) — вызов CheckSignalConcentration после CheckCorrelation
+- `TASKS.md` — добавлены TASK-127/128/129, TASK-127 закрыт
+
+**Что сделано:**
+
+**TASK-127: Signal-type exposure concentration guard** — новый risk control предотвращает ситуацию когда >40% открытых USDC сосредоточено в одном типе сигнала (rain/heat/cold/etc.). Если у нас систематически неправильная модель дождя, все rain ставки проигрывают одновременно — это нивелирует диверсификацию по городам. Теперь:
+- `CheckSignalConcentration(records, signal, newSize)` — считает (текущий_сигнал + newSize) / (весь_открытый + newSize); если > MaxSignalExposurePct → error
+- `SignalExposureBreakdown(records)` — map[signal]usdc для аналитики и dashboard
+- `SignalConcentrationPct(records, signal)` — процент открытой экспозиции для конкретного сигнала
+- `MaxSignalExposurePct = 0.40` в DefaultConfig (40% лимит)
+- Вызывается в cmd/bot после CheckCorrelation, перед adverse move check
+- Resolved ставки корректно исключены из расчёта
+- 10 unit-тестов: disabled, empty signal, no history, under limit, exactly at limit, over limit, resolved excluded, breakdown basic, pct empty, pct values
+
+**Итого:** ~220 строк кода, `go build ./...` чисто, `go test ./internal/risk/...` — все 31 тест проходят.

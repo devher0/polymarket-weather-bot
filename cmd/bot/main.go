@@ -804,6 +804,18 @@ func main() {
 				continue
 			}
 
+			// TASK-127: signal concentration guard — ensure no single signal type
+			// (rain/heat/cold/etc.) dominates more than MaxSignalExposurePct of
+			// total open exposure, preventing model-bias-driven correlated losses.
+			if err := riskMgr.CheckSignalConcentration(history, m.Signal, d.SizeUSDC); err != nil {
+				slog.Info("signal concentration guard: skip bet",
+					"signal", m.Signal,
+					"size_usdc", fmt.Sprintf("%.2f", d.SizeUSDC),
+					"reason", err.Error(),
+				)
+				continue
+			}
+
 			// TASK-056: adverse move check — if price of our side has fallen >0.15
 			// over the last 3 snapshots, require extra edge (+0.05) as safety margin.
 			// TASK-060: momentum signal — if favorable trend, log boost; if strong
