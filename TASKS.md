@@ -821,7 +821,7 @@ type FusedForecast struct {
 - Использовать как сигнал для storm/wind рынков: lightning risk → boost storm probability
 - Хранить в data/lightning/{city}_{hour}.json
 
-### TASK-089: CAPE индекс — конвективная энергия (storm predictor)
+### [x] 2026-05-27 — TASK-089: CAPE индекс — конвективная энергия (storm predictor)
 **Файл:** `internal/collectors/aggregator.go` (обновить), `internal/weather/weather.go` (обновить)
 CAPE (Convective Available Potential Energy) — лучший физический предиктор гроз:
 - Добавить поле `CapeJkg float64` в `weather.Forecast`

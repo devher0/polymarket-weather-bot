@@ -984,3 +984,23 @@
 **Push:** `git push` → master — OK
 
 **Строк добавлено:** ~235 (weather.go: +50, markets.go: +30, strategy.go: +10, uv_test.go: +85, markets_test.go: +60)
+
+## 2026-05-27 — TASK-089: CAPE индекс — конвективная энергия (storm predictor)
+
+**Задача:** TASK-089 — добавить CAPE (Convective Available Potential Energy) как предиктор гроз.
+
+**Реализация:** Все компоненты уже были реализованы в предыдущих сессиях:
+- `CapeJkg float64` поле в `weather.Forecast` (weather.go)
+- `CAPEStormProbability(cape float64) float64` функция (weather.go): cape<500→0.05, 500-1500→0.25, 1500-3000→0.60, >3000→0.90
+- Фетч `cape_max` из Open-Meteo через HRRR (hrrr.go)
+- Накопление maxCapeJkg в fuse() (aggregator.go)
+- CAPE boost в strategy.go для wind/rain сигналов
+
+**Добавлено в этой сессии:** `internal/weather/cape_test.go` — 11 unit-тестов для CAPEStormProbability (нулевые значения, слабый/умеренный/высокий/очень высокий CAPE, монотонность)
+
+**Файлы изменены:** internal/weather/cape_test.go (новый, 70 строк)
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK (11 новых CAPE тестов, все зелёные)
+**Push:** `git push` → master — OK
+
+**Строк добавлено:** ~70 (cape_test.go: +70)
