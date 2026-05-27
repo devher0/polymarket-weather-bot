@@ -7,6 +7,10 @@
 // DetectAdverseMove detects when the price of our side has fallen significantly
 // (>0.15) over the last 3 recorded snapshots — a signal of informed trading
 // against our position.
+//
+// TASK-060: DetectMomentum analyses the price trend to identify whether the
+// market is moving in our favour or against us, enabling momentum-aware edge
+// requirements.
 package markets
 
 import (
@@ -24,6 +28,20 @@ const (
 	snapshotDir          = "data/price_snapshots"
 	adverseMoveThreshold = 0.15 // price drop of our side required to flag adverse move
 	adverseMoveWindow    = 3    // number of most-recent snapshots to compare
+
+	// TASK-060: momentum detection parameters.
+	momentumWindow      = 5 // number of snapshots to examine for trend
+	momentumMinPoints   = 4 // minimum snapshots required to compute momentum
+	momentumRunRequired = 3 // consecutive moves in same direction to flag momentum
+)
+
+// MomentumDirection describes whether the market is moving in our favour.
+type MomentumDirection string
+
+const (
+	MomentumFavorable MomentumDirection = "favorable" // price of our side is rising
+	MomentumAdverse   MomentumDirection = "adverse"   // price of our side is falling
+	MomentumNeutral   MomentumDirection = "neutral"   // no clear trend
 )
 
 // PricePoint is one CLOB mid-price observation for a market.
@@ -195,4 +213,88 @@ func SnapshotOpenPositions(openTokens map[string]string, dataRoot string) {
 			_ = err
 		}
 	}
+}
+
+// DetectMomentum analyses the price history for our side and detects whether
+// there is a sustained trend (TASK-060).
+//
+// Algorithm:
+//  1. Take the last min(momentumWindow, len(history)) points.
+//  2. Count consecutive price moves in the same direction starting from the
+//     most-recent snapshot and working backwards.
+//  3. If consecutiveRun >= momentumRunRequired in our side's direction:
+//     - rising prices → MomentumFavorable
+//     - falling prices → MomentumAdverse
+//  4. strength = float64(consecutiveRun) / float64(momentumWindow), clamped [0,1].
+//
+// Returns MomentumNeutral with strength 0 when there is insufficient history
+// or no clear trend.
+func DetectMomentum(side string, history []PricePoint) (MomentumDirection, float64) {
+	if len(history) < momentumMinPoints {
+		return MomentumNeutral, 0
+	}
+
+	// Trim to the last momentumWindow points.
+	start := len(history) - momentumWindow
+	if start < 0 {
+		start = 0
+	}
+	window := history[start:]
+
+	// Helper: extract the relevant side price.
+	sidePrice := func(pp PricePoint) float64 {
+		if side == "NO" {
+			return pp.NoPrice
+		}
+		return pp.YesPrice
+	}
+
+	// Walk from newest to oldest, counting the initial run direction.
+	// We compare window[i] vs window[i-1] (i from last index downwards).
+	upRun := 0
+	downRun := 0
+	for i := len(window) - 1; i >= 1; i-- {
+		delta := sidePrice(window[i]) - sidePrice(window[i-1])
+		if delta > 0 {
+			if downRun > 0 {
+				break // run ended
+			}
+			upRun++
+		} else if delta < 0 {
+			if upRun > 0 {
+				break // run ended
+			}
+			downRun++
+		}
+		// delta == 0 → no-change, continue the same run
+	}
+
+	maxRun := upRun
+	if downRun > maxRun {
+		maxRun = downRun
+	}
+
+	if maxRun < momentumRunRequired {
+		return MomentumNeutral, 0
+	}
+
+	strength := float64(maxRun) / float64(momentumWindow)
+	if strength > 1.0 {
+		strength = 1.0
+	}
+
+	if upRun >= momentumRunRequired {
+		slog.Debug("price_tracker: favorable momentum",
+			"side", side,
+			"run", upRun,
+			"strength", fmt.Sprintf("%.2f", strength),
+		)
+		return MomentumFavorable, strength
+	}
+	slog.Debug("price_tracker: adverse momentum",
+		"side", side,
+		"run", downRun,
+		"strength", fmt.Sprintf("%.2f", strength),
+	)
+	return MomentumAdverse, strength
 }

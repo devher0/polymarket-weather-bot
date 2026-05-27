@@ -512,6 +512,8 @@ func main() {
 
 			// TASK-056: adverse move check — if price of our side has fallen >0.15
 			// over the last 3 snapshots, require extra edge (+0.05) as safety margin.
+			// TASK-060: momentum signal — if favorable trend, log boost; if strong
+			// adverse momentum, require extra edge (+0.03) on top of adverse-move check.
 			if priceHistory, phErr := markets.GetPriceHistory(m.ConditionID, cfg.DataRoot); phErr == nil {
 				if adverse, drop := markets.DetectAdverseMove(d.Side, priceHistory); adverse {
 					requiredEdge := cfg.MinEdge + 0.05
@@ -530,6 +532,42 @@ func main() {
 						"edge", fmt.Sprintf("%.3f", d.Edge),
 						"required", fmt.Sprintf("%.3f", requiredEdge),
 					)
+				}
+
+				// TASK-060: momentum-aware edge requirement.
+				momDir, momStrength := markets.DetectMomentum(d.Side, priceHistory)
+				switch momDir {
+				case markets.MomentumFavorable:
+					slog.Info("momentum: market moving in our favour",
+						"conditionID", m.ConditionID,
+						"side", d.Side,
+						"strength", fmt.Sprintf("%.2f", momStrength),
+					)
+					// Append momentum info to decision reason.
+					d.Reason += fmt.Sprintf(" | momentum=favorable(%.2f)", momStrength)
+				case markets.MomentumAdverse:
+					// Strong adverse momentum (strength > 0.60) → raise the bar.
+					if momStrength > 0.60 {
+						requiredEdge := cfg.MinEdge + 0.03
+						if d.Edge < requiredEdge {
+							slog.Info("momentum: adverse trend, skipping (edge insufficient)",
+								"conditionID", m.ConditionID,
+								"side", d.Side,
+								"strength", fmt.Sprintf("%.2f", momStrength),
+								"edge", fmt.Sprintf("%.3f", d.Edge),
+								"required", fmt.Sprintf("%.3f", requiredEdge),
+							)
+							continue
+						}
+						d.Reason += fmt.Sprintf(" | momentum=adverse(%.2f,+0.03 req)", momStrength)
+						slog.Info("momentum: adverse but edge sufficient, proceeding",
+							"conditionID", m.ConditionID,
+							"side", d.Side,
+							"strength", fmt.Sprintf("%.2f", momStrength),
+						)
+					} else {
+						d.Reason += fmt.Sprintf(" | momentum=adverse(%.2f)", momStrength)
+					}
 				}
 			}
 

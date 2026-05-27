@@ -655,3 +655,24 @@
 
 **Итог:** `go build ./...` — OK, все тесты прошли (8 пакетов).
 **Строк добавлено:** ~170
+
+---
+
+## 2026-05-27 18:50 UTC — TASK-060: Market price momentum signal
+
+**Задача:** TASK-060
+
+**Файлы созданы/изменены:**
+- `internal/markets/price_tracker.go` — добавлены константы `momentumWindow=5`, `momentumMinPoints=4`, `momentumRunRequired=3`; тип `MomentumDirection` (Favorable/Adverse/Neutral); функция `DetectMomentum(side, history)` (~75 строк): берёт последние 5 снапшотов, подсчитывает consecutive run движений цены нашей стороны, возвращает направление и силу тренда (0-1)
+- `internal/markets/price_tracker_test.go` — НОВЫЙ (~110 строк): 8 unit-тестов для DetectMomentum — insufficient history, favorable YES, favorable NO, adverse YES, neutral zigzag, run below threshold, strength capped at 1.0, flat prices
+- `cmd/bot/main.go` — расширен блок TASK-056 (~30 новых строк): после adverse move check вызываем `DetectMomentum`; favorable → логируем boost и добавляем в Decision.Reason; adverse+strength>0.60 → требуем edge +0.03; если недостаточно — skip с логом
+
+**Алгоритм DetectMomentum:**
+1. Взять последние min(5, N) точек истории
+2. Идти от новейшей к старейшей, считать последовательный run в одну сторону
+3. Если run ≥ 3 и вверх → MomentumFavorable; если вниз → MomentumAdverse
+4. strength = run/5, clamped [0,1]
+
+**Тесты:** 8/8 PASS, `go test ./...` — all OK, `go build ./...` — OK
+
+**Строк добавлено:** ~215
