@@ -1458,3 +1458,29 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 - `go build ./...` и `go test ./...` — OK
 
 **Строк:** ~142 (unrealized.go: 100, dashboard: +30, metrics: +12)
+
+---
+
+## 2026-05-28 00:57 UTC — TASK-118 + TASK-119
+
+### TASK-118: Per-signal min_edge config
+**Файлы:** `config/config.go`, `config/config.yaml`, `cmd/bot/main.go`
+
+- Добавлен `SignalMinEdge map[string]float64` в `Config` (yaml: `signal_min_edge:`)
+- Реализована `GetMinEdgeForSignal(cfg, signal) float64` — возвращает signal-specific или global MinEdge
+- В bot loop перед `EvaluateFused`: вычисляется `adaptedSignalMinEdge = signalMinEdge × adaptiveFactor`
+- Логирует "using signal min_edge=X for signal=Y" при отклонении от глобального порога
+- config.yaml: пример конфига с закомментированными значениями rain=0.06, heat=0.04, snow=0.08
+
+### TASK-119: API downtime alert
+**Файлы:** `cmd/bot/main.go`
+
+- `consecutiveAPIFails int` — счётчик в main() scope, переживает циклы
+- При ошибке GetWeatherMarkets: инкремент + лог `api_fail_streak=N`
+- При переходе 2→3 (точно на 3): отправляет Telegram через `NotifyError`
+- Сброс счётчика в 0 при успешном запросе
+- Не спамит: alert только при transition, не каждую итерацию
+
+`go build ./...` — OK
+
+**Строк:** ~35 (config.go: +15, config.yaml: +12, cmd/bot/main.go: +25)

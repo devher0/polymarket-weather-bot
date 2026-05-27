@@ -1099,7 +1099,7 @@ Spread между источниками = мера неопределённос
 - Добавить Prometheus metric `unrealized_pnl_usdc` в `/metrics`
 - Timeout 2s per position; при ошибке — показывать "N/A" без краша
 
-### [ ] TASK-118: Per-signal min_edge config — разные пороги edge для разных сигналов
+### [x] 2026-05-28 — TASK-118: Per-signal min_edge config — разные пороги edge для разных сигналов
 **Файлы:** `config/config.go` (обновить), `config/config.yaml` (обновить), `internal/strategy/strategy.go` (обновить)
 - Добавить `SignalMinEdge map[string]float64` в Config (yaml: `signal_min_edge:`, env не нужен)
 - `GetMinEdgeForSignal(cfg *Config, signal string) float64` — возвращает signal-specific или default MinEdge
@@ -1107,7 +1107,7 @@ Spread между источниками = мера неопределённос
 - Пример config: rain=0.06, heat=0.04, snow=0.08 (сложнее предсказать)
 - Логировать "using signal min_edge=0.06 for signal=rain"
 
-### [ ] TASK-119: API downtime alert — Telegram уведомление при сбое Polymarket API
+### [x] 2026-05-28 — TASK-119: API downtime alert — Telegram уведомление при сбое Polymarket API
 **Файлы:** `cmd/bot/main.go` (обновить), `internal/notifier/telegram.go` (обновить)
 - Трекать `consecutiveAPIFails int` при ошибке GetWeatherMarkets()
 - При consecutiveAPIFails >= 3 → отправить Telegram: "⚠️ Polymarket API down: N consecutive failures"

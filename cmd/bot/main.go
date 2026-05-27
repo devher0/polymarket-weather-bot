@@ -359,6 +359,10 @@ func main() {
 
 	sess := &sessionStats{startTime: time.Now()}
 
+	// TASK-119: track consecutive Polymarket API failures across cycles.
+	// A Telegram alert is sent when the streak transitions from 2 → 3 failures.
+	consecutiveAPIFails := 0
+
 	// cycleResult holds summary data from one run() call used for adaptive
 	// loop scheduling (TASK-047) and dry-run-file output (TASK-049).
 	type cycleResult struct {
@@ -472,9 +476,20 @@ func main() {
 		// TASK-043: only fetch fresh forecasts for cities that have live markets.
 		mkt, err := markets.GetWeatherMarkets()
 		if err != nil {
-			slog.Error("markets fetch failed", "err", err)
+			consecutiveAPIFails++
+			slog.Error("markets fetch failed",
+				"err", err,
+				"api_fail_streak", consecutiveAPIFails,
+			)
+			// TASK-119: send a Telegram alert at the 2→3 failure transition only.
+			if consecutiveAPIFails == 3 {
+				msg := fmt.Sprintf("⚠️ Polymarket API down: %d consecutive failures\nLast error: %s",
+					consecutiveAPIFails, err.Error())
+				_ = notifier.NotifyError("polymarket_api_down", fmt.Errorf("%s", msg))
+			}
 			return res
 		}
+		consecutiveAPIFails = 0 // reset streak on success
 		slog.Info("weather markets found", "count", len(mkt))
 
 		if len(mkt) == 0 {
@@ -709,12 +724,28 @@ func main() {
 				break
 			}
 
+			// TASK-118: apply per-signal min_edge override, scaled by the same
+			// adaptive factor used for the global threshold.
+			signalMinEdge := config.GetMinEdgeForSignal(cfg, m.Signal)
+			adaptedSignalMinEdge := adaptiveMinEdge
+			if signalMinEdge != cfg.MinEdge && cfg.MinEdge > 0 {
+				adaptiveFactor := adaptiveMinEdge / cfg.MinEdge
+				adaptedSignalMinEdge = signalMinEdge * adaptiveFactor
+			}
+			if adaptedSignalMinEdge != adaptiveMinEdge {
+				slog.Info("using signal min_edge",
+					"signal", m.Signal,
+					"min_edge", fmt.Sprintf("%.4f", adaptedSignalMinEdge),
+					"global_min_edge", fmt.Sprintf("%.4f", adaptiveMinEdge),
+				)
+			}
+
 			var d *strategy.Decision
 			if ff != nil {
-				d = strategy.EvaluateFused(m, ff, effectiveBankroll, adaptiveMinEdge, cfg.MaxBet, cfg.DataRoot)
+				d = strategy.EvaluateFused(m, ff, effectiveBankroll, adaptedSignalMinEdge, cfg.MaxBet, cfg.DataRoot)
 			}
 			if d == nil {
-				d = strategy.Evaluate(m, legacyForecasts, effectiveBankroll, cfg.MinEdge, cfg.MaxBet)
+				d = strategy.Evaluate(m, legacyForecasts, effectiveBankroll, signalMinEdge, cfg.MaxBet)
 			}
 			if d == nil {
 				continue

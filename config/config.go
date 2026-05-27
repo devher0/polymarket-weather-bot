@@ -89,6 +89,11 @@ type Config struct {
 
 	// Webhook notifications (TASK-046)
 	WebhookURL string `yaml:"webhook_url"` // POST JSON events to this URL (empty = disabled)
+
+	// Per-signal minimum edge overrides (TASK-118).
+	// When a signal is listed here its threshold replaces MinEdge.
+	// Example: signal_min_edge: {rain: 0.06, heat: 0.04, snow: 0.08}
+	SignalMinEdge map[string]float64 `yaml:"signal_min_edge"`
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -277,6 +282,17 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("WEBHOOK_URL"); v != "" {
 		cfg.WebhookURL = v
 	}
+}
+
+// GetMinEdgeForSignal returns the signal-specific minimum edge when configured,
+// falling back to cfg.MinEdge for unknown signals (TASK-118).
+func GetMinEdgeForSignal(cfg *Config, signal string) float64 {
+	if cfg.SignalMinEdge != nil {
+		if v, ok := cfg.SignalMinEdge[signal]; ok {
+			return v
+		}
+	}
+	return cfg.MinEdge
 }
 
 // envFloat returns a pointer to the parsed float64, or nil if the env var is

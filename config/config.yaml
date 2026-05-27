@@ -145,6 +145,18 @@ poly_api_passphrase: ""
 telegram_bot_token: ""
 telegram_chat_id: ""
 
+# ── Per-signal minimum edge overrides (TASK-118) ─────────────────────────────
+# Override min_edge on a per-signal basis. Signals not listed here use the
+# global min_edge. Set tighter for high-predictability signals (heat) and
+# wider for harder-to-predict ones (snow).
+# signal_min_edge:
+#   rain: 0.06
+#   heat: 0.04
+#   snow: 0.08
+#   wind: 0.07
+#   sunny: 0.05
+signal_min_edge: {}
+
 # ── Webhook notifications (TASK-046) ─────────────────────────────────────────
 # POST JSON to this URL on bet_placed / bet_skipped_risk / cycle_complete / error.
 # Leave empty to disable. Env override: WEBHOOK_URL
