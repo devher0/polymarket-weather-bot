@@ -186,6 +186,7 @@ func ResolveOpenBets(dataRoot string) (int, error) {
 // StartResolver runs ResolveOpenBets in a background goroutine every hour.
 // It logs but does not propagate errors.  dataRoot is typically ".".
 // The goroutine exits cleanly when ctx is cancelled (e.g. on SIGTERM/SIGINT).
+// After each successful resolution cycle it re-fits the Platt calibrator (TASK-122).
 func StartResolver(dataRoot string, ctx context.Context) {
 	go func() {
 		slog.Info("resolver: started background goroutine (runs every hour)")
@@ -196,6 +197,19 @@ func StartResolver(dataRoot string, ctx context.Context) {
 				slog.Warn("resolver: cycle error", "err", err)
 			} else if n > 0 {
 				slog.Info("resolver: resolved bets in this cycle", "count", n)
+				// TASK-122: re-fit Platt calibrator whenever new resolutions arrive.
+				if history, hErr := LoadHistory(dataRoot); hErr == nil {
+					if pc, cErr := UpdateAndSave(dataRoot, history); cErr == nil {
+						slog.Info("platt calibrator updated",
+							"n_samples", pc.N,
+							"active", pc.IsActive(),
+							"A", fmt.Sprintf("%.3f", pc.A),
+							"B", fmt.Sprintf("%.3f", pc.B),
+						)
+					} else {
+						slog.Warn("platt calibrator save failed", "err", cErr)
+					}
+				}
 			}
 			select {
 			case <-ctx.Done():

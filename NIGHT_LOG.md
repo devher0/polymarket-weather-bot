@@ -1515,3 +1515,43 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 `go build ./...` и `go test ./...` — OK
 
 **Итого строк:** ~340 (weather.go: +58, seasonal.go: +9, strategy.go: +12, cmd/report/main.go: ~261)
+
+---
+
+## 2026-05-28 01:12 UTC — TASK-122 + TASK-123 + TASK-124
+
+### TASK-122: Platt scaling probability calibration
+**Файл:** `internal/calibration/platt.go` (новый, ~180 строк)
+
+- `PlattCalibrator` struct: slope A, intercept B, N (обучающие примеры)
+- `Fit(predictions, outcomes []float64)` — SGD минимизация log-loss, 500 итераций, lr=0.05, L2=1e-4
+- `Calibrate(p float64)` — применяет σ(A×p + B); fallback к raw_p при N < 20
+- `FitFromHistory(records []BetRecord)` — строит обучающие данные из resolved ставок
+- `SaveCalibrator / LoadCalibrator` — JSON персистенция в data/platt_calibrator.json
+- `UpdateAndSave(dataRoot, records)` — полный цикл: load → fit → save
+- `ReliabilityDiagram` — бакеты для калибровочной диаграммы (calibration plot)
+- Автоматическое переобучение в `StartResolver` каждый раз когда появляются новые resolved исходы
+- Интеграция в bot loop: `applyPlattCalibration()` хелпер вызывается после EvaluateFused
+- Если calibrated edge < min_edge → ставка пропускается
+- Калибратор статус виден в Telegram /status: `Calibrator: A=0.987 B=0.021 N=34`
+
+### TASK-123: ASCII sparkline P&L в Telegram /status
+**Файл:** `internal/notifier/telegram_commands.go` (обновлён)
+
+- `asciiSparkline(values []float64) string` — маппинг значений на "▁▂▃▄▅▆▇█" (8 уровней)
+- `buildPnLSparkline(records, nDays)` — дневной P&L из bets_history за последние nDays дней
+- Формат в /status: `P&L 14d: ▁▁▃▄▆▇██▆▃▁▂▄▅ (+4.20 USDC)`
+- Показывается только при наличии ≥ 3 дней данных
+
+### TASK-124: New market first-seen detector
+**Файл:** `internal/markets/first_seen.go` (новый, ~110 строк)
+
+- `RecordFirstSeen(conditionID, dataRoot)` — persist timestamp первого появления рынка в data/market_first_seen.json; возвращает true при новой записи
+- `IsNew(conditionID, dataRoot)` — true если рынок появился < 2 часов назад
+- `RecentMarkets(dataRoot, maxAgeDays)` — список conditionID за последние N дней
+- В bot loop: новые рынки получают min_edge × 0.70 (на 30% ниже) для лучшей price discovery
+- `sc.isNew` поле добавлено в `scored` struct для передачи через первый и второй цикл
+
+`go build ./...` — OK | `go test ./...` — OK (все пакеты зелёные)
+
+**Строк:** ~430 (platt.go: ~180, telegram_commands.go: +95, first_seen.go: ~110, bot/main.go: +45)

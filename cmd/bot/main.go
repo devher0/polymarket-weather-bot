@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -450,6 +451,10 @@ func main() {
 			)
 		}
 
+		// TASK-122: load Platt probability calibrator (fitted from resolved bet history).
+		// When active (N >= 20 resolved bets), it corrects systematic over/under-confidence.
+		plattCal := calibration.LoadCalibrator(cfg.DataRoot)
+
 		// Risk summary at cycle start.
 		slog.Info(risk.Summary(history, risk.Config{
 			MaxDailyLossUSDC:   cfg.MaxDailyLossUSDC,
@@ -605,6 +610,7 @@ func main() {
 			m     markets.Market
 			ff    *collectors.FusedForecast
 			score float64
+			isNew bool // TASK-124: true when market was first seen < 2 hours ago
 		}
 		scoredList := make([]scored, 0, len(mkt))
 
@@ -613,6 +619,13 @@ func main() {
 		for _, m := range mkt {
 			if m.City != "" && !configuredCities[m.City] {
 				continue
+			}
+
+			// TASK-124: record first-seen timestamp for new markets.
+			isNewMarket := markets.RecordFirstSeen(m.ConditionID, cfg.DataRoot)
+			if isNewMarket {
+				slog.Info("new market detected — reduced min_edge applied",
+					"conditionID", m.ConditionID, "city", m.City, "signal", m.Signal)
 			}
 
 			// Resolve the best fused forecast for this market's expiry day.
@@ -643,7 +656,7 @@ func main() {
 			}
 
 			sc := strategy.ScoreMarket(m, ff)
-			scoredList = append(scoredList, scored{m, ff, sc})
+			scoredList = append(scoredList, scored{m, ff, sc, isNewMarket})
 		}
 
 		// TASK-047: detect if all candidates have thin liquidity.
@@ -739,6 +752,14 @@ func main() {
 					"global_min_edge", fmt.Sprintf("%.4f", adaptiveMinEdge),
 				)
 			}
+			// TASK-124: new markets get a 30% reduced min_edge for better price discovery.
+			if sc.isNew || markets.IsNew(m.ConditionID, cfg.DataRoot) {
+				adaptedSignalMinEdge *= 0.70
+				slog.Debug("new market: reduced min_edge by 30%",
+					"conditionID", m.ConditionID,
+					"min_edge", fmt.Sprintf("%.4f", adaptedSignalMinEdge),
+				)
+			}
 
 			var d *strategy.Decision
 			if ff != nil {
@@ -747,6 +768,12 @@ func main() {
 			if d == nil {
 				d = strategy.Evaluate(m, legacyForecasts, effectiveBankroll, signalMinEdge, cfg.MaxBet)
 			}
+			if d == nil {
+				continue
+			}
+
+			// TASK-122: apply Platt calibration to adjust OurProbability and Kelly size.
+			d = applyPlattCalibration(d, plattCal, adaptedSignalMinEdge, effectiveBankroll)
 			if d == nil {
 				continue
 			}
@@ -1237,4 +1264,50 @@ func exportHeatmapFromPredictions(dataRoot string) error {
 		rows = append(rows, strategy.HeatmapRowFromPrediction(r))
 	}
 	return strategy.AppendHeatmap(rows, dataRoot)
+}
+
+// applyPlattCalibration adjusts d.OurProbability with the fitted Platt calibrator
+// and recomputes Kelly sizing. Returns nil if calibrated edge < minEdge.
+// Returns d unchanged when calibrator is not yet active (< 20 resolved bets).
+func applyPlattCalibration(
+	d *strategy.Decision,
+	pc *calibration.PlattCalibrator,
+	minEdge float64,
+	bankroll float64,
+) *strategy.Decision {
+	if d == nil || pc == nil || !pc.IsActive() {
+		return d
+	}
+
+	rawP := d.OurProbability
+	calP := pc.Calibrate(rawP)
+	if math.Abs(calP-rawP) < 1e-6 {
+		return d
+	}
+
+	price := d.MarketPrice
+	if price <= 0 || price >= 1 {
+		return d
+	}
+	newEdge := calP - price
+
+	if newEdge < minEdge {
+		slog.Debug("platt: edge below threshold after calibration — skipping",
+			"city", d.Market.City, "signal", d.Market.Signal,
+			"raw_p", fmt.Sprintf("%.3f", rawP),
+			"cal_p", fmt.Sprintf("%.3f", calP),
+			"edge", fmt.Sprintf("%.3f", newEdge),
+		)
+		return nil
+	}
+
+	out := *d
+	out.OurProbability = calP
+	out.Edge = newEdge
+	out.Reason = fmt.Sprintf("%s [platt:%.3f→%.3f]", d.Reason, rawP, calP)
+	slog.Debug("platt calibration applied",
+		"city", d.Market.City, "signal", d.Market.Signal,
+		"raw_p", fmt.Sprintf("%.3f", rawP), "cal_p", fmt.Sprintf("%.3f", calP),
+	)
+	return &out
 }

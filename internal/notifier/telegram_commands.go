@@ -217,15 +217,104 @@ func handleStatus(bcfg BotConfig) string {
 		sharpeStr = fmt.Sprintf("%.3f [%s, %d days]", sh, calibration.SharpeQuality(sh), cnt)
 	}
 
+	// TASK-123: ASCII sparkline P&L for the last 14 days.
+	sparkStr := ""
+	if spark, total, days := buildPnLSparkline(records, 14); days >= 3 {
+		sign := "+"
+		if total < 0 {
+			sign = ""
+		}
+		sparkStr = fmt.Sprintf("\nP&amp;L 14d: <code>%s</code> (%s%.2f USDC)", spark, sign, total)
+	}
+
+	// TASK-122: show Platt calibrator status.
+	plattStr := ""
+	if pc := calibration.LoadCalibrator(bcfg.DataRoot); pc.IsActive() {
+		plattStr = fmt.Sprintf("\nCalibrator: <code>A=%.3f B=%.3f N=%d</code>", pc.A, pc.B, pc.N)
+	}
+
 	return fmt.Sprintf(
 		"📊 <b>Bot Status</b>\n"+
 			"State: %s\n"+
 			"Brier score: <code>%s</code>\n"+
 			"Sharpe (30d): <code>%s</code>\n"+
 			"Open positions: <b>%d</b>\n"+
-			"Today P&amp;L: <b>%+.2f USDC</b>",
-		pauseState, brierStr, sharpeStr, open, pnlToday,
+			"Today P&amp;L: <b>%+.2f USDC</b>%s%s",
+		pauseState, brierStr, sharpeStr, open, pnlToday, sparkStr, plattStr,
 	)
+}
+
+// asciiSparkline maps a slice of float64 values to a compact Unicode bar string.
+// Uses block elements ▁▂▃▄▅▆▇█ (8 levels).
+func asciiSparkline(values []float64) string {
+	if len(values) == 0 {
+		return ""
+	}
+	bars := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+	minV, maxV := values[0], values[0]
+	for _, v := range values[1:] {
+		if v < minV {
+			minV = v
+		}
+		if v > maxV {
+			maxV = v
+		}
+	}
+	rng := maxV - minV
+	result := make([]rune, len(values))
+	for i, v := range values {
+		idx := 0
+		if rng > 0 {
+			idx = int((v-minV)/rng*7 + 0.5)
+			if idx > 7 {
+				idx = 7
+			}
+		}
+		result[i] = bars[idx]
+	}
+	return string(result)
+}
+
+// buildPnLSparkline computes daily P&L for the last nDays days from bet records.
+// Returns the sparkline string, total P&L over the period, and number of days with data.
+func buildPnLSparkline(records []calibration.BetRecord, nDays int) (spark string, total float64, days int) {
+	now := time.Now().UTC()
+	dailyPnL := make([]float64, nDays)
+	hasData := make([]bool, nDays)
+
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue
+		}
+		age := now.Sub(r.ResolvedAt.UTC())
+		dayIdx := int(age.Hours() / 24)
+		if dayIdx < 0 || dayIdx >= nDays {
+			continue
+		}
+		revIdx := nDays - 1 - dayIdx // oldest → index 0, newest → index nDays-1
+		var pnl float64
+		if *r.Outcome {
+			pnl = r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			pnl = -r.SizeUSDC
+		}
+		dailyPnL[revIdx] += pnl
+		hasData[revIdx] = true
+		total += pnl
+	}
+
+	// Count days with any data.
+	var vals []float64
+	for i, v := range dailyPnL {
+		if hasData[i] {
+			days++
+		}
+		vals = append(vals, v)
+	}
+	if days < 3 {
+		return "", total, days
+	}
+	return asciiSparkline(vals), total, days
 }
 
 func handlePositions(bcfg BotConfig) string {

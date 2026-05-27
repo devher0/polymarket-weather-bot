@@ -1135,3 +1135,35 @@ Spread между источниками = мера неопределённос
 - Таблица городов: бетов / побед / win rate / P&L
 - Таблица открытых позиций: город, сигнал, сторона, размер, вероятность, дата
 - Тёмная тема, responsive 2-колоночная сетка
+
+---
+
+## 🔴 ПРИОРИТЕТ 25 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-122: Platt scaling — байесовская калибровка вероятностей
+**Файл:** `internal/calibration/platt.go` (новый)
+Обучать сигмоидальный калибратор по истории ставок (Platt scaling):
+- `PlattCalibrator` struct: slope A, intercept B, N (число обучающих примеров)
+- `Fit(predictions, outcomes []float64)` — SGD минимизация log-loss, 200 итераций, lr=0.1
+- `Calibrate(p float64) float64` — применить σ(A*p + B) к сырой вероятности
+- `SaveCalibrator(path)` / `LoadCalibrator(path)` — JSON персистенция
+- Автоматически обновлять после каждого resolved исхода в bot loop
+- Показывать calibrated P vs raw P в prediction_log и explain вывод
+- Если N < 20 — возвращать raw p без калибровки (недостаточно данных)
+
+### [x] 2026-05-28 — TASK-123: ASCII sparkline P&L в Telegram /status
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Добавить мини-график P&L за последние 14 дней в ответ /status:
+- `asciiSparkline(values []float64) string` — нормировать, выбрать символ из "▁▂▃▄▅▆▇█"
+- Считать daily P&L из bets_history.csv (grouped by date)
+- Формат: `P&L 14d: ▁▁▃▄▆▇██▆▃▁▂▄▅  (+4.20 USDC total)`
+- Показывать только если есть хотя бы 3 дня данных
+
+### [x] 2026-05-28 — TASK-124: New market early-entry detector
+**Файл:** `internal/markets/first_seen.go` (новый)
+Отслеживать когда каждый conditionID впервые появился:
+- `RecordFirstSeen(conditionID string, dataRoot string)` — сохранять в data/market_first_seen.json
+- `IsNew(conditionID string, dataRoot string) bool` — вернуть true если рынок появился < 2 часов назад
+- В bot loop: если IsNew → уменьшить min_edge на 30% (больше шансов найти edge на неэффективном рынке)
+- Логировать "new_market detected, reduced min_edge" при обнаружении
+- `dashboard new-markets` субкоманда: список рынков появившихся за последние 24ч
