@@ -1,5 +1,22 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-093: CME HDD/CDD индексы — стандарт weather derivatives
+
+**Файлы:** `internal/collectors/cme_degree_days.go` (114 строк), `internal/collectors/cme_degree_days_test.go` (99 строк)
+
+**Что сделано:**
+- Реализованы CME HDD/CDD по стандарту weather derivatives (65°F / 18.333°C baseline)
+- `ComputeDegreeDays(f Forecast) DegreeDays` — HDD/CDD для одного дня
+- `ComputeAccumulatedDegreeDays([]Forecast)` — накопленные значения за период
+- `HeatProbabilityFromCDD` и `ColdProbabilityFromHDD` — вероятности для temperature рынков
+- Добавлены unit-тесты (8 тест-кейсов): hot/cold/baseline, accumulated, probability ranges
+
+**Сборка:** `go build ./...` — OK | `go test ./...` — OK
+
+**Строк добавлено:** 213
+
+---
+
 ## 2026-05-27 — TASK-092: NOAA GFS — глобальный прогноз 16 дней
 
 **Задача:** TASK-092 — добавить NOAA GFS (Global Forecast System) как 7-й источник прогноза с уникальным горизонтом 16 дней, интегрировать в агрегатор, добавить поле `Forecast16Days []Forecast` для долгосрочных рынков.
