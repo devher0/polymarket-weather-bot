@@ -946,6 +946,16 @@ func main() {
 	writeDryRunFile(result)
 	metrics.UpdateCycle(result.placed) // TASK-051: update /healthz state
 
+	// TASK-113: record daily return snapshot and log Sharpe ratio.
+	{
+		startBankroll := calibration.LoadBankroll(cfg.DataRoot)
+		_ = calibration.RecordDailyReturn(startBankroll, startBankroll, cfg.DataRoot)
+		calibration.LogSharpe(cfg.DataRoot)
+		if alert := calibration.SharpeAlertMessage(cfg.DataRoot); alert != "" {
+			_ = notifier.NotifyError("sharpe alert", fmt.Errorf("%s", alert))
+		}
+	}
+
 	if cfg.LoopSec > 0 {
 		baseInterval := time.Duration(cfg.LoopSec) * time.Second
 		slog.Info("loop mode (adaptive)", "base_interval", baseInterval)
@@ -1010,6 +1020,16 @@ func main() {
 				loopResult := run()
 				writeDryRunFile(loopResult) // TASK-049
 				metrics.UpdateCycle(loopResult.placed) // TASK-051: update /healthz state
+
+				// TASK-113: record daily return and emit Sharpe log / alert.
+				{
+					currentBankroll := calibration.LoadBankroll(cfg.DataRoot)
+					_ = calibration.RecordDailyReturn(currentBankroll, currentBankroll, cfg.DataRoot)
+					calibration.LogSharpe(cfg.DataRoot)
+					if alert := calibration.SharpeAlertMessage(cfg.DataRoot); alert != "" {
+						_ = notifier.NotifyError("sharpe alert", fmt.Errorf("%s", alert))
+					}
+				}
 
 				// TASK-075: append market opportunity heatmap CSV for today.
 				if hmRows, hmErr := strategy.LoadTodayHeatmap(cfg.DataRoot); hmErr == nil && len(hmRows) == 0 {

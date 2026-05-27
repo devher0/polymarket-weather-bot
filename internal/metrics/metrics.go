@@ -146,6 +146,16 @@ func metricsHandler(dataRoot string) http.HandlerFunc {
 			"# HELP bankroll_usdc USDC currently at risk in unresolved bets",
 			"# TYPE bankroll_usdc gauge",
 			fmt.Sprintf("bankroll_usdc %g", s.Bankroll),
+
+			"# HELP sharpe_ratio_30d Annualised Sharpe ratio over the last 30 days (-999 if insufficient data)",
+			"# TYPE sharpe_ratio_30d gauge",
+			func() string {
+				sh, cnt, err := calibration.RollingSharpe(dataRoot, 30)
+				if err != nil || cnt < 2 {
+					return "sharpe_ratio_30d -999"
+				}
+				return fmt.Sprintf("sharpe_ratio_30d %g", sh)
+			}(),
 		}
 
 		for _, l := range lines {
@@ -165,17 +175,19 @@ type sourceStatus struct {
 
 // healthzPayload is the JSON body returned by GET /healthz.
 // TASK-108: expanded with per-source status, brier_score, last_bet_at.
+// TASK-113: added sharpe_ratio_30d.
 type healthzPayload struct {
-	Status        string                  `json:"status"`         // "ok" | "degraded"
-	UptimeSec     int64                   `json:"uptime_s"`
-	LastCycleAt   string                  `json:"last_cycle_at"`  // RFC3339 or "never"
-	LastBetAt     string                  `json:"last_bet_at"`    // RFC3339 or "never"
-	Cycles        int64                   `json:"cycles"`
-	BetsPlaced    int64                   `json:"bets_placed"`
-	OpenPositions int                     `json:"open_positions"`
-	BankrollUSDC  float64                 `json:"bankroll_usdc"`
-	BrierScore    float64                 `json:"brier_score"`    // 0=perfect; -1 if no resolved bets
-	Sources       map[string]sourceStatus `json:"sources"`
+	Status          string                  `json:"status"`           // "ok" | "degraded"
+	UptimeSec       int64                   `json:"uptime_s"`
+	LastCycleAt     string                  `json:"last_cycle_at"`    // RFC3339 or "never"
+	LastBetAt       string                  `json:"last_bet_at"`      // RFC3339 or "never"
+	Cycles          int64                   `json:"cycles"`
+	BetsPlaced      int64                   `json:"bets_placed"`
+	OpenPositions   int                     `json:"open_positions"`
+	BankrollUSDC    float64                 `json:"bankroll_usdc"`
+	BrierScore      float64                 `json:"brier_score"`      // 0=perfect; -1 if no resolved bets
+	SharpeRatio30d  float64                 `json:"sharpe_ratio_30d"` // annualised; -999 if insufficient data
+	Sources         map[string]sourceStatus `json:"sources"`
 }
 
 // pingURL does a HEAD/GET to the given URL with a 3-second timeout.
@@ -281,17 +293,23 @@ func healthzHandler(dataRoot string) http.HandlerFunc {
 			httpCode = http.StatusServiceUnavailable
 		}
 
+		sharpeVal := -999.0
+		if sh, cnt, err := calibration.RollingSharpe(dataRoot, 30); err == nil && cnt >= 2 {
+			sharpeVal = sh
+		}
+
 		payload := healthzPayload{
-			Status:        status,
-			UptimeSec:     uptime,
-			LastCycleAt:   lastStr,
-			LastBetAt:     lastBetTime(dataRoot),
-			Cycles:        state.cycleCount.Load(),
-			BetsPlaced:    state.betsPlaced.Load(),
-			OpenPositions: snap.OpenPositions,
-			BankrollUSDC:  snap.Bankroll,
-			BrierScore:    brierVal,
-			Sources:       buildSourceStatuses(dataRoot),
+			Status:         status,
+			UptimeSec:      uptime,
+			LastCycleAt:    lastStr,
+			LastBetAt:      lastBetTime(dataRoot),
+			Cycles:         state.cycleCount.Load(),
+			BetsPlaced:     state.betsPlaced.Load(),
+			OpenPositions:  snap.OpenPositions,
+			BankrollUSDC:   snap.Bankroll,
+			BrierScore:     brierVal,
+			SharpeRatio30d: sharpeVal,
+			Sources:        buildSourceStatuses(dataRoot),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

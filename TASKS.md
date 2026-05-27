@@ -1047,7 +1047,7 @@ Spread между источниками = мера неопределённос
 - `dashboard ab-test` субкоманда — показать текущие результаты A/B теста
 - Переключение в production на winner без перезапуска
 
-### [ ] TASK-113: Sharpe ratio трекер — risk-adjusted return
+### [x] 2026-05-28 — TASK-113: Sharpe ratio трекер — risk-adjusted return
 **Файл:** `internal/calibration/sharpe.go` (новый)
 Считать Sharpe ratio нашего P&L для оценки стратегии как профессионального трейдера:
 - Sharpe = mean(daily_returns) / std(daily_returns) × sqrt(365)

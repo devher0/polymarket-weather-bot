@@ -212,13 +212,19 @@ func handleStatus(bcfg BotConfig) string {
 		pauseState = "⏸ paused"
 	}
 
+	sharpeStr := "n/a (need ≥2 days)"
+	if sh, cnt, err := calibration.RollingSharpe(bcfg.DataRoot, 30); err == nil && cnt >= 2 {
+		sharpeStr = fmt.Sprintf("%.3f [%s, %d days]", sh, calibration.SharpeQuality(sh), cnt)
+	}
+
 	return fmt.Sprintf(
 		"📊 <b>Bot Status</b>\n"+
 			"State: %s\n"+
 			"Brier score: <code>%s</code>\n"+
+			"Sharpe (30d): <code>%s</code>\n"+
 			"Open positions: <b>%d</b>\n"+
 			"Today P&amp;L: <b>%+.2f USDC</b>",
-		pauseState, brierStr, open, pnlToday,
+		pauseState, brierStr, sharpeStr, open, pnlToday,
 	)
 }
 

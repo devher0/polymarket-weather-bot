@@ -1,5 +1,25 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 00:32 UTC — TASK-113: Sharpe ratio трекер
+
+**Файлы изменены:**
+- `internal/calibration/sharpe.go` (новый, 170 строк) — core Sharpe logic
+- `internal/metrics/metrics.go` (+15 строк) — `sharpe_ratio_30d` в /metrics и /healthz
+- `internal/notifier/telegram_commands.go` (+5 строк) — Sharpe в /status ответе
+- `cmd/bot/main.go` (+20 строк) — RecordDailyReturn + LogSharpe + SharpeAlertMessage после каждого цикла
+
+**Что сделано:**
+- Реализован полный Sharpe ratio трекер: daily returns сохраняются в `data/daily_returns.json`
+- `ComputeSharpe(returns)` — Sharpe = mean/stddev × sqrt(365), sample stddev
+- `RollingSharpe(dataRoot, 30)` — 30-дневное скользящее окно
+- `RecordDailyReturn(start, end, dataRoot)` — append/update сегодняшней записи
+- `SharpeQuality(sharpe)` — метки: excellent (>2.0), good (>1.0), acceptable (>0.5), poor
+- `SharpeAlertMessage(dataRoot)` — возвращает Telegram-предупреждение при Sharpe < 0.5 (min 5 дней данных)
+- Метрика `sharpe_ratio_30d` добавлена в Prometheus /metrics endpoint
+- Поле `sharpe_ratio_30d` добавлено в JSON /healthz ответ (-999 если данных < 2 дней)
+- /status Telegram команда теперь показывает "Sharpe (30d): 1.234 [good, 14 days]"
+- `go build ./...` — чистая компиляция
+
 ## 2026-05-27 — TASK-106: Nowcasting — прогноз на следующие 2-6 часов
 
 **Файлы изменены:**
