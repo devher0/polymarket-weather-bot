@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -409,6 +410,181 @@ func NotifyProfitOpportunity(condID, side string, entry, current float64) error 
 	)
 
 	return cfg.send(msg)
+}
+
+// WeeklyDigest sends a comprehensive 7-day performance summary to Telegram
+// with per-city and per-signal breakdown.
+//
+// The timestamp of the last sent digest is persisted in
+// data/last_weekly_digest.txt (RFC3339). If that file shows a digest was sent
+// within the last 7 days the function is a no-op.
+// No-op if Telegram is not configured.
+func WeeklyDigest(dataRoot string) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	// Check if we already sent a digest in the last 7 days.
+	sentFile := "data/last_weekly_digest.txt"
+	if dataRoot != "" && dataRoot != "." {
+		sentFile = dataRoot + "/" + sentFile
+	}
+	if raw, err := os.ReadFile(sentFile); err == nil {
+		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(raw))); err == nil {
+			if time.Since(t) < 7*24*time.Hour {
+				slog.Info("weekly digest: skipped (already sent recently)", "last_sent", t.Format("2006-01-02"))
+				return nil
+			}
+		}
+	}
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		return fmt.Errorf("telegram weekly: load history: %w", err)
+	}
+
+	now := time.Now().UTC()
+	weekAgo := now.Add(-7 * 24 * time.Hour)
+
+	// Filter last 7 days
+	week := make([]calibration.BetRecord, 0, len(records))
+	for _, r := range records {
+		if r.Timestamp.After(weekAgo) {
+			week = append(week, r)
+		}
+	}
+
+	// Weekly stats
+	weekBets := len(week)
+	weekWins, weekLosses := 0, 0
+	weekPnL := 0.0
+	for _, r := range week {
+		if r.Outcome == nil {
+			continue
+		}
+		if *r.Outcome {
+			weekWins++
+			odds := 1.0
+			if r.MarketPrice > 0 {
+				odds = 1.0 / r.MarketPrice
+			}
+			weekPnL += r.SizeUSDC * (odds - 1)
+		} else {
+			weekLosses++
+			weekPnL -= r.SizeUSDC
+		}
+	}
+
+	// All-time stats for Brier
+	brierScore, brierCount, _ := calibration.BrierScore(records)
+
+	// Per-signal breakdown (all-time)
+	sigBreakdown := calibration.SignalBreakdown(records)
+	// Find best and worst signal by win rate (min 5 samples)
+	bestSig, worstSig := "", ""
+	bestWR, worstWR := -1.0, 101.0
+	for sig, bs := range sigBreakdown {
+		if bs.Count < 5 || sig == "(unknown)" {
+			continue
+		}
+		wr := bs.WinRate()
+		if wr > bestWR {
+			bestWR = wr
+			bestSig = sig
+		}
+		if wr < worstWR {
+			worstWR = wr
+			worstSig = sig
+		}
+	}
+
+	// Per-city breakdown (all-time)
+	cityBreakdown := calibration.CityBreakdown(records)
+	bestCity, worstCity := "", ""
+	bestCityWR, worstCityWR := -1.0, 101.0
+	for city, bs := range cityBreakdown {
+		if bs.Count < 5 || city == "(unknown)" {
+			continue
+		}
+		wr := bs.WinRate()
+		if wr > bestCityWR {
+			bestCityWR = wr
+			bestCity = city
+		}
+		if wr < worstCityWR {
+			worstCityWR = wr
+			worstCity = city
+		}
+	}
+
+	// Open positions
+	openCount := 0
+	for _, r := range records {
+		if r.Outcome == nil {
+			openCount++
+		}
+	}
+
+	pnlEmoji := "📈"
+	if weekPnL < 0 {
+		pnlEmoji = "📉"
+	}
+
+	weekWR := "N/A"
+	resolved := weekWins + weekLosses
+	if resolved > 0 {
+		weekWR = fmt.Sprintf("%.1f%%", float64(weekWins)/float64(resolved)*100)
+	}
+
+	brierStr := "N/A"
+	if brierCount > 0 {
+		brierStr = fmt.Sprintf("%.4f", brierScore)
+	}
+
+	bestSigLine, worstSigLine := "", ""
+	if bestSig != "" {
+		bestSigLine = fmt.Sprintf("\n🏆 Best signal: <b>%s</b> (%.1f%% WR)", bestSig, bestWR)
+	}
+	if worstSig != "" && worstSig != bestSig {
+		worstSigLine = fmt.Sprintf("\n⚠️ Worst signal: <b>%s</b> (%.1f%% WR)", worstSig, worstWR)
+	}
+	bestCityLine, worstCityLine := "", ""
+	if bestCity != "" {
+		bestCityLine = fmt.Sprintf("\n🌍 Best city: <b>%s</b> (%.1f%% WR)", bestCity, bestCityWR)
+	}
+	if worstCity != "" && worstCity != bestCity {
+		worstCityLine = fmt.Sprintf("\n📍 Worst city: <b>%s</b> (%.1f%% WR)", worstCity, worstCityWR)
+	}
+
+	msg := fmt.Sprintf(
+		"<b>📊 Weather Bot — Weekly Digest</b>\n"+
+			"<i>%s → %s UTC</i>\n\n"+
+			"%s <b>Week P&amp;L: %+.2f USDC</b>\n"+
+			"Bets this week: %d (%d won / %d lost)\n"+
+			"Win rate (week): %s\n"+
+			"Open positions: %d\n"+
+			"Brier score (all-time): %s\n"+
+			"\n<b>Breakdown:</b>%s%s%s%s\n\n"+
+			"<i>Next weekly digest: ~7 days</i>",
+		weekAgo.Format("Jan 02"), now.Format("Jan 02, 2006"),
+		pnlEmoji, weekPnL,
+		weekBets, weekWins, weekLosses,
+		weekWR,
+		openCount,
+		brierStr,
+		bestSigLine, worstSigLine, bestCityLine, worstCityLine,
+	)
+
+	if err := cfg.send(msg); err != nil {
+		return err
+	}
+
+	// Persist timestamp so we don't re-send for 7 days.
+	_ = os.MkdirAll("data", 0o755)
+	_ = os.WriteFile(sentFile, []byte(now.Format(time.RFC3339)), 0o644)
+	slog.Info("weekly digest sent")
+	return nil
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

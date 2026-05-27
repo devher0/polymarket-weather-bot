@@ -13,6 +13,7 @@ package risk
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -43,6 +44,10 @@ type Config struct {
 	// (unresolved) bets on the same (city, signal) pair (0 = unlimited).
 	// Prevents over-concentration, e.g. multiple open new_york/rain bets.
 	MaxSameCitySignalBets int
+
+	// MaxExposureUSDC is the hard cap on the total USDC currently at risk
+	// across all open (unresolved) positions. 0 = disabled.
+	MaxExposureUSDC float64
 }
 
 // DefaultConfig returns conservative risk limits suitable for a small bankroll.
@@ -141,6 +146,32 @@ func (m *Manager) AllowBet(records []calibration.BetRecord) error {
 			open, m.cfg.MaxOpenPositions)
 	}
 
+	return nil
+}
+
+// ── Exposure guard ────────────────────────────────────────────────────────────
+
+// CheckExposure returns an error when the total USDC currently at risk across
+// all open (unresolved) positions meets or exceeds MaxExposureUSDC.
+//
+// This guard prevents the bot from over-leveraging the bankroll regardless of
+// individual bet sizes. Returns nil when MaxExposureUSDC is 0 (disabled).
+func (m *Manager) CheckExposure(records []calibration.BetRecord) error {
+	if m.cfg.MaxExposureUSDC <= 0 {
+		return nil
+	}
+
+	var total float64
+	for _, r := range records {
+		if r.Outcome == nil {
+			total += r.SizeUSDC
+		}
+	}
+
+	if total >= m.cfg.MaxExposureUSDC {
+		return fmt.Errorf("exposure cap reached: %.2f USDC at risk (max %.2f)", total, m.cfg.MaxExposureUSDC)
+	}
+	slog.Debug("exposure guard: ok", "total_usdc", total, "max_usdc", m.cfg.MaxExposureUSDC)
 	return nil
 }
 

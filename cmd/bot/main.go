@@ -301,6 +301,16 @@ func main() {
 	// Print Brier score from past bets at startup
 	calibration.PrintBrierScore(cfg.DataRoot)
 
+	// TASK-072: weak signal alert — warn if any signal type has <40% win rate (≥10 samples).
+	if startupHistory, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
+		sigBreakdown := calibration.SignalBreakdown(startupHistory)
+		weakSignals := calibration.WeakSignalAlert(sigBreakdown, 10, 40.0)
+		for _, warn := range weakSignals {
+			slog.Warn("weak signal detected: "+warn, "action", "consider raising min_edge")
+			_ = notifier.NotifyError("weak signal", fmt.Errorf("%s", warn))
+		}
+	}
+
 	// Initialise risk manager from config.
 	riskMgr := risk.New(risk.Config{
 		MaxDailyLossUSDC:      cfg.MaxDailyLossUSDC,
@@ -308,6 +318,7 @@ func main() {
 		MaxDailyBets:          cfg.MaxDailyBets,
 		MaxOpenPositions:      cfg.MaxOpenPositions,
 		MaxSameCitySignalBets: cfg.MaxSameCitySignalBets,
+		MaxExposureUSDC:       cfg.MaxExposureUSDC,
 	})
 
 	sess := &sessionStats{startTime: time.Now()}
@@ -677,6 +688,12 @@ func main() {
 				break // stop placing more bets this cycle
 			}
 
+			// TASK-071: total exposure cap — skip if total USDC at risk exceeds max.
+			if err := riskMgr.CheckExposure(history); err != nil {
+				slog.Info("exposure guard: skip bet", "reason", err.Error())
+				break // stop placing more bets this cycle
+			}
+
 			// TASK-054: correlation guard — skip if already over-concentrated in (city, signal).
 			if err := riskMgr.CheckCorrelation(history, m.City, m.Signal); err != nil {
 				slog.Info("corr guard: skip bet",
@@ -946,6 +963,11 @@ func main() {
 					} else {
 						lastDigest = now
 					}
+				}
+
+				// TASK-070: weekly digest — tries every cycle, no-ops if sent within 7 days.
+				if err := notifier.WeeklyDigest(cfg.DataRoot); err != nil {
+					slog.Warn("weekly digest failed", "err", err)
 				}
 
 				// Schedule next cycle with adaptive interval.

@@ -44,6 +44,7 @@ type Config struct {
 	MaxSameCitySignalBets int     `yaml:"max_same_city_signal_bets"`  // max open bets on same (city,signal) pair (0 = disabled)
 	LossBlacklistDays    int     `yaml:"loss_blacklist_days"`         // days to blacklist a market after a loss (0 = disabled)
 	MaxDrawdownFraction  float64 `yaml:"max_drawdown_fraction"`       // circuit-breaker: reduce bet size when drawdown > this fraction (0 = disabled)
+	MaxExposureUSDC      float64 `yaml:"max_exposure_usdc"`           // hard cap on total USDC at risk across all open positions (0 = disabled)
 
 	// Forecast quality
 	MaxForecastAgeHours float64 `yaml:"max_forecast_age_hours"` // skip bets on forecasts older than this (0 = disabled)
@@ -203,6 +204,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("MAX_DRAWDOWN_FRACTION"); v != nil {
 		cfg.MaxDrawdownFraction = *v
+	}
+	if v := envFloat("MAX_EXPOSURE_USDC"); v != nil {
+		cfg.MaxExposureUSDC = *v
 	}
 
 	// Forecast quality

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -544,6 +545,37 @@ func SignalBreakdown(records []BetRecord) map[string]BreakdownStats {
 		m[key] = s
 	}
 	return m
+}
+
+// WeakSignalAlert scans a SignalBreakdown map and returns a slice of
+// human-readable warning strings for any signal type whose win rate is below
+// winRateThreshold (default 40%) and has at least minSamples resolved bets.
+//
+// Callers typically pass the result of SignalBreakdown(records).
+// Example warning: "rain: win_rate=32.0% (n=15) — consider raising min_edge"
+func WeakSignalAlert(breakdown map[string]BreakdownStats, minSamples int, winRateThreshold float64) []string {
+	if winRateThreshold <= 0 {
+		winRateThreshold = 40.0
+	}
+	if minSamples <= 0 {
+		minSamples = 10
+	}
+	var alerts []string
+	for sig, bs := range breakdown {
+		if sig == "(unknown)" || bs.Count < minSamples {
+			continue
+		}
+		wr := bs.WinRate()
+		if wr < winRateThreshold {
+			alerts = append(alerts, fmt.Sprintf(
+				"%s: win_rate=%.1f%% (n=%d) — consider raising min_edge",
+				sig, wr, bs.Count,
+			))
+		}
+	}
+	// Sort for deterministic output
+	sort.Strings(alerts)
+	return alerts
 }
 
 // brierQuality returns a human-readable quality label for a Brier score.

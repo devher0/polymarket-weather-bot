@@ -629,3 +629,32 @@ type FusedForecast struct {
 - Просадка > 30% → multiplier 0.20 (защитный минимум)
 - Конфиг: `max_drawdown_fraction` (yaml) / `MAX_DRAWDOWN_FRACTION` (env), default=0.30
 - Логировать "drawdown guard: peak=X current=Y drawdown=Z% mult=M"
+
+---
+
+## 🔴 ПРИОРИТЕТ 18 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-070: Weekly Telegram digest — еженедельный отчёт с разбивкой по city/signal
+**Файлы:** `internal/notifier/telegram.go` (обновить), `cmd/bot/main.go` (обновить)
+- `WeeklyDigest(dataRoot string) error` — отправляет Telegram-сообщение каждое воскресенье
+- Содержимое: ставки за последние 7 дней, win rate, rolling Brier, топ прибыльный city/signal, суммарный P&L
+- В cmd/bot/main.go: трекать `data/last_weekly_digest.txt` (RFC3339 timestamp); отправлять если прошло ≥7 дней
+- Формат: emoji + таблица → как DailyDigest, но за неделю
+- Логировать "weekly digest sent" / "weekly digest: skipped (sent X days ago)"
+
+### [x] 2026-05-27 — TASK-071: Total USDC exposure cap — ограничение общей суммы в открытых позициях
+**Файлы:** `config/config.go` (обновить), `config/config.yaml` (обновить), `internal/risk/risk.go` (обновить), `cmd/bot/main.go` (обновить)
+- Добавить `MaxExposureUSDC float64` в `Config` (yaml: `max_exposure_usdc`, env: `MAX_EXPOSURE_USDC`, default=0 = отключено)
+- Метод `CheckExposure(records []BetRecord, maxExposure float64) error`:
+  - Суммирует `SizeUSDC` всех открытых (unresolved) ставок
+  - Возвращает ошибку если sum ≥ maxExposure
+- Добавить в `Config.MaxExposureUSDC` и в `risk.Config`
+- В cmd/bot/main.go: вызывать перед каждой ставкой (после AllowBet, перед ExecuteBet)
+- Логировать "exposure guard: total=X max=Y — skip" или "exposure guard: total=X max=Y — ok"
+
+### [x] 2026-05-27 — TASK-072: Signal win-rate breakdown по типу сигнала — Telegram алерт при ухудшении
+**Файлы:** `internal/calibration/calibration.go` (обновить), `cmd/bot/main.go` (обновить)
+- `SignalBreakdown(records []BetRecord) map[string]BreakdownStats` — уже есть, использовать
+- `WeakSignalAlert(breakdown map[string]BreakdownStats, minSamples int) []string` — возвращает список сигналов с win rate <40% (≥minSamples=10 ставок)
+- В cmd/bot/main.go: проверять при старте, если есть слабые сигналы — Telegram предупреждение "⚠️ Weak signal detected: rain win_rate=32% (n=15) — consider raising min_edge"
+- Логировать все слабые сигналы

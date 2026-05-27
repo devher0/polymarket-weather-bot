@@ -64,6 +64,11 @@ max_open_positions: 30
 # Env override: MAX_SAME_CITY_SIGNAL_BETS=2
 max_same_city_signal_bets: 2
 
+# Hard cap on total USDC at risk across all open (unresolved) positions.
+# Prevents over-leveraging the bankroll regardless of individual bet sizes.
+# 0 = disabled. Env override: MAX_EXPOSURE_USDC
+max_exposure_usdc: 0.0
+
 # ── Forecast quality ─────────────────────────────────────────────────────────
 # Skip bets on forecasts older than this many hours (0 = disabled).
 # Env override: MAX_FORECAST_AGE_HOURS=3

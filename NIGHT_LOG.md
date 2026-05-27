@@ -725,3 +725,26 @@
 **Тесты:** `go test ./...` — all OK (8 пакетов), `go build ./...` — OK, pushed to GitHub
 
 **Строк добавлено:** ~370 (новые файлы: ~305, изменения: ~65)
+
+---
+
+## 2026-05-27 19:07 UTC — TASK-070, TASK-071, TASK-072: Weekly digest, Exposure cap, Weak signal alert
+
+**Задачи:** TASK-070, TASK-071, TASK-072 (все задачи в TASKS.md были выполнены; добавлены новые улучшения ПРИОРИТЕТ 18 и сразу реализованы)
+
+**Файлы изменены:**
+- `internal/notifier/telegram.go` — TASK-070: добавлена `WeeklyDigest(dataRoot)` (~140 строк): 7-дневная статистика (bets/wins/losses/P&L), разбивка по лучшему/худшему city и signal (win rate), Brier score, open positions; отправляется раз в 7 дней (трекинг через `data/last_weekly_digest.txt`); добавлен импорт `log/slog`
+- `internal/risk/risk.go` — TASK-071: поле `MaxExposureUSDC float64` в `Config`; метод `CheckExposure(records)` (~25 строк): суммирует SizeUSDC открытых ставок, возвращает ошибку при ≥ cap; добавлен импорт `log/slog`
+- `config/config.go` — TASK-071: поле `MaxExposureUSDC float64` (yaml: `max_exposure_usdc`, env: `MAX_EXPOSURE_USDC`); ENV-override в applyEnv
+- `config/config.yaml` — добавлена секция `max_exposure_usdc: 0.0` с комментарием
+- `internal/calibration/calibration.go` — TASK-072: функция `WeakSignalAlert(breakdown, minSamples, threshold)` (~30 строк): возвращает список сигналов с win rate ниже порога (≥minSamples); добавлен импорт `sort`
+- `cmd/bot/main.go` — (1) TASK-070: `notifier.WeeklyDigest()` вызывается каждый цикл (внутри no-op если не прошло 7 дней); (2) TASK-071: `riskMgr.CheckExposure(history)` вызывается перед каждой ставкой (после AllowBet); `MaxExposureUSDC` добавлен в инициализацию risk.Config; (3) TASK-072: `WeakSignalAlert` при старте — логирует warn и отправляет Telegram-алерт при слабых сигналах
+
+**Логика:**
+- TASK-070: при каждом цикле пробует WeeklyDigest — если с последней отправки < 7 дней → no-op; иначе форматирует Telegram HTML с breakdown
+- TASK-071: CheckExposure перебирает все unresolved записи, суммирует SizeUSDC; если ≥ max → break (остановить ставки этого цикла)
+- TASK-072: при старте бота — проверить все сигналы с ≥10 ставок; если win rate <40% → slog.Warn + Telegram NotifyError
+
+**Сборка:** `go build ./...` — OK; `go test ./...` — OK (все пакеты зелёные)
+
+**Строк добавлено:** ~230 (telegram.go +145, risk.go +25, calibration.go +32, config.go +3, main.go +25)
