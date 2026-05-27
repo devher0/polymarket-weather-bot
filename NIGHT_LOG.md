@@ -1,5 +1,27 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 01:27 UTC — TASK-125 / TASK-126
+
+**Файлы изменены:**
+- `internal/collectors/forecast_drift.go` (новый, 155 строк) — forecast stability tracker
+- `internal/collectors/forecast_drift_test.go` (новый, 100 строк) — 9 unit-тестов
+- `internal/collectors/aggregator.go` (+20 строк) — RecordDrift + DriftFactor в AggregateForDay
+- `cmd/dashboard/main.go` (+75 строк) — новый sub-command `drift`
+- `TASKS.md` — добавлены и закрыты TASK-125, TASK-126
+
+**Что сделано:**
+
+**TASK-125: Forecast stability tracker** — метеорологический принцип: прогноз, который постоянно меняется, менее надёжен. Реализована полная система трекинга дрейфа прогнозов:
+- `DriftRecord` хранит абсолютную величину изменения MaxTemp и PrecipProb при каждом фетче
+- `RecordDrift()` добавляет запись в `data/drift/{city}_d{dayOffset}.json`, ограничивая историю 10-ю записями
+- `ComputeDriftFactor()` вычисляет confidence-мультипликатор [0.70, 1.00] через экспоненциально взвешенное среднее нестабильности: instability_i = clamp(|ΔTemp|/10 + |ΔPrecip%|/40, 0, 1); factor = 1 - 0.30 × weighted_avg; decay = 0.80 per step (свежие записи имеют больший вес)
+- В `AggregateForDay()`: после DetectForecastShift всегда вызывается RecordDrift (не только при significant shifts), затем DriftFactor применяется к ff.Confidence с логированием
+- 9 unit-тестов: пустая история, стабильные прогнозы, максимальный дрейф, соблюдение пола 0.70, single-record, экспоненциальное взвешивание, cap истории, nil shift, пустая загрузка
+
+**TASK-126: `dashboard drift`** — новый sub-command показывает таблицу стабильности для всех городов: City | D+0 Factor | D+1 Factor | Last ΔTemp | Last ΔPrecip% | Stability. Цветовая кодировка: зелёный (stable, ≥0.95), жёлтый (moderate, 0.85-0.95), красный (unstable, <0.85). Помогает оператору быстро видеть в каких городах прогнозы нестабильны.
+
+**Итого:** ~350 строк кода, `go build ./...` чисто, `go test ./...` — все тесты проходят.
+
 ## 2026-05-28 00:37 UTC — TASK-114 / TASK-115 / TASK-116
 
 **Файлы изменены:**

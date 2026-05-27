@@ -10,6 +10,7 @@
 //	go run ./cmd/dashboard report --output=r.json            — write to file instead of stdout
 //	go run ./cmd/dashboard export-predictions                — export today's prediction log to CSV (stdout)
 //	go run ./cmd/dashboard export-predictions --date=2026-05-27 --output=predictions.csv — specific date, to file
+//	go run ./cmd/dashboard drift                             — forecast stability table (TASK-126)
 //	go run ./cmd/dashboard all                               — run all sub-commands
 package main
 
@@ -544,6 +545,9 @@ func main() {
 	case "ab-test":
 		// TASK-112: A/B test comparison between Kelly fraction strategies.
 		strategy.PrintABTest(dataRoot)
+	case "drift":
+		// TASK-126: show forecast stability drift table.
+		cmdDrift(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -1220,4 +1224,89 @@ func cmdSourceHealth(dataRoot string) {
 
 	fmt.Printf("\nSource health data: %s/data/source_health.json\n", dataRoot)
 	fmt.Println("Status: ok=<1h  degraded=<6h  down=>6h since last success")
+}
+
+// cmdDrift shows the forecast stability table for all cities (TASK-126).
+// Displays per-city drift factors for day-0 and day-1, helping operators
+// identify which cities are in a meteorologically uncertain state.
+func cmdDrift(dataRoot string) {
+	header("Forecast Stability (Drift Monitor)")
+
+	cities := make([]string, 0, len(weather.Cities))
+	for city := range weather.Cities {
+		cities = append(cities, city)
+	}
+	sort.Strings(cities)
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"City", "D+0 Factor", "D+1 Factor",
+		"Last ΔTemp°C", "Last ΔPrecip%", "D+0 Stability",
+	})
+
+	for _, city := range cities {
+		rec0, f0 := collectors.LoadDriftSummary(city, 0, dataRoot)
+		_, f1 := collectors.LoadDriftSummary(city, 1, dataRoot)
+
+		// Format drift factor cells with colour coding.
+		fmtFactor := func(f float64, hasHistory bool) string {
+			if !hasHistory {
+				return styleNeutral.Sprint("no data")
+			}
+			s := fmt.Sprintf("%.3f", f)
+			switch {
+			case f >= 0.95:
+				return styleWin.Sprint(s)
+			case f >= 0.85:
+				return styleNeutral.Sprint(s)
+			default:
+				return styleLoss.Sprint(s)
+			}
+		}
+
+		stabilityLabel := func(f float64, hasHistory bool) string {
+			if !hasHistory {
+				return "-"
+			}
+			switch {
+			case f >= 0.95:
+				return styleWin.Sprint("stable")
+			case f >= 0.85:
+				return styleNeutral.Sprint("moderate")
+			default:
+				return styleLoss.Sprint("unstable")
+			}
+		}
+
+		hasD0 := !rec0.Timestamp.IsZero()
+		hasD1 := f1 < 1.0 // if factor < 1 then history exists
+
+		dTempStr := "-"
+		dPrecipStr := "-"
+		if hasD0 {
+			dTempStr = fmt.Sprintf("%+.1f", rec0.AbsDeltaTempC)
+			dPrecipStr = fmt.Sprintf("%+.1f%%", rec0.AbsDeltaPrecipPt)
+		}
+
+		t.AppendRow(table.Row{
+			city,
+			fmtFactor(f0, hasD0),
+			fmtFactor(f1, hasD1),
+			dTempStr,
+			dPrecipStr,
+			stabilityLabel(f0, hasD0),
+		})
+	}
+
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Name: "City", Align: text.AlignLeft},
+		{Name: "D+0 Factor", Align: text.AlignCenter},
+		{Name: "D+1 Factor", Align: text.AlignCenter},
+		{Name: "D+0 Stability", Align: text.AlignCenter},
+	})
+	t.Render()
+
+	fmt.Println()
+	fmt.Println("  Drift factor: 1.000 = stable, 0.700 = maximally unstable (confidence floored)")
+	fmt.Println("  Source: data/drift/{city}_d{N}.json — populated automatically when forecasts change")
 }

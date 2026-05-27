@@ -1167,3 +1167,25 @@ Spread между источниками = мера неопределённос
 - В bot loop: если IsNew → уменьшить min_edge на 30% (больше шансов найти edge на неэффективном рынке)
 - Логировать "new_market detected, reduced min_edge" при обнаружении
 - `dashboard new-markets` субкоманда: список рынков появившихся за последние 24ч
+
+---
+
+## 🔴 ПРИОРИТЕТ 26 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-125: Forecast stability tracker — снижение confidence при нестабильных прогнозах
+**Файлы:** `internal/collectors/forecast_drift.go` (новый), `internal/collectors/forecast_drift_test.go` (новый), `internal/collectors/aggregator.go` (обновить)
+Метеорологический факт: прогноз, который меняется от цикла к циклу — менее надёжен.
+- `DriftRecord` struct: Timestamp, AbsDeltaTempC, AbsDeltaPrecipProb
+- `RecordDrift(city, dayOffset, shift, dataRoot)` — append до 10 последних записей в `data/drift/{city}_d{dayOffset}.json`
+- `ComputeDriftFactor(records []DriftRecord) float64` — экспоненциальное взвешенное среднее нестабильности:
+  instability_i = clamp(|ΔTemp|/10 + |ΔPrecip%|/40, 0, 1); DriftFactor = clamp(1.0 - 0.30 × avg, 0.70, 1.00)
+- `DriftFactor(city, dayOffset, dataRoot) float64` — загружает историю и вычисляет фактор
+- В AggregateForDay(): после DetectForecastShift → RecordDrift + ff.Confidence *= DriftFactor
+- 9 unit-тестов: TestComputeDriftFactor_AllStable/HighDrift/Empty/FloorRespected/SingleRecord/RecentWeightedMore, TestRecordDrift_PersistsAndCaps/NilShiftNoOp, TestLoadDriftSummary_Empty
+
+### [x] 2026-05-28 — TASK-126: `dashboard drift` — таблица стабильности прогнозов
+**Файл:** `cmd/dashboard/main.go` (обновить)
+- Новый sub-command: `go run ./cmd/dashboard drift`
+- Для каждого города показывает drift factor по day-0 и day-1: City | D+0 Factor | D+1 Factor | Last ΔTemp | Last ΔPrecip% | Stability
+- Stability label: "stable" (factor ≥ 0.95), "moderate" (0.85–0.95), "unstable" (<0.85)
+- Помогает оператору понять какие города сейчас в состоянии метеорологической неопределённости

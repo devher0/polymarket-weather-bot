@@ -618,12 +618,30 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 	}
 
 	// TASK-042: detect and log significant forecast changes before overwriting cache.
-	if shift := DetectForecastShift(city, dayOffset, ff, dataRoot); shift != nil && shift.Significant {
-		slog.Warn("significant forecast shift detected",
+	// TASK-125: record the shift magnitude and apply a drift-based confidence reduction.
+	if shift := DetectForecastShift(city, dayOffset, ff, dataRoot); shift != nil {
+		if shift.Significant {
+			slog.Warn("significant forecast shift detected",
+				"city", city,
+				"day_offset", dayOffset,
+				"delta_max_temp_c", fmt.Sprintf("%+.1f", shift.DeltaMaxTempC),
+				"delta_precip_p", fmt.Sprintf("%+.1f", shift.DeltaPrecipP),
+			)
+		}
+		// Always record the shift (even small ones contribute to the rolling history).
+		RecordDrift(city, dayOffset, shift, dataRoot)
+	}
+
+	// TASK-125: apply drift factor — forecasts that keep changing get lower confidence.
+	if df := DriftFactor(city, dayOffset, dataRoot); df < 1.0 {
+		old := ff.Confidence
+		ff.Confidence *= df
+		slog.Info("forecast_drift: confidence reduced",
 			"city", city,
 			"day_offset", dayOffset,
-			"delta_max_temp_c", fmt.Sprintf("%+.1f", shift.DeltaMaxTempC),
-			"delta_precip_p", fmt.Sprintf("%+.1f", shift.DeltaPrecipP),
+			"old_confidence", fmt.Sprintf("%.3f", old),
+			"drift_factor", fmt.Sprintf("%.3f", df),
+			"new_confidence", fmt.Sprintf("%.3f", ff.Confidence),
 		)
 	}
 
