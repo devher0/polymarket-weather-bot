@@ -1,5 +1,50 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 18:27 UTC — TASK-057: Structured prediction logging
+
+**Задача:** TASK-057
+
+### Что сделано:
+
+**Structured prediction logging** — каждый вызов `EvaluateFused()` теперь пишет полную запись в `data/predictions/YYYY-MM-DD.jsonl`:
+
+- **Новый файл `internal/strategy/prediction_log.go`** (~185 строк):
+  - `PredictionRecord` — struct с полями: ts, condition_id, city, signal, yes/no price, our_p, yes/no edge, confidence, ensemble_unc, alert_level, sources, forecast fields (max/min temp, precip mm/prob, wind), decision, size_usdc, reason
+  - `SavePrediction(rec, dataRoot)` — atomic append в JSONL файл, ошибки заглушаются (не крашит betting loop)
+  - `LoadPredictions(date, dataRoot)` — читает дневной JSONL, пропускает битые строки
+  - `AnalyzePredictions(records)` → `map[BreakdownKey]*BreakdownStats` — per-city/signal агрегация
+  - `SortedBreakdownKeys()` — сортировка по количеству evaluated desc
+  - `PredictionSummary()` — однострочный резюме (evaluated/bets/skip)
+
+- **`internal/strategy/strategy.go`** (+45 строк):
+  - Новая экспортированная `ComputeOurP(m, f)` — вычисляет нашу вероятность с сезонной корректировкой (извлечена из evaluate(), нужна для логирования скипов)
+  - В `EvaluateFused()`: closure `logPrediction(decision, sizeUSDC, reason)` вызывается при каждом exit-point:
+    - `"SKIP:confidence"` — confidence gate (< 0.40)
+    - `"SKIP:no_edge"` — evaluate() вернул nil (edge недостаточен)
+    - `"SKIP:min_size"` — Kelly size < $0.50 после ensemble scaling
+    - `"BET_YES"` / `"BET_NO"` — ставка размещена
+  - Добавлен импорт `"time"`
+
+- **`cmd/dashboard/main.go`** (+55 строк):
+  - Новый sub-command `dashboard analysis`:
+    - Читает `data/predictions/YYYY-MM-DD.jsonl` для сегодня
+    - Таблица: City | Signal | Eval'd | Bets | Skip% | SkipConf | SkipEdge | SkipSize | AvgEdge | AvgConf | TotalSize$
+    - Зелёные Bets, красный Skip% когда 100%
+    - Footer с объяснением колонок
+  - Обновлён `printUsage()` — добавлена строка для `analysis`
+
+**Какую проблему решает:** теперь видно ПОЧЕМУ бот не ставит на конкретные рынки — `dashboard analysis` сразу покажет например "NYC/rain: 47 evaluated, 0 bets (100% skip) — 43 SkipEdge, 4 SkipConf". Без этого приходилось перечитывать slog вручную.
+
+**Файлы:**
+- `internal/strategy/prediction_log.go` (новый, ~185 строк)
+- `internal/strategy/strategy.go` (+45 строк)
+- `cmd/dashboard/main.go` (+55 строк)
+- `TASKS.md` (TASK-057 → [x])
+
+**Итого:** ~285 строк. `go test ./...` — все PASS; `go build ./...` — ✅
+
+---
+
 ## 2026-05-27 17:27 UTC — TASK-043 + TASK-044: Active-city filter + Bankroll persistence
 
 **Задачи:** TASK-043, TASK-044

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
@@ -145,6 +146,39 @@ func ensembleUncertaintyScale(uncertaintyC float64) float64 {
 	return scale
 }
 
+// ComputeOurP returns the raw (pre-seasonal) probability estimate for a market
+// signal given a weather forecast. Exported so prediction logging can call it
+// even for markets that are ultimately skipped (confidence gate / no edge).
+func ComputeOurP(m markets.Market, f weather.Forecast) float64 {
+	heatThreshold := 35.0
+	if m.ThresholdC != 0 {
+		heatThreshold = m.ThresholdC
+	}
+	coldThreshold := 10.0
+	if m.ThresholdC != 0 {
+		coldThreshold = m.ThresholdC
+	}
+	var p float64
+	switch m.Signal {
+	case "rain":
+		p = weather.RainProbability(f)
+	case "heat":
+		p = weather.HeatProbability(f, heatThreshold)
+	case "cold":
+		p = 1 - weather.HeatProbability(f, coldThreshold)
+	case "snow":
+		p = (1 - weather.HeatProbability(f, 2.0)) * weather.RainProbability(f) * 0.8
+	case "wind":
+		p = math.Min(0.95, f.WindSpeedKMH/80.0)
+	case "sunny":
+		p = weather.SunnyProbability(f)
+	default:
+		p = 0.5
+	}
+	// Apply seasonal Bayesian correction.
+	return weather.AdjustForSeason(m.City, f.Date, p, m.Signal, m.ThresholdC)
+}
+
 // EvaluateFused evaluates a market using a FusedForecast from the aggregator.
 // Returns nil when confidence is too low or there is no sufficient edge.
 // dataRoot is the project data directory (used to record per-source predictions
@@ -161,8 +195,41 @@ func EvaluateFused(
 		return nil
 	}
 
+	// Pre-compute ourP for prediction logging (used even if we skip below).
+	ourP := ComputeOurP(m, ff.Forecast)
+	yesEdge := ourP - m.YesPrice
+	noEdge := (1 - ourP) - m.NoPrice
+
+	// Helper to build and save a prediction record.
+	logPrediction := func(decision string, sizeUSDC float64, reason string) {
+		SavePrediction(PredictionRecord{
+			Timestamp:           time.Now().UTC().Format(time.RFC3339),
+			ConditionID:         m.ConditionID,
+			City:                m.City,
+			Signal:              m.Signal,
+			YesPrice:            m.YesPrice,
+			NoPrice:             m.NoPrice,
+			OurP:                ourP,
+			YesEdge:             yesEdge,
+			NoEdge:              noEdge,
+			Confidence:          ff.Confidence,
+			EnsembleUncertainty: ff.EnsembleUncertainty,
+			AlertLevel:          ff.AlertLevel,
+			Sources:             ff.Sources,
+			MaxTempC:            ff.Forecast.MaxTempC,
+			MinTempC:            ff.Forecast.MinTempC,
+			PrecipMM:            ff.Forecast.PrecipitationMM,
+			PrecipProb:          ff.Forecast.PrecipitationProbability,
+			WindKPH:             ff.Forecast.WindSpeedKMH,
+			Decision:            decision,
+			SizeUSDC:            sizeUSDC,
+			Reason:              reason,
+		}, dataRoot)
+	}
+
 	// Confidence gate: skip if sources disagree too much
 	if ff.Confidence < minConfidence {
+		logPrediction("SKIP:confidence", 0, fmt.Sprintf("confidence=%.2f < %.2f", ff.Confidence, minConfidence))
 		return nil
 	}
 
@@ -241,6 +308,7 @@ func EvaluateFused(
 
 	d := evaluate(m, alertForecast, bankroll, adjustedMinEdge, maxBet, sourceNote)
 	if d == nil {
+		logPrediction("SKIP:no_edge", 0, fmt.Sprintf("yes_edge=%+.3f no_edge=%+.3f adj_min=%.3f", yesEdge, noEdge, adjustedMinEdge))
 		return nil
 	}
 
@@ -275,6 +343,7 @@ func EvaluateFused(
 			if d.SizeUSDC < 0.5 {
 				slog.Info("skipped: size below minimum after ensemble scaling",
 					"conditionID", m.ConditionID)
+				logPrediction("SKIP:min_size", 0, fmt.Sprintf("size_after_scale=%.2f unc=%.1f°C", d.SizeUSDC, ff.EnsembleUncertainty))
 				return nil
 			}
 		}
@@ -291,6 +360,9 @@ func EvaluateFused(
 			}
 		}
 	}
+
+	// TASK-057: log successful bet to prediction journal.
+	logPrediction("BET_"+d.Side, d.SizeUSDC, d.Reason)
 
 	return d
 }

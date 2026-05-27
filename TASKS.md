@@ -441,6 +441,35 @@ type FusedForecast struct {
 
 ---
 
+## 🔴 ПРИОРИТЕТ 15 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-057: Structured prediction logging — полный журнал каждой оценки рынка
+**Файлы:** `internal/strategy/prediction_log.go` (новый), `internal/strategy/strategy.go` (обновить), `cmd/dashboard/main.go` (обновить)
+- Каждый вызов `EvaluateFused()` сохраняет `PredictionRecord` в `data/predictions/YYYY-MM-DD.jsonl`
+- Запись как BET (YES/NO), так и SKIP (с причиной: confidence/no_edge/min_size)
+- Поля: ts, condition_id, city, signal, our_p, yes_edge, no_edge, confidence, ens_unc, sources, forecast_fields, decision, size_usdc, reason
+- Новая helper-функция `ComputeOurP(m, f)` — экспортированная для логирования скипов
+- Новый sub-command `dashboard analysis` — таблица: City/Signal | Evaluated | Bets | Skip% | AvgEdge | AvgConf | TotalSize
+- Используется для пост-анализа: "почему бот не ставил на NYC/rain сегодня?"
+
+### [ ] TASK-058: Weather alert digest в Telegram DailyDigest
+**Файлы:** `internal/collectors/noaa_alerts.go` (обновить), `internal/notifier/telegram.go` (обновить)
+- В `DailyDigest()` добавить секцию "⚠️ Active Weather Alerts"
+- Для каждого US города с AlertLevel > 0 добавлять строку: "🔴 New York: Excessive Heat Warning"
+- Emoji по уровню: 🔴 Warning, 🟡 Watch, 🔵 Advisory
+- Вызывать `FetchAlerts()` для каждого US города (new_york, miami, chicago, los_angeles, san_francisco)
+- Если нет алертов — секция не показывается
+
+### [ ] TASK-059: Prediction log CSV export
+**Файлы:** `internal/strategy/prediction_log.go` (обновить), `cmd/dashboard/main.go` (обновить)
+- Новый sub-command `dashboard export-predictions --date=2026-05-27 --output=predictions.csv`
+- Конвертирует JSONL → CSV формат совместимый с Excel/pandas
+- Заголовки: timestamp, condition_id, city, signal, our_p, yes_edge, no_edge, confidence, ensemble_unc, decision, size_usdc
+- По умолчанию экспортирует сегодня; с `--date` — конкретный день
+- Позволяет быстро анализировать данные во внешних инструментах
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config

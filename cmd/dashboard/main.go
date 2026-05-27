@@ -480,6 +480,8 @@ func main() {
 		cmdCacheStats(dataRoot)
 	case "explain":
 		cmdExplain(dataRoot)
+	case "analysis":
+		cmdAnalysis(dataRoot)
 	case "report":
 		// Parse --output flag from remaining args (os.Args[2:]).
 		rFlags := flag.NewFlagSet("report", flag.ExitOnError)
@@ -509,6 +511,7 @@ func printUsage() {
 	fmt.Println("  forecast              Fused weather forecast table for all cities")
 	fmt.Println("  cache                 Show forecast cache status (age of cached data)")
 	fmt.Println("  explain               Full decision audit: why each market is BET or SKIP")
+	fmt.Println("  analysis              Per-city/signal breakdown of today's prediction log")
 	fmt.Println("  report [--output=f]   Export market evaluation snapshot to JSON")
 	fmt.Println("  all                   Run all sub-commands")
 }
@@ -763,6 +766,73 @@ func cmdReport(dataRoot, outputPath string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Report written to %s (%d markets, %d bets recommended)\n", outputPath, len(entries), betCount)
+}
+
+// ── analysis (TASK-057) ────────────────────────────────────────────────────
+
+// cmdAnalysis reads today's prediction JSONL log and shows per-city/signal
+// breakdown: how many markets were evaluated, how many generated bets, and
+// why the rest were skipped.
+func cmdAnalysis(dataRoot string) {
+	header("🔬 PREDICTION LOG ANALYSIS")
+
+	date := time.Now().UTC().Format("2006-01-02")
+	records, err := strategy.LoadPredictions(date, dataRoot)
+	if err != nil {
+		fmt.Printf("  No prediction log for %s yet.\n", date)
+		fmt.Printf("  Log is written to data/predictions/%s.jsonl when the bot runs.\n", date)
+		return
+	}
+
+	if len(records) == 0 {
+		fmt.Println("  Prediction log is empty.")
+		return
+	}
+
+	fmt.Printf("  Date: %s   %s\n\n", date, strategy.PredictionSummary(records))
+
+	breakdown := strategy.AnalyzePredictions(records)
+	keys := strategy.SortedBreakdownKeys(breakdown)
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"City", "Signal", "Eval'd", "Bets", "Skip%",
+		"SkipConf", "SkipEdge", "SkipSize",
+		"AvgEdge", "AvgConf", "TotalSize$",
+	})
+
+	for _, k := range keys {
+		s := breakdown[k]
+		skipPct := fmt.Sprintf("%.0f%%", s.SkipPct())
+		betStr := fmt.Sprintf("%d", s.Bets)
+		if s.Bets > 0 {
+			betStr = styleWin.Sprint(betStr)
+		}
+		if s.SkipPct() >= 100 {
+			skipPct = styleLoss.Sprint(skipPct)
+		}
+		avgEdgeStr := "—"
+		if s.AvgEdge() > 0 {
+			avgEdgeStr = fmt.Sprintf("%+.3f", s.AvgEdge())
+		}
+		t.AppendRow(table.Row{
+			k.City,
+			k.Signal,
+			s.Evaluated,
+			betStr,
+			skipPct,
+			s.SkipConf,
+			s.SkipEdge,
+			s.SkipSize,
+			avgEdgeStr,
+			fmt.Sprintf("%.2f", s.AvgConf()),
+			fmt.Sprintf("%.2f", s.TotalSize),
+		})
+	}
+	t.Render()
+
+	fmt.Printf("\n  Prediction log: data/predictions/%s.jsonl\n", date)
+	fmt.Println("  SkipConf=confidence<0.40  SkipEdge=insufficient edge  SkipSize=Kelly<$0.50")
 }
 
 func truncate(s string, n int) string {
