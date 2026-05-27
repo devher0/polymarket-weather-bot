@@ -332,7 +332,7 @@ type FusedForecast struct {
 - Защита от ситуации «overtrading после удачного утра»
 - Тест в risk_test.go: `TestAllowBetProfitTarget`
 
-### [ ] TASK-039: `dashboard forecast` — таблица прогнозов по всем городам
+### [x] 2026-05-27 — TASK-039: `dashboard forecast` — таблица прогнозов по всем городам
 **Файл:** `cmd/dashboard/main.go` (обновить)
 - Новый sub-command: `go run ./cmd/dashboard forecast`
 - Загружает fusedForecasts для всех городов из data/forecasts/ (если нет — вызывает AggregateAll)
@@ -340,7 +340,7 @@ type FusedForecast struct {
 - Подсвечивает строки с confidence < 0.4 суффиксом "(low conf)"
 - Позволяет оператору быстро видеть качество данных перед запуском бота
 
-### [ ] TASK-040: Collector smoke-test с реальными HTTP вызовами
+### [x] 2026-05-27 — TASK-040: Collector smoke-test с реальными HTTP вызовами
 **Файл:** `internal/collectors/collectors_integration_test.go` (новый)
 - Build tag `//go:build integration` — не запускается в обычном `go test ./...`
 - `TestSmokeOpenMeteo` — реальный HTTP запрос, проверяет что возвращается > 0 прогнозов

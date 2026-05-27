@@ -353,6 +353,103 @@ func cmdNext(dataRoot string) {
 	fmt.Printf("\n  Total qualifying candidates: %d\n", len(candidates))
 }
 
+// ── forecast ───────────────────────────────────────────────────────────────
+
+// cmdForecast fetches fused forecasts for all cities and renders a summary
+// table with quality indicators. Rows with confidence < 0.4 are annotated.
+func cmdForecast(dataRoot string) {
+	header("🌤️  FUSED FORECASTS — ALL CITIES")
+
+	fmt.Print("  Fetching weather data (all sources, parallel)…")
+	fusedForecasts, err := collectors.AggregateAll(dataRoot)
+	if err != nil && len(fusedForecasts) == 0 {
+		fmt.Fprintf(os.Stderr, "\n  error: %v\n", err)
+		return
+	}
+	fmt.Println(" done")
+
+	if len(fusedForecasts) == 0 {
+		fmt.Println("  No forecast data available.")
+		return
+	}
+
+	// Sort city names for deterministic output.
+	cities := make([]string, 0, len(fusedForecasts))
+	for c := range fusedForecasts {
+		cities = append(cities, c)
+	}
+	sort.Strings(cities)
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"City",
+		"Date",
+		"MaxT°C",
+		"MinT°C",
+		"Precip mm",
+		"Rain %",
+		"Wind km/h",
+		"Ens.Unc °C",
+		"Confidence",
+		"Sources",
+		"Age",
+	})
+
+	now := time.Now()
+	for _, city := range cities {
+		ff := fusedForecasts[city]
+
+		age := now.Sub(ff.FetchedAt).Round(time.Second)
+		ageStr := age.String()
+
+		confStr := fmt.Sprintf("%.2f", ff.Confidence)
+		note := ""
+		if ff.Confidence < 0.4 {
+			note = " (low conf)"
+			confStr = styleNeutral.Sprint(confStr + note)
+		} else if ff.Confidence >= 0.75 {
+			confStr = styleWin.Sprint(confStr)
+		}
+
+		ensStr := "—"
+		if ff.EnsembleUncertainty > 0 {
+			ensStr = fmt.Sprintf("%.1f", ff.EnsembleUncertainty)
+		}
+
+		srcStr := ""
+		for i, s := range ff.Sources {
+			if i > 0 {
+				srcStr += ","
+			}
+			srcStr += s
+		}
+
+		t.AppendRow(table.Row{
+			city,
+			ff.Forecast.Date,
+			fmt.Sprintf("%.1f", ff.Forecast.MaxTempC),
+			fmt.Sprintf("%.1f", ff.Forecast.MinTempC),
+			fmt.Sprintf("%.1f", ff.Forecast.PrecipitationMM),
+			fmt.Sprintf("%.0f%%", ff.Forecast.PrecipitationProbability),
+			fmt.Sprintf("%.0f", ff.Forecast.WindSpeedKMH),
+			ensStr,
+			confStr,
+			truncate(srcStr, 32),
+			ageStr,
+		})
+	}
+
+	t.Render()
+	fmt.Printf("\n  Cities loaded: %d / %d\n", len(fusedForecasts), len(weather.Cities))
+
+	// Legend
+	fmt.Println()
+	fmt.Println("  Legend: " +
+		styleWin.Sprint("conf ≥ 0.75 = high") + "  " +
+		styleNeutral.Sprint("conf < 0.40 = low") + "  " +
+		"Ens.Unc = ensemble temperature stddev (°C)")
+}
+
 // ── main ───────────────────────────────────────────────────────────────────
 
 func main() {
@@ -372,9 +469,12 @@ func main() {
 		cmdPnL(dataRoot)
 	case "next":
 		cmdNext(dataRoot)
+	case "forecast":
+		cmdForecast(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
+		cmdForecast(dataRoot)
 		cmdNext(dataRoot)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %q\n\n", cmd)
@@ -391,6 +491,7 @@ func printUsage() {
 	fmt.Println("  positions   Show open (unresolved) positions")
 	fmt.Println("  pnl         P&L history from data/bets_history.csv")
 	fmt.Println("  next        Top-5 bet candidates right now")
+	fmt.Println("  forecast    Fused weather forecast table for all cities")
 	fmt.Println("  all         Run all sub-commands")
 }
 

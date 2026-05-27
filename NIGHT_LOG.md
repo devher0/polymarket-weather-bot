@@ -1,5 +1,19 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 17:12 — TASK-039 + TASK-040: dashboard forecast + integration smoke tests
+
+**Задачи:** TASK-039, TASK-040
+
+**Файлы изменены:**
+- `cmd/dashboard/main.go` — новый sub-command `forecast`: вызывает `AggregateAll()`, строит таблицу City|Date|MaxT°C|MinT°C|Precip mm|Rain%|Wind|Ens.Unc°C|Confidence|Sources|Age; подсвечивает conf < 0.4 жёлтым "(low conf)", conf ≥ 0.75 зелёным; добавлен в `all` и `printUsage()`; ~65 строк
+- `internal/collectors/collectors_integration_test.go` — новый файл с build tag `//go:build integration`; 6 smoke-тестов: TestSmokeOpenMeteo, TestSmokeNASAPower, TestSmokeNOAANWS, TestSmokeNOAANWSNonUS, TestSmokeEnsemble, TestSmokeAggregateAll; запуск: `go test -tags=integration -timeout=60s ./internal/collectors/`; ~135 строк
+
+**Строк кода:** +200 (dash ~65 + tests ~135)
+**go build ./...:** ✅ OK
+**go build -tags=integration ./internal/collectors/...:** ✅ OK
+
+---
+
 ## 2026-05-27 16:51 — TASK-034: Ensemble uncertainty → proportional bet scaling
 
 **Задача:** TASK-034
