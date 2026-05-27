@@ -1,5 +1,17 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-101: Gradient boosting калибровка (XGBoost-style в Go)
+
+**Файлы:** `internal/aggregation/gradient_boost.go` (290 строк), `internal/aggregation/gradient_boost_test.go` (115 строк)
+
+**Что сделано:**
+- `GBModel` — gradient-boosted ensemble of depth-1 decision stumps (XGBoost-style, pure Go, no external deps)
+- `Train(samples, numTrees, lr)` — fits 50-100 stumps via binary cross-entropy gradient boosting on 8 weather features
+- `Predict(FeatureVec)` — returns calibrated probability (0–1) using log-odds accumulation + sigmoid
+- `SaveModel` / `LoadModel` — persist/reload model to `data/model.json` (JSON, in-memory cache)
+- `NeedsRetraining` — returns true when model is nil, >7 days old, or new resolved bets available
+- All tests pass (`TestTrain_Basic`, `TestPredict_MonotoneLowToHigh`, `TestSaveLoadModel`, etc.)
+
 ## 2026-05-27 — TASK-097: Speedwell Climate HDD/CDD settlement data
 
 **Файлы:** `internal/collectors/speedwell.go` (130 строк), `internal/collectors/speedwell_test.go` (90 строк)

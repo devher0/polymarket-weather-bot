@@ -946,7 +946,7 @@ type SuperForecast struct {
 - Формула: P(rain|sources) = P(sources|rain) × P(rain) / P(sources)
 - Результат: точнее обычного среднего на 8-12% особенно когда источники расходятся
 
-### TASK-101: Gradient boosting калибровка (XGBoost-style в Go)
+### [x] 2026-05-27 — TASK-101: Gradient boosting калибровка (XGBoost-style в Go)
 **Файл:** `internal/aggregation/gradient_boost.go`
 Обучить лёгкую ML-модель прямо в Go без внешних зависимостей:
 - Features: [openmeteo_p, nasa_p, noaa_p, goes_cloud, cape, pressure_trend, month, city_id]
