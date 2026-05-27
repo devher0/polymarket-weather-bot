@@ -126,6 +126,46 @@ type FusedForecast struct {
 
 ---
 
+## 🔵 ПРИОРИТЕТ 4 — Точность и надёжность
+
+### [x] 2026-05-27 — TASK-014: Выбор дня прогноза по дате истечения рынка
+**Файлы:** `internal/markets/markets.go`, `internal/collectors/aggregator.go`, `internal/weather/weather.go`, `internal/strategy/strategy.go`, `cmd/bot/main.go`
+- Добавить `Market.DaysUntilExpiry() int` — сколько дней до закрытия рынка (0-6)
+- Добавить `AggregateForDay(city, dayOffset, dataRoot)` — прогноз для конкретного дня
+- Добавить `SunnyProbability(f Forecast) float64` в weather пакет (WMO коды 0-3, осадки)
+- Добавить `case "sunny"` в strategy.evaluate()
+- В cmd/bot: для каждого рынка вычислять dayOffset и запрашивать прогноз нужного дня
+
+### [ ] TASK-015: Позиция-дедупликация (anti-double-bet)
+**Файл:** `internal/calibration/calibration.go` (обновить), `cmd/bot/main.go`
+- При старте цикла загружать множество conditionID из bets_history.csv
+- Перед ставкой проверять: уже есть открытая ставка на этот conditionID?
+- Если да — пропускать (не дублировать позицию)
+- Логировать "skipped: already have position on <conditionID>"
+
+### [ ] TASK-016: Auto-resolve позиций
+**Файл:** `internal/calibration/resolver.go` (новый)
+- После EndDate рынка — опросить Gamma API `/markets/{conditionID}` на статус resolved
+- Вызывать `UpdateOutcome(conditionID, outcome)` автоматически
+- Запускать как отдельная горутина в loop режиме раз в час
+- Если рынок still open — skip
+
+### [ ] TASK-017: Prometheus /metrics endpoint
+**Файл:** `internal/metrics/metrics.go` (новый), `cmd/bot/main.go` (обновить)
+- Добавить `--metrics-port` флаг (default 9090)
+- Экспортировать: bets_placed_total, bets_won_total, brier_score, edge_avg, bankroll_usdc
+- Использовать только stdlib (net/http + text/plain формат Prometheus exposition)
+- Endpoint: GET /metrics
+
+### [ ] TASK-018: Расширенный backtest — Walk-Forward Validation
+**Файл:** `cmd/backtest/main.go` (обновить)
+- Разбить 90 дней на 3 окна по 30 дней (train/validate/test)
+- Для каждого окна оптимизировать minEdge (0.03-0.15 с шагом 0.01)
+- Вывести: best minEdge per window, out-of-sample P&L, overfitting ratio
+- Добавить `--walk-forward` флаг
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-000: Базовый бот на Go (internal/weather, internal/markets, internal/strategy, cmd/bot)

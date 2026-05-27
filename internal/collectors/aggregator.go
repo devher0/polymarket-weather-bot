@@ -5,6 +5,7 @@ package collectors
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
@@ -170,6 +171,88 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 	}
 
 	return fused
+}
+
+// AggregateForDay fetches a fused forecast for a specific day offset:
+// dayOffset=0 → today, dayOffset=1 → tomorrow, up to dayOffset=6.
+// GOES satellite data (cloud cover) is only available for today (dayOffset=0).
+func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecast, error) {
+	if dayOffset < 0 {
+		dayOffset = 0
+	}
+	if dayOffset > 6 {
+		dayOffset = 6
+	}
+	days := dayOffset + 1 // need at least dayOffset+1 forecast days
+
+	results := make([]sourceResult, 0, 4)
+
+	// --- OpenMeteo ---
+	if fc, err := weather.GetForecast(city, days); err == nil {
+		idx := dayOffset
+		if idx >= len(fc) {
+			idx = len(fc) - 1
+		}
+		if len(fc) > 0 {
+			results = append(results, sourceResult{
+				name:     "openmeteo",
+				forecast: fc[idx],
+				weight:   sourceWeights["openmeteo"],
+			})
+		}
+	}
+
+	// --- NASA POWER ---
+	if fc, err := NASAGetForecast(city, days); err == nil {
+		idx := dayOffset
+		if idx >= len(fc) {
+			idx = len(fc) - 1
+		}
+		if len(fc) > 0 {
+			results = append(results, sourceResult{
+				name:     "nasa",
+				forecast: fc[idx],
+				weight:   sourceWeights["nasa"],
+			})
+		}
+	}
+
+	// --- NOAA NWS (US only) ---
+	if fc, err := NOAAGetForecast(city, days); err == nil {
+		idx := dayOffset
+		if idx >= len(fc) {
+			idx = len(fc) - 1
+		}
+		if len(fc) > 0 {
+			results = append(results, sourceResult{
+				name:     "noaa",
+				forecast: fc[idx],
+				weight:   sourceWeights["noaa"],
+			})
+		}
+	}
+
+	// --- GOES-19 (cloud cover supplement, today only) ---
+	if dayOffset == 0 {
+		if cover, err := GOESGetCloudCover(city, dataRoot); err == nil {
+			results = append(results, sourceResult{
+				name:       "goes",
+				weight:     sourceWeights["goes"],
+				cloudCover: &cover,
+			})
+		}
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("aggregator: no data sources available for city %q day+%d", city, dayOffset)
+	}
+
+	ff := fuse(city, results)
+	// Embed the target date in the fused result so callers can inspect it.
+	if ff.Forecast.Date == "" || ff.Forecast.Date == "unknown" {
+		ff.Forecast.Date = time.Now().UTC().AddDate(0, 0, dayOffset).Format("2006-01-02")
+	}
+	return ff, nil
 }
 
 // AggregateAll fetches fused forecasts for all known cities.

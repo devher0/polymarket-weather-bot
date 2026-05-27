@@ -122,6 +122,31 @@ func HeatProbability(f Forecast, thresholdC float64) float64 {
 	}
 }
 
+// SunnyProbability returns 0-1 probability of a clear/sunny day.
+// Uses WMO weather codes (0=clear, 1=mainly clear, 2=partly cloudy, 3=overcast)
+// combined with precipitation probability to produce a calibrated estimate.
+func SunnyProbability(f Forecast) float64 {
+	rainPenalty := f.PrecipitationProbability / 100 * 0.4 // max 0.4 penalty
+	switch {
+	case f.WeatherCode == 0: // clear sky
+		return clamp(0.93-rainPenalty, 0.60, 0.97)
+	case f.WeatherCode == 1: // mainly clear
+		return clamp(0.80-rainPenalty, 0.45, 0.90)
+	case f.WeatherCode == 2: // partly cloudy
+		return clamp(0.55-rainPenalty, 0.20, 0.70)
+	case f.WeatherCode == 3: // overcast
+		return clamp(0.20-rainPenalty, 0.03, 0.35)
+	case f.WeatherCode >= 51 && f.WeatherCode <= 67: // drizzle/rain codes
+		return clamp(0.05-rainPenalty*0.5, 0.01, 0.10)
+	case f.WeatherCode >= 71 && f.WeatherCode <= 77: // snow
+		return clamp(0.03, 0.01, 0.08)
+	case f.WeatherCode >= 80: // showers / thunderstorms
+		return clamp(0.04-rainPenalty*0.5, 0.01, 0.08)
+	default:
+		return clamp(0.30-rainPenalty, 0.05, 0.50)
+	}
+}
+
 func clamp(v, lo, hi float64) float64 {
 	if v < lo {
 		return lo

@@ -137,6 +137,8 @@ func evaluate(
 		ourP = coldP * weather.RainProbability(f) * 0.8
 	case "wind":
 		ourP = math.Min(0.95, f.WindSpeedKMH/80.0)
+	case "sunny":
+		ourP = weather.SunnyProbability(f)
 	default:
 		return nil
 	}

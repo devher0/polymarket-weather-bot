@@ -120,8 +120,26 @@ func main() {
 		for _, m := range mkt {
 			var d *strategy.Decision
 
-			// Prefer fused forecast; fall back to legacy OpenMeteo
-			if ff, ok := fusedForecasts[m.City]; ok {
+			// Select forecast for the day the market expires.
+			// Markets expiring in N days use day-N forecast instead of today.
+			dayOffset := m.DaysUntilExpiry()
+
+			var ff *collectors.FusedForecast
+			if dayOffset > 0 && m.City != "" {
+				// Fetch day-specific fused forecast (tolerates partial failure).
+				dayFF, err := collectors.AggregateForDay(m.City, dayOffset, ".")
+				if err == nil {
+					ff = dayFF
+				}
+			}
+			if ff == nil {
+				// Fall back to today's pre-fetched fused forecast.
+				if v, ok := fusedForecasts[m.City]; ok {
+					ff = v
+				}
+			}
+
+			if ff != nil {
 				d = strategy.EvaluateFused(m, ff, 100.0, minEdge, maxBet)
 			}
 			if d == nil {

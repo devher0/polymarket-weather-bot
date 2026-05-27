@@ -1,5 +1,27 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 15:32 — TASK-014: Multi-day forecast selection + SunnyProbability
+
+**Задачи:** TASK-014 (новая, разработана в этой итерации)
+
+**Проблема:** бот использовал `fc[0]` (сегодняшний прогноз) для **всех** рынков, включая те, что истекают через 4-5 дней — фундаментальная ошибка точности. Кроме того, сигнал `sunny` в classifier детектировался, но strategy.go возвращал `nil`.
+
+**Файлы изменены:**
+- `internal/markets/markets.go` — добавлен `DaysUntilExpiry() int`: парсит EndDate (RFC3339/ISO/plain), возвращает [0,6] дней до истечения; ~25 строк
+- `internal/collectors/aggregator.go` — добавлен `AggregateForDay(city, dayOffset, dataRoot)`: запрашивает `dayOffset+1` дней из каждого источника, выбирает нужный день; GOES только для dayOffset=0; корректный fallback; `time` import добавлен; ~70 строк
+- `internal/weather/weather.go` — добавлен `SunnyProbability(f Forecast) float64`: WMO коды 0-3/51-67/71-77/80+; rainPenalty из PrecipitationProbability; ~25 строк
+- `internal/strategy/strategy.go` — добавлен `case "sunny": ourP = weather.SunnyProbability(f)` в evaluate(); ~2 строки
+- `cmd/bot/main.go` — в evaluation loop: `dayOffset := m.DaysUntilExpiry()`, если > 0 — `AggregateForDay()` с fallback на сегодняшний fused; ~15 строк
+
+**Итого: 5 файлов, ~137 строк**
+
+`go build ./...` — ✅ чистая компиляция
+
+**Эффект:** рынок "Will it rain in NYC on Friday?" теперь оценивается по пятничному прогнозу, а не по сегодняшнему. Sunny сигналы теперь генерируют реальные ставки.
+
+---
+
+
 ## 2026-05-27 15:16 — TASK-009..013: Backtest, Dashboard, Telegram, EIP-712, Docker
 
 **Задачи:** TASK-009, TASK-010, TASK-011, TASK-012, TASK-013

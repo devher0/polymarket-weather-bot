@@ -126,6 +126,34 @@ type polyResp struct {
 
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
+// DaysUntilExpiry returns the number of full days from now until this market
+// closes, clamped to [0, 6] for safe forecast indexing.
+// Returns 0 when the end date is missing, already past, or cannot be parsed.
+func (m Market) DaysUntilExpiry() int {
+	if m.EndDate == "" {
+		return 0
+	}
+	// Polymarket uses RFC3339 or plain date strings.
+	t, err := time.Parse(time.RFC3339, m.EndDate)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05Z", m.EndDate)
+	}
+	if err != nil {
+		t, err = time.Parse("2006-01-02", m.EndDate)
+	}
+	if err != nil {
+		return 0
+	}
+	days := int(time.Until(t).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	if days > 6 {
+		return 6
+	}
+	return days
+}
+
 // GetWeatherMarkets pages through Polymarket and returns weather-related markets.
 func GetWeatherMarkets() ([]Market, error) {
 	var out []Market
