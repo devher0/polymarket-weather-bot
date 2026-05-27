@@ -55,6 +55,7 @@ type PredictionRecord struct {
 	Decision            string   `json:"decision"` // see constants above
 	SizeUSDC            float64  `json:"size_usdc,omitempty"`
 	Reason              string   `json:"reason,omitempty"`
+	OrderFlowImbalance  float64  `json:"order_flow_imbalance,omitempty"` // TASK-114: OFI ∈ [-1,1]; 0 = unavailable/neutral
 }
 
 // SavePrediction appends rec as a JSON line to

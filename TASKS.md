@@ -1057,7 +1057,7 @@ Spread между источниками = мера неопределённос
 - Показывать в `/status` Telegram команде и healthz endpoint
 - Alert в Telegram если Sharpe < 0.5 за последние 30 дней
 
-### [ ] TASK-114: Market sentiment — используем order flow imbalance
+### [x] 2026-05-28 — TASK-114: Market sentiment — используем order flow imbalance
 **Файл:** `internal/markets/sentiment.go` (новый)
 Анализировать дисбаланс ордеров для детекции "умных денег":
 - CLOB API: GET /book?token_id=... → считать суммарный объём bid vs ask
@@ -1066,7 +1066,7 @@ Spread между источниками = мера неопределённос
 - Отрицательный imbalance → осторожнее
 - Логировать в prediction_log: поле `order_flow_imbalance`
 
-### [ ] TASK-115: Seasonal CLOB patterns — торговые паттерны по дням недели
+### [x] 2026-05-28 — TASK-115: Seasonal CLOB patterns — торговые паттерны по дням недели
 **Файл:** `internal/strategy/seasonal.go` (новый)
 Анализировать наши исторические ставки на предмет паттернов:
 - Win rate по дню недели (Mon-Sun)
@@ -1076,7 +1076,7 @@ Spread между источниками = мера неопределённос
 - Данные из bets_history.csv, обновлять каждую итерацию
 - Экспортировать как JSON в data/seasonal_patterns.json
 
-### [ ] TASK-116: ML фича инженерия — автогенерация признаков для gradient boost
+### [x] 2026-05-28 — TASK-116: ML фича инженерия — автогенерация признаков для gradient boost
 **Файл:** `internal/aggregation/feature_engineering.go` (новый)
 Расширить признаки для gradient_boost.go с текущих ~8 до ~25:
 - Взаимодействия: openmeteo_p × nasa_p, temp_rank_vs_historical

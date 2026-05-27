@@ -1,5 +1,24 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 00:37 UTC — TASK-114 / TASK-115 / TASK-116
+
+**Файлы изменены:**
+- `internal/markets/sentiment.go` (новый, 130 строк) — order flow imbalance
+- `internal/strategy/prediction_log.go` (+2 строки) — поле `order_flow_imbalance` в PredictionRecord
+- `internal/strategy/strategy.go` (+50 строк) — FetchOrderFlow + edge adjustment + логирование OFI
+- `internal/strategy/seasonal.go` (новый, 170 строк) — temporal win-rate patterns
+- `internal/aggregation/feature_engineering.go` (новый, 230 строк) — расширенный feature set ~39 признаков
+
+**Что сделано:**
+
+**TASK-114:** `FetchOrderFlow(tokenID)` достаёт полную книгу заявок из Polymarket CLOB (`/book?token_id=...`), суммирует объёмы bid/ask и вычисляет OFI = (bid_vol - ask_vol) / total ∈ [-1, 1]. `EdgeAdjustment(side)` возвращает +5% при aligned order flow (OFI > 0.15 для YES) или -3% при adverse. В `EvaluateFused()`: OFI фетчится перед `evaluate()`, результат применяется к `d.SizeUSDC` через мультипликатор 1±adj. Поле `order_flow_imbalance` добавлено в `PredictionRecord` через захваченную closure-переменную. `go build ./...` — чисто.
+
+**TASK-115:** `SeasonalRecord{Timestamp, Outcome}` — минимальный тип (без import cycle через calibration). `ComputeSeasonalPatterns` разбивает resolved ставки по weekday/time_slot/season. `WeakBuckets()` находит слабые бакеты (≥10 ставок, win rate <40%). `MaxBetMultiplier()` возвращает 0.70 если текущий момент попадает в слабый бакет. `SaveSeasonalPatterns/LoadSeasonalPatterns` сохраняют `data/seasonal_patterns.json`.
+
+**TASK-116:** `FeatureVecExt` расширяет базовый `FeatureVec` с 8 до 39 признаков: 3 interaction (openmeteo×nasa, source agreement, temp rank), 3 lag (yesterday rain prob, 3d rain trend, 3d temp trend), 3 rolling aggregates (7d precip/temp/wind), 15 city one-hot, 7 signal one-hot. `BuildExtended()` конструирует вектор из base + ExtendedOpts. `ComputeFeatureImportance(model)` считает feature importance по частоте использования в деревьях. `SaveFeatureImportance/LoadFeatureImportance` → `data/feature_importance.json`.
+
+**Итого:** ~580 строк кода, `go build ./...` проходит.
+
 ## 2026-05-28 00:32 UTC — TASK-113: Sharpe ratio трекер
 
 **Файлы изменены:**

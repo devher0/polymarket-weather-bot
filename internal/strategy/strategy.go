@@ -240,6 +240,10 @@ func EvaluateFused(
 	yesEdge := ourP - m.YesPrice
 	noEdge := (1 - ourP) - m.NoPrice
 
+	// ofiImbalance is set after FetchOrderFlow; the closure captures it by reference
+	// so later calls to logPrediction (for BET decisions) will include the OFI value.
+	var ofiImbalance float64
+
 	// Helper to build and save a prediction record.
 	logPrediction := func(decision string, sizeUSDC float64, reason string) {
 		SavePrediction(PredictionRecord{
@@ -264,6 +268,7 @@ func EvaluateFused(
 			Decision:            decision,
 			SizeUSDC:            sizeUSDC,
 			Reason:              reason,
+			OrderFlowImbalance:  ofiImbalance, // TASK-114: set after FetchOrderFlow
 		}, dataRoot)
 	}
 
@@ -487,10 +492,57 @@ func EvaluateFused(
 		)
 	}
 
+	// TASK-114: fetch order flow imbalance to detect smart-money pressure.
+	// We fetch OFI for the YES token; the result is used after evaluate() to
+	// optionally adjust sizing and is always written to the prediction log.
+	ofi := markets.FetchOrderFlow(m.YesTokenID)
+	ofiImbalance = ofi.Imbalance // update captured variable for prediction log
+
 	d := evaluate(m, alertForecast, bankroll, adjustedMinEdge, maxBet, sourceNote)
 	if d == nil {
-		logPrediction("SKIP:no_edge", 0, fmt.Sprintf("yes_edge=%+.3f no_edge=%+.3f adj_min=%.3f", yesEdge, noEdge, adjustedMinEdge))
+		logPrediction("SKIP:no_edge", 0, fmt.Sprintf("yes_edge=%+.3f no_edge=%+.3f adj_min=%.3f ofi=%.3f", yesEdge, noEdge, adjustedMinEdge, ofi.Imbalance))
 		return nil
+	}
+
+	// TASK-114: apply order flow imbalance edge adjustment.
+	// Aligned order flow (buyers dominate on YES bets) adds confidence;
+	// adverse flow subtracts from effective size to stay conservative.
+	if ofi.Available {
+		ofiAdj := ofi.EdgeAdjustment(d.Side)
+		if ofiAdj != 0 {
+			label := ofi.Description()
+			// Scale the size adjustment by the OFI adjustment fraction.
+			originalSize := d.SizeUSDC
+			// Treat OFI as a size multiplier: +5% → ×1.05; -3% → ×0.97.
+			ofiMult := 1.0 + ofiAdj
+			d.SizeUSDC = math.Round(d.SizeUSDC*ofiMult*100) / 100
+			d.SizeUSDC = math.Max(0, math.Min(d.SizeUSDC, maxBet))
+			d.Reason += fmt.Sprintf(" ofi=%s(%.3f,%+.0f%%)", label, ofi.Imbalance, ofiAdj*100)
+			slog.Info("order flow adjustment applied",
+				"conditionID", m.ConditionID,
+				"side", d.Side,
+				"ofi", fmt.Sprintf("%.3f", ofi.Imbalance),
+				"flow", label,
+				"adj_pct", fmt.Sprintf("%+.0f%%", ofiAdj*100),
+				"size_before", fmt.Sprintf("%.2f", originalSize),
+				"size_after", fmt.Sprintf("%.2f", d.SizeUSDC),
+			)
+			if d.SizeUSDC < 0.5 {
+				slog.Info("skipped: size below minimum after OFI penalty",
+					"conditionID", m.ConditionID,
+					"ofi", fmt.Sprintf("%.3f", ofi.Imbalance),
+				)
+				logPrediction("SKIP:min_size_ofi", 0,
+					fmt.Sprintf("size_after_ofi=%.2f ofi=%.3f", d.SizeUSDC, ofi.Imbalance))
+				return nil
+			}
+		} else {
+			slog.Debug("order flow neutral",
+				"conditionID", m.ConditionID,
+				"ofi", fmt.Sprintf("%.3f", ofi.Imbalance),
+				"flow", ofi.Description(),
+			)
+		}
 	}
 
 	// Apply confidence boost from alert (capped at 0.97).
