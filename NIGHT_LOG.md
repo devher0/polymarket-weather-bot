@@ -1,5 +1,21 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-088: Blitzortung — детекция молний в реальном времени
+
+**Задача:** TASK-088 — подключить Blitzortung WebSocket (wss://ws8.blitzortung.org), считать удары молний за 30 мин в радиусе 200 км, LightningRisk() как сигнал для storm/wind рынков.
+
+**Файлы изменены:**
+- `internal/collectors/lightning.go` (+355 строк, новый файл) — WebSocket-клиент с ручным RFC 6455 handshake, кольцевой буфер ударов, haversine-расстояние, LightningRisk(), GetCityLightningRisk(), сохранение снимков в data/lightning/{city}_{hour}.json
+- `internal/collectors/aggregator.go` (+12 строк) — поля LightningRisk/LightningStrikes в FusedForecast, вызов GetCityLightningRisk в Aggregate()
+- `internal/strategy/strategy.go` (+27 строк) — boost для storm/wind/rain рынков при LightningRisk > 0.30; попутно исправлен баг: FuzzSize применялся до cap по maxBet
+
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK
+
+**Строк добавлено:** ~395 (lightning.go: +355, aggregator.go: +12, strategy.go: +28)
+
+---
+
 ## 2026-05-27 — TASK-087: Радиозонды RAOB — профиль атмосферы по высотам
 
 **Задача:** TASK-087 — подключить данные метеозондов через rucsoundings.noaa.gov, возвращать AtmosphericProfile с ветрами на 850/700/500 hPa и применять boost в wind-рынках.

@@ -29,6 +29,9 @@ type FusedForecast struct {
 	// AlertLevelNone=0, AlertLevelAdvisory=1, AlertLevelWatch=2, AlertLevelWarning=3
 	AlertLevel  int      // highest active NWS alert level
 	AlertEvents []string // human-readable active event names ("Excessive Heat Warning", etc.)
+	// TASK-088: Blitzortung lightning detection within 200 km / 30 min window.
+	LightningRisk    float64 // 0-1 risk score; 0 = not yet observed
+	LightningStrikes int     // raw strike count in the 30-min rolling window
 }
 
 // staticSourceWeights defines the base weight for each data source.
@@ -243,6 +246,19 @@ func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
 	} else {
 		ff.AlertLevel = alertSummary.Level
 		ff.AlertEvents = alertSummary.Events
+	}
+
+	// TASK-088: Blitzortung lightning risk (non-blocking; always optional).
+	if lightningRisk, lightningStrikes := GetCityLightningRisk(city, dataRoot); lightningRisk > 0 {
+		ff.LightningRisk = lightningRisk
+		ff.LightningStrikes = lightningStrikes
+		if lightningStrikes > 0 {
+			slog.Debug("lightning risk computed",
+				"city", city,
+				"strikes_30min", lightningStrikes,
+				"risk", fmt.Sprintf("%.2f", lightningRisk),
+			)
+		}
 	}
 
 	// TASK-076: refine today's forecast with hourly intraday data.

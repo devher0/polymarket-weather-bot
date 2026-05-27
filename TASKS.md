@@ -812,7 +812,7 @@ type FusedForecast struct {
 - Использовать в wind-рынках: если ветер на высоте 850hPa > 50km/h → boost wind probability
 - Graceful fallback если данные недоступны
 
-### TASK-088: Blitzortung — детекция молний в реальном времени
+### [x] 2026-05-27 — TASK-088: Blitzortung — детекция молний в реальном времени
 **Файл:** `internal/collectors/lightning.go`
 Подключить глобальную сеть детекции молний blitzortung.org:
 - WebSocket: wss://ws8.blitzortung.org (публичный, без ключа)

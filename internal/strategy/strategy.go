@@ -365,6 +365,32 @@ func EvaluateFused(
 		}
 	}
 
+	// TASK-088: apply Blitzortung lightning risk boost for storm and wind markets.
+	// When LightningRisk > 0.30 (>10 strikes/30min within 200km) we nudge
+	// precipitation probability and wind speed to reflect active convection.
+	// The boost is capped at +0.15 to stay conservative.
+	if ff.LightningRisk > 0.30 && (m.Signal == "storm" || m.Signal == "wind" || m.Signal == "rain") {
+		lightningBoost := math.Min((ff.LightningRisk-0.30)/0.65, 1.0) * 0.15
+		switch m.Signal {
+		case "storm", "rain":
+			alertForecast.PrecipitationProbability = math.Min(97,
+				alertForecast.PrecipitationProbability+lightningBoost*100)
+			if alertForecast.PrecipitationMM < 1 {
+				alertForecast.PrecipitationMM = 1.1 // ensure rain path is activated
+			}
+		case "wind":
+			alertForecast.WindSpeedKMH += lightningBoost * 40.0
+		}
+		slog.Info("lightning boost applied",
+			"city", m.City,
+			"signal", m.Signal,
+			"strikes_30min", ff.LightningStrikes,
+			"lightning_risk", fmt.Sprintf("%.2f", ff.LightningRisk),
+			"boost", fmt.Sprintf("+%.0f%%", lightningBoost*100),
+		)
+		sourceNote += fmt.Sprintf(" lightning_boost=+%.0f%%(strikes=%d)", lightningBoost*100, ff.LightningStrikes)
+	}
+
 	// TASK-055: adjust minEdge based on forecast confidence.
 	// High-confidence forecasts (sources agree) can enter with smaller edge;
 	// low-confidence forecasts require a larger edge as safety margin.
@@ -543,9 +569,10 @@ func evaluate(
 	}
 
 	size := halfKelly(best.edge, best.odds, bankroll, MaxKellyFraction)
-	size = math.Min(size, maxBet)
-	// Apply size fuzzing (±3–7%) to avoid mechanical round-number detection.
+	// Apply size fuzzing (±3–7%) to avoid mechanical round-number detection,
+	// then re-clamp to maxBet so the cap is always honoured.
 	size = ratelimit.FuzzSize(size)
+	size = math.Min(size, maxBet)
 
 	// Liquidity gate: skip thin markets when expected position size < $50 USDC
 	// to avoid moving the price on illiquid books.
