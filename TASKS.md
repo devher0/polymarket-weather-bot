@@ -842,7 +842,7 @@ CAPE (Convective Available Potential Energy) — лучший физически
 - Использовать для storm/wind/rain рынков: низкий compliance % → высокий риск плохой погоды
 - Если парсинг недоступен — graceful skip
 
-### TASK-091: ECMWF AIFS — лучшая мировая AI-модель прогноза
+### [x] 2026-05-27 — TASK-091: ECMWF AIFS — лучшая мировая AI-модель прогноза
 **Файл:** `internal/collectors/ecmwf_aifs.go`
 С октября 2025 ECMWF открыл полный доступ к данным IFS + AIFS (AI Forecasting System).
 AIFS обгоняет классические модели на 5-15% по точности, лучше предсказывает тропические циклоны:

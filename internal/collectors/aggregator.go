@@ -38,15 +38,17 @@ type FusedForecast struct {
 // At runtime these may be overridden by DynamicWeights() once enough
 // resolved bets have accumulated (TASK-032).
 //
-// TASK-086: added "hrrr" (0.15) as a 5th source for US cities; other weights
-// redistributed proportionally: openmeteo 0.35→0.30, nasa 0.30→0.25,
-// noaa 0.25→0.20, goes unchanged at 0.10.
+// TASK-086: added "hrrr" (0.15) as a 5th source for US cities.
+// TASK-091: added "ecmwf" (0.25) as 6th global source (highest individual weight);
+// other weights redistributed proportionally to sum to 1.0 (excluding goes/hrrr
+// which are unconditional).
 var staticSourceWeights = map[string]float64{
-	"openmeteo": 0.30,
-	"nasa":      0.25,
-	"noaa":      0.20,
-	"goes":      0.10,
-	"hrrr":      0.15,
+	"ecmwf":     0.25,
+	"openmeteo": 0.22,
+	"nasa":      0.18,
+	"noaa":      0.15,
+	"goes":      0.08,
+	"hrrr":      0.12,
 }
 
 // currentWeights returns the active source weights: dynamic if enough data
@@ -91,7 +93,8 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	includeHRRR := usCities[city]
 
-	numSources := 3
+	// TASK-091: ECMWF AIFS is available globally (all cities).
+	numSources := 4 // openmeteo + nasa + noaa + ecmwf
 	if includeGOES {
 		numSources++
 	}
@@ -156,6 +159,25 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 			idx = len(fc) - 1
 		}
 		ch <- item{r: sourceResult{name: "noaa", forecast: fc[idx], weight: weights["noaa"]}, ok: true}
+	}()
+
+	// --- ECMWF AIFS (global AI forecast model, TASK-091) ---
+	go func() {
+		fc, err := ECMWFGetForecast(city, days)
+		if err != nil || len(fc) == 0 {
+			if err == nil {
+				err = fmt.Errorf("empty forecast")
+			}
+			RecordSourceCall("ecmwf", err, dataRoot)
+			ch <- item{}
+			return
+		}
+		RecordSourceCall("ecmwf", nil, dataRoot)
+		idx := dayOffset
+		if idx >= len(fc) {
+			idx = len(fc) - 1
+		}
+		ch <- item{r: sourceResult{name: "ecmwf", forecast: fc[idx], weight: weights["ecmwf"]}, ok: true}
 	}()
 
 	// --- NOAA HRRR (high-resolution US-only model, TASK-086) ---

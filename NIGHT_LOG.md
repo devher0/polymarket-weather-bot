@@ -1,5 +1,19 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-091: ECMWF AIFS — лучшая мировая AI-модель прогноза
+
+**Задача:** TASK-091 — подключить ECMWF AIFS (AI Forecasting System) как 6-й источник прогноза с весом 0.25 (наивысший среди источников), graceful fallback на IFS при недоступности AIFS.
+
+**Файлы изменены:**
+- `internal/collectors/ecmwf_aifs.go` (новый, 177 строк) — клиент Open-Meteo ECMWF endpoint (model=ecmwf_aifs025), fallback на ecmwf_ifs025, кэш 6 ч (TTL = период между ECMWF runs), graceful error handling
+- `internal/collectors/aggregator.go` (~20 строк) — ECMWF добавлен как 6-й source в collectSources, вес 0.25 в staticSourceWeights, остальные веса перераспределены
+
+**Строк добавлено:** ~197 (ecmwf_aifs.go: +177, aggregator.go: +20)
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK
+
+---
+
 ## 2026-05-27 — TASK-088: Blitzortung — детекция молний в реальном времени
 
 **Задача:** TASK-088 — подключить Blitzortung WebSocket (wss://ws8.blitzortung.org), считать удары молний за 30 мин в радиусе 200 км, LightningRisk() как сигнал для storm/wind рынков.
