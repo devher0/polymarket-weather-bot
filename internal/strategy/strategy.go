@@ -510,7 +510,7 @@ func EvaluateFused(
 	ofi := markets.FetchOrderFlow(m.YesTokenID)
 	ofiImbalance = ofi.Imbalance // update captured variable for prediction log
 
-	d := evaluate(m, alertForecast, bankroll, adjustedMinEdge, maxBet, sourceNote)
+	d := evaluate(m, alertForecast, ff.EnsembleUncertainty, bankroll, adjustedMinEdge, maxBet, sourceNote)
 	if d == nil {
 		logPrediction("SKIP:no_edge", 0, fmt.Sprintf("yes_edge=%+.3f no_edge=%+.3f adj_min=%.3f ofi=%.3f", yesEdge, noEdge, adjustedMinEdge, ofi.Imbalance))
 		return nil
@@ -690,13 +690,16 @@ func Evaluate(
 	if !ok || len(flist) == 0 {
 		return nil
 	}
-	return evaluate(m, flist[0], bankroll, minEdge, maxBet, "source=openmeteo")
+	return evaluate(m, flist[0], 0, bankroll, minEdge, maxBet, "source=openmeteo")
 }
 
 // evaluate is the core logic shared by Evaluate and EvaluateFused.
+// deadheatSigma is the ensemble temperature stddev (°C) used for dead-heat
+// zone detection; pass 0 to disable dead-heat adjustment.
 func evaluate(
 	m markets.Market,
 	f weather.Forecast,
+	deadheatSigma float64,
 	bankroll float64,
 	minEdge float64,
 	maxBet float64,
@@ -752,6 +755,23 @@ func evaluate(
 		return nil
 	}
 
+	// TASK-129: dead-heat zone adjustment — squeeze ourP towards 0.5 when the
+	// forecast is within ±σ of the market's temperature threshold.
+	// Applied before seasonal correction so the seasonal prior acts on the
+	// already-adjusted probability (avoiding false confidence near boundaries).
+	if deadheatSigma > 0 && m.ThresholdC != 0 && (m.Signal == "heat" || m.Signal == "cold") {
+		sigma := deadheatSigma
+		distance := math.Abs(f.MaxTempC-m.ThresholdC)
+		adjusted := DeadHeatAdjust(ourP, distance, sigma)
+		if adjusted != ourP {
+			sourceNote += fmt.Sprintf(
+				" deadheat(temp=%.1f thresh=%.1f dist=%.1f σ=%.1f: %.2f→%.2f)",
+				f.MaxTempC, m.ThresholdC, distance, sigma, ourP, adjusted,
+			)
+			ourP = adjusted
+		}
+	}
+
 	// Apply seasonal Bayesian correction: blend raw model probability with
 	// monthly climatological prior. Improves calibration, especially for
 	// distant forecasts (day 4-6) where NWP skill degrades.
@@ -761,8 +781,19 @@ func evaluate(
 		sourceNote += fmt.Sprintf(" seasonal(raw=%.2f→%.2f)", rawP, ourP)
 	}
 
-	yesEdge := ourP - m.YesPrice
-	noEdge := (1 - ourP) - m.NoPrice
+	// TASK-128: prefer VWAP-based fair prices over last-trade prices when available.
+	// FairYesPrice is set by EnrichWithLiquidity via CLOB depth; it is more
+	// accurate than the stale Gamma API last-trade price in volatile markets.
+	effectiveYesPrice := m.YesPrice
+	effectiveNoPrice := m.NoPrice
+	if m.FairYesPrice > 0 {
+		effectiveYesPrice = m.FairYesPrice
+		effectiveNoPrice = m.FairNoPrice
+		sourceNote += fmt.Sprintf(" fair_vwap(yes=%.3f→%.3f)", m.YesPrice, m.FairYesPrice)
+	}
+
+	yesEdge := ourP - effectiveYesPrice
+	noEdge := (1 - ourP) - effectiveNoPrice
 
 	// Determine winning side and compute half-Kelly size.
 	type candidate struct {
@@ -774,9 +805,9 @@ func evaluate(
 	}
 	var best candidate
 	if yesEdge >= noEdge && math.Abs(yesEdge) >= minEdge {
-		best = candidate{"YES", m.YesTokenID, m.YesPrice, yesEdge, 1 / m.YesPrice}
+		best = candidate{"YES", m.YesTokenID, effectiveYesPrice, yesEdge, 1 / effectiveYesPrice}
 	} else if noEdge > yesEdge && math.Abs(noEdge) >= minEdge {
-		best = candidate{"NO", m.NoTokenID, m.NoPrice, noEdge, 1 / m.NoPrice}
+		best = candidate{"NO", m.NoTokenID, effectiveNoPrice, noEdge, 1 / effectiveNoPrice}
 	} else {
 		return nil
 	}

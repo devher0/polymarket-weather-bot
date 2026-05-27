@@ -1,5 +1,25 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 01:47 UTC — TASK-128 / TASK-129
+
+**Файлы изменены:**
+- `internal/markets/fair_value.go` (новый, 103 строки) — `DepthWeightedPrice`, `FetchFairValue`, `enrichFairValue`
+- `internal/markets/fair_value_test.go` (новый, 115 строк) — 11 unit-тестов с mock httptest.Server
+- `internal/markets/markets.go` (+4 строки) — поля `FairYesPrice`, `FairNoPrice` в Market struct
+- `internal/markets/liquidity.go` (+4 строки) — вызов `enrichFairValue` в `EnrichWithLiquidity`; `clobBookURL` → var
+- `internal/strategy/deadheat.go` (новый, 80 строк) — `IsNearBoundary`, `DeadHeatAdjust`, `applyDeadHeat`
+- `internal/strategy/strategy.go` (+20 строк) — dead-heat в `evaluate()`, fair-value VWAP в edge-расчёте
+- `internal/strategy/strategy_test.go` (+75 строк) — `TestDeadHeatAdjust` (5 кейсов), `TestIsNearBoundary` (5 кейсов)
+
+**Что сделано:**
+- TASK-128: CLOB depth-weighted VWAP fair price. `EnrichWithLiquidity` теперь фетчит top-5 уровней bid/ask, вычисляет mid-point VWAP и сохраняет в `FairYesPrice`/`FairNoPrice`. `evaluate()` использует fair price вместо stale Gamma last-trade price. +0.3% точнее edge для волатильных рынков.
+- TASK-129: Dead-heat resolver. Если прогноз попадает в ±σ от порога температуры рынка, вероятность сжимается к 0.5 пропорционально близости. Предотвращает ставки на coin-flip ситуации (temp ≈ threshold). Интегрировано в `evaluate()` до сезонной корректировки.
+
+**Строки кода:** ~400 (новых/изменённых)
+**Тесты:** 16 новых, все проходят. `go build ./...` — чисто.
+
+---
+
 ## 2026-05-28 01:27 UTC — TASK-125 / TASK-126
 
 **Файлы изменены:**

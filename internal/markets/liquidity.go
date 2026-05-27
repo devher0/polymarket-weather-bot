@@ -11,10 +11,11 @@ import (
 	"time"
 )
 
-const (
-	clobBookURL         = "https://clob.polymarket.com/book"
-	thinSpreadThreshold = 0.10 // 10-cent spread limit
-)
+const thinSpreadThreshold = 0.10 // 10-cent spread limit
+
+// clobBookURL is the Polymarket CLOB order-book endpoint.
+// Exposed as a var so tests can point it at an httptest.Server.
+var clobBookURL = "https://clob.polymarket.com/book"
 
 type bookLevel struct {
 	Price string `json:"price"`
@@ -64,7 +65,7 @@ func checkSpread(tokenID string) (float64, bool, error) {
 }
 
 // EnrichWithLiquidity fetches the CLOB order book for the YES token of each
-// market and sets ThinLiquidity and Spread in-place.
+// market and sets ThinLiquidity, Spread, FairYesPrice, and FairNoPrice in-place.
 // Errors per market are logged as warnings and do not abort the batch.
 func EnrichWithLiquidity(mkts []Market) {
 	for i := range mkts {
@@ -81,6 +82,9 @@ func EnrichWithLiquidity(mkts []Market) {
 		}
 		mkts[i].Spread = spread
 		mkts[i].ThinLiquidity = thin
+
+		// TASK-128: fetch VWAP-based fair value from CLOB depth.
+		enrichFairValue(&mkts[i])
 		if thin {
 			q := mkts[i].Question
 			if len(q) > 60 {

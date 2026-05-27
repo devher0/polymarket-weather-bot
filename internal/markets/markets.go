@@ -36,6 +36,10 @@ type Market struct {
 	Stale          bool       // TASK-063: no trades >24h AND spread > 0.08
 	LastTradeTime  time.Time  // TASK-063: timestamp of last recorded trade (zero if unknown)
 	ExpiryUTC      time.Time  // TASK-079: parsed expiry time (UTC); zero if unparseable
+	// TASK-128: CLOB depth-weighted VWAP fair value (set by EnrichWithLiquidity).
+	// Zero means not yet fetched; strategy should fall back to YesPrice/NoPrice.
+	FairYesPrice float64
+	FairNoPrice  float64
 }
 
 type signal struct {

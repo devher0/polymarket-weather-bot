@@ -1203,7 +1203,7 @@ Spread между источниками = мера неопределённос
 - Вызывать в cmd/bot после CheckCorrelation
 - 8 unit-тестов: пустая история, один сигнал, несколько сигналов, граничный случай, disabled (0), breakdown функция
 
-### [ ] TASK-128: CLOB depth-weighted fair-value enrichment
+### [x] 2026-05-28 — TASK-128: CLOB depth-weighted fair-value enrichment
 **Файлы:** `internal/markets/fair_value.go` (новый), `internal/markets/fair_value_test.go` (новый), `internal/markets/markets.go` (обновить), `internal/markets/liquidity.go` (обновить)
 Текущий `m.YesPrice` берётся из Gamma API как последняя цена — может быть stale. VWAP по лучшим N уровням CLOB даёт более точную оценку справедливой цены и улучшает расчёт edge.
 - `DepthWeightedPrice(levels []bookLevel, topN int) float64` — VWAP по topN=5 уровням
@@ -1213,7 +1213,7 @@ Spread между источниками = мера неопределённос
 - В `strategy.EvaluateFused()` — использовать FairYesPrice если != 0
 - Тесты с mock httptest.Server
 
-### [ ] TASK-129: Dead-heat resolver — ставки на ничью в погодных рынках
+### [x] 2026-05-28 — TASK-129: Dead-heat resolver — ставки на ничью в погодных рынках
 **Файл:** `internal/strategy/deadheat.go` (новый)
 Некоторые рынки сформулированы как "exactly X°C" или "between X and Y mm". Если наш прогноз близко к boundary — вероятность should быть ближе к 50% (dead-heat zone).
 - `IsNearBoundary(ff *FusedForecast, m Market) bool` — true если прогноз в ±σ от порога

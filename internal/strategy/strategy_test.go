@@ -410,3 +410,91 @@ func TestHalfKelly_PositiveEdge(t *testing.T) {
 		t.Errorf("expected size <= maxFraction*bankroll, got %.4f", size)
 	}
 }
+
+// ─── TASK-129: Dead-heat tests ────────────────────────────────────────────────
+
+func TestDeadHeatAdjust(t *testing.T) {
+	t.Run("exactly at threshold → pulled to 0.5", func(t *testing.T) {
+		got := DeadHeatAdjust(0.80, 0, 2.0)
+		if got != 0.5 {
+			t.Errorf("want 0.5, got %.4f", got)
+		}
+	})
+
+	t.Run("outside sigma → no adjustment", func(t *testing.T) {
+		got := DeadHeatAdjust(0.80, 3.0, 2.0)
+		if got != 0.80 {
+			t.Errorf("want 0.80 (unchanged), got %.4f", got)
+		}
+	})
+
+	t.Run("halfway inside sigma → midpoint between p and 0.5", func(t *testing.T) {
+		// distance = 1.0, sigma = 2.0, pull = 0.5
+		// adjusted = 0.80 + 0.5*(0.5-0.80) = 0.80 - 0.15 = 0.65
+		got := DeadHeatAdjust(0.80, 1.0, 2.0)
+		want := 0.65
+		if got < want-0.001 || got > want+0.001 {
+			t.Errorf("want ~%.3f, got %.4f", want, got)
+		}
+	})
+
+	t.Run("zero sigma → no adjustment", func(t *testing.T) {
+		got := DeadHeatAdjust(0.75, 0, 0)
+		if got != 0.75 {
+			t.Errorf("want 0.75, got %.4f", got)
+		}
+	})
+
+	t.Run("p below 0.5 is pulled up", func(t *testing.T) {
+		// distance=0, so fully pulled to 0.5
+		got := DeadHeatAdjust(0.20, 0, 2.0)
+		if got != 0.5 {
+			t.Errorf("want 0.5, got %.4f", got)
+		}
+	})
+}
+
+func TestIsNearBoundary(t *testing.T) {
+	t.Run("heat signal at threshold → near boundary", func(t *testing.T) {
+		ff := makeFused(makeForecast("new_york", 35.0, 0, 10, 10, 1), 0.7)
+		ff.EnsembleUncertainty = 2.0
+		m := heatMarket("new_york", 0.5, 0.5, 35.0)
+		if !IsNearBoundary(ff, m) {
+			t.Error("expected near boundary")
+		}
+	})
+
+	t.Run("temp far from threshold → not near boundary", func(t *testing.T) {
+		ff := makeFused(makeForecast("new_york", 42.0, 0, 10, 10, 1), 0.7)
+		ff.EnsembleUncertainty = 2.0
+		m := heatMarket("new_york", 0.8, 0.2, 35.0)
+		if IsNearBoundary(ff, m) {
+			t.Error("expected NOT near boundary (7°C away)")
+		}
+	})
+
+	t.Run("rain signal ignored", func(t *testing.T) {
+		ff := makeFused(makeForecast("new_york", 35.0, 5, 50, 10, 61), 0.7)
+		ff.EnsembleUncertainty = 2.0
+		m := rainMarket("new_york", 0.5, 0.5)
+		m.ThresholdC = 35.0
+		if IsNearBoundary(ff, m) {
+			t.Error("rain signal should not trigger dead-heat")
+		}
+	})
+
+	t.Run("nil ff → false", func(t *testing.T) {
+		m := heatMarket("new_york", 0.5, 0.5, 35.0)
+		if IsNearBoundary(nil, m) {
+			t.Error("nil ff should return false")
+		}
+	})
+
+	t.Run("no threshold → false", func(t *testing.T) {
+		ff := makeFused(makeForecast("new_york", 35.0, 0, 10, 10, 1), 0.7)
+		m := heatMarket("new_york", 0.5, 0.5, 0)
+		if IsNearBoundary(ff, m) {
+			t.Error("market with no threshold should return false")
+		}
+	})
+}
