@@ -852,7 +852,7 @@ AIFS обгоняет классические модели на 5-15% по то
 - Добавить как источник с весом 0.25, повысить до первого места по весу
 - Graceful fallback если ECMWF API недоступен
 
-### TASK-092: NOAA GFS — глобальный прогноз 16 дней
+### [x] 2026-05-27 — TASK-092: NOAA GFS — глобальный прогноз 16 дней
 **Файл:** `internal/collectors/gfs.go`
 GFS (Global Forecast System) — базовая модель всех профессиональных weather трейдеров:
 - Через Open-Meteo: `?models=gfs_seamless` — уже агрегирует GFS

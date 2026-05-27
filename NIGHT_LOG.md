@@ -1036,3 +1036,51 @@
 **Тесты:** `go test ./...` — все OK
 
 **Строк добавлено:** 203 (launch_weather.go: новый файл)
+
+---
+
+## 2026-05-27 — TASK-089: CAPE индекс — конвективная энергия (storm predictor)
+
+**Файлы:** `internal/weather/weather.go`, `internal/collectors/hrrr.go`, `internal/collectors/aggregator.go`, `internal/strategy/strategy.go`
+
+**Что сделано:**
+- Добавлен `CapeJkg float64` в `weather.Forecast` struct
+- Добавлена функция `CAPEStormProbability(cape float64) float64` в weather пакет (4 порога: 500/1500/3000 J/kg)
+- HRRR теперь экспортирует `CapeJkg` в Forecast вместо использования только для WeatherCode
+- Aggregator накапливает maxCapeJkg из всех источников и передаёт в FusedForecast
+- Strategy: CAPE boost +0..+12% для wind/rain рынков когда CAPE > 0
+
+**Сборка:** `go build ./...` — OK
+
+**Строк добавлено:** ~60
+
+---
+
+## 2026-05-27 — TASK-091: ECMWF AIFS — лучшая мировая AI-модель прогноза
+
+**Файл:** `internal/collectors/ecmwf_aifs.go` (176 строк, новый)
+
+**Что сделано:**
+- Реализован ECMWF AIFS 0.25° через Open-Meteo (fallback на IFS 0.4°)
+- `ECMWFGetForecast(city, days)` — fetch + 6h кэш
+- Добавлен как 6-й источник в aggregator (вес 0.25 — наибольший из всех)
+- Перераспределены веса: ecmwf=0.25, openmeteo=0.20, nasa=0.17, noaa=0.13, goes=0.08, hrrr=0.12, gfs=0.10
+
+**Строк добавлено:** 176
+
+---
+
+## 2026-05-27 — TASK-092: NOAA GFS — глобальный прогноз 16 дней
+
+**Файл:** `internal/collectors/gfs.go` (158 строк, новый)
+
+**Что сделано:**
+- Реализован GFS_seamless через Open-Meteo (до 16 дней горизонт)
+- `GFSGetForecast(city, days)` и `GFSGet16DayForecast(city)` — fetch + 6h кэш
+- Добавлен как 7-й источник в aggregator (вес 0.10)
+- `Forecast16Days []weather.Forecast` добавлен в FusedForecast
+- Aggregate() автоматически запрашивает 16-дневный прогноз из GFS (non-blocking)
+
+**Сборка:** `go build ./...` — OK
+
+**Строк добавлено:** 158 (gfs.go) + ~25 (aggregator)

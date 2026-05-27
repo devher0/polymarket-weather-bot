@@ -32,23 +32,27 @@ type FusedForecast struct {
 	// TASK-088: Blitzortung lightning detection within 200 km / 30 min window.
 	LightningRisk    float64 // 0-1 risk score; 0 = not yet observed
 	LightningStrikes int     // raw strike count in the 30-min rolling window
+	// TASK-092: GFS 16-day extended forecast (nil when GFS unavailable or not fetched).
+	Forecast16Days []weather.Forecast
 }
 
 // staticSourceWeights defines the base weight for each data source.
 // At runtime these may be overridden by DynamicWeights() once enough
 // resolved bets have accumulated (TASK-032).
 //
-// TASK-086: added "hrrr" (0.15) as a 5th source for US cities.
-// TASK-091: added "ecmwf" (0.25) as 6th global source (highest individual weight);
-// other weights redistributed proportionally to sum to 1.0 (excluding goes/hrrr
-// which are unconditional).
+// TASK-086: added "hrrr" (0.12) as 5th source for US cities.
+// TASK-091: added "ecmwf" (0.25) as 6th global source (highest individual weight).
+// TASK-092: added "gfs" (0.10) as 7th global source.
+// All weights sum to 1.0 across the global sources (ecmwf+openmeteo+nasa+noaa+goes+gfs).
+// HRRR supplements US cities only and is normalised separately in fuse().
 var staticSourceWeights = map[string]float64{
 	"ecmwf":     0.25,
-	"openmeteo": 0.22,
-	"nasa":      0.18,
-	"noaa":      0.15,
+	"openmeteo": 0.20,
+	"nasa":      0.17,
+	"noaa":      0.13,
 	"goes":      0.08,
 	"hrrr":      0.12,
+	"gfs":       0.10,
 }
 
 // currentWeights returns the active source weights: dynamic if enough data
@@ -94,7 +98,8 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	includeHRRR := usCities[city]
 
 	// TASK-091: ECMWF AIFS is available globally (all cities).
-	numSources := 4 // openmeteo + nasa + noaa + ecmwf
+	// TASK-092: GFS is available globally (all cities).
+	numSources := 5 // openmeteo + nasa + noaa + ecmwf + gfs
 	if includeGOES {
 		numSources++
 	}
@@ -178,6 +183,25 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 			idx = len(fc) - 1
 		}
 		ch <- item{r: sourceResult{name: "ecmwf", forecast: fc[idx], weight: weights["ecmwf"]}, ok: true}
+	}()
+
+	// --- NOAA GFS (global 16-day model, TASK-092) ---
+	go func() {
+		fc, err := GFSGetForecast(city, days)
+		if err != nil || len(fc) == 0 {
+			if err == nil {
+				err = fmt.Errorf("empty forecast")
+			}
+			RecordSourceCall("gfs", err, dataRoot)
+			ch <- item{}
+			return
+		}
+		RecordSourceCall("gfs", nil, dataRoot)
+		idx := dayOffset
+		if idx >= len(fc) {
+			idx = len(fc) - 1
+		}
+		ch <- item{r: sourceResult{name: "gfs", forecast: fc[idx], weight: weights["gfs"]}, ok: true}
 	}()
 
 	// --- NOAA HRRR (high-resolution US-only model, TASK-086) ---
@@ -281,6 +305,13 @@ func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
 				"risk", fmt.Sprintf("%.2f", lightningRisk),
 			)
 		}
+	}
+
+	// TASK-092: populate 16-day extended forecast from GFS (non-blocking).
+	if gfs16, err := GFSGet16DayForecast(city); err == nil && len(gfs16) > 0 {
+		ff.Forecast16Days = gfs16
+	} else {
+		slog.Debug("gfs 16-day forecast unavailable (non-critical)", "city", city, "err", err)
 	}
 
 	// TASK-076: refine today's forecast with hourly intraday data.
