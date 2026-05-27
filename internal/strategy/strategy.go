@@ -168,9 +168,59 @@ func EvaluateFused(
 	sourceNote := fmt.Sprintf("ensemble=[%s] confidence=%.2f",
 		strings.Join(parts, "+"), ff.Confidence)
 
-	d := evaluate(m, ff.Forecast, bankroll, minEdge, maxBet, sourceNote)
+	// TASK-050: apply NWS alert probability boost before sizing.
+	// When an active weather warning/watch is relevant to the market signal,
+	// we boost OurProbability before the edge check so the alert acts as
+	// additional evidence alongside the weather model forecasts.
+	alertForecast := ff.Forecast
+	if ff.AlertLevel > collectors.AlertLevelNone {
+		probBoost, confBoost := collectors.AlertBoost(
+			collectors.AlertSummary{Level: ff.AlertLevel, Events: ff.AlertEvents},
+			m.Signal,
+		)
+		if probBoost > 0 {
+			boostedP := math.Min(0.97, alertForecast.PrecipitationProbability/100+probBoost) * 100
+			switch m.Signal {
+			case "rain", "flood":
+				alertForecast.PrecipitationProbability = boostedP
+				if alertForecast.PrecipitationMM < 2 {
+					alertForecast.PrecipitationMM = 2.1 // ensure RainProbability uses mid path
+				}
+			case "heat":
+				alertForecast.MaxTempC += probBoost * 15 // ~+2.25°C for warning (+15%)
+			case "cold", "snow":
+				alertForecast.MaxTempC -= probBoost * 15
+				alertForecast.MinTempC -= probBoost * 15
+			case "wind":
+				alertForecast.WindSpeedKMH += probBoost * 40 // ~+6 km/h for warning
+			}
+			_ = confBoost // confidence boost applied below after decision is made
+			slog.Info("alert boost applied",
+				"city", m.City,
+				"signal", m.Signal,
+				"alert_level", ff.AlertLevel,
+				"events", strings.Join(ff.AlertEvents, "; "),
+				"prob_boost", fmt.Sprintf("+%.0f%%", probBoost*100),
+			)
+			sourceNote += fmt.Sprintf(" alert_boost=+%.0f%%(%s)",
+				probBoost*100, levelName(ff.AlertLevel))
+		}
+	}
+
+	d := evaluate(m, alertForecast, bankroll, minEdge, maxBet, sourceNote)
 	if d == nil {
 		return nil
+	}
+
+	// Apply confidence boost from alert (capped at 0.97).
+	if ff.AlertLevel > collectors.AlertLevelNone {
+		_, confBoost := collectors.AlertBoost(
+			collectors.AlertSummary{Level: ff.AlertLevel, Events: ff.AlertEvents},
+			m.Signal,
+		)
+		if confBoost > 0 {
+			ff.Confidence = math.Min(0.97, ff.Confidence+confBoost)
+		}
 	}
 
 	// TASK-034: scale bet size down when ensemble spread is high.
@@ -333,6 +383,20 @@ func evaluate(
 		SizeUSDC:       size,
 		Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
 			m.City, m.Signal, ourP, best.marketPrice, best.edge, sourceNote),
+	}
+}
+
+// levelName returns a human-readable name for an AlertLevel constant.
+func levelName(level int) string {
+	switch level {
+	case collectors.AlertLevelAdvisory:
+		return "advisory"
+	case collectors.AlertLevelWatch:
+		return "watch"
+	case collectors.AlertLevelWarning:
+		return "warning"
+	default:
+		return "none"
 	}
 }
 

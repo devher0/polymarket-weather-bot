@@ -20,11 +20,15 @@ import (
 // FusedForecast combines forecasts from multiple sources with confidence score.
 type FusedForecast struct {
 	weather.Forecast
-	Confidence          float64                    // 0-1: how much sources agree (1 = full agreement)
-	Sources             []string                   // which sources contributed
-	EnsembleUncertainty float64                    // stddev of temperature across ensemble members (°C); 0 if unavailable
-	FetchedAt           time.Time                  // when this forecast was assembled (for staleness checks)
+	Confidence          float64                     // 0-1: how much sources agree (1 = full agreement)
+	Sources             []string                    // which sources contributed
+	EnsembleUncertainty float64                     // stddev of temperature across ensemble members (°C); 0 if unavailable
+	FetchedAt           time.Time                   // when this forecast was assembled (for staleness checks)
 	PerSourceForecasts  map[string]weather.Forecast // raw per-source forecasts (for accuracy tracking)
+	// TASK-050: NWS active alert level for this city (US only).
+	// AlertLevelNone=0, AlertLevelAdvisory=1, AlertLevelWatch=2, AlertLevelWarning=3
+	AlertLevel  int      // highest active NWS alert level
+	AlertEvents []string // human-readable active event names ("Excessive Heat Warning", etc.)
 }
 
 // staticSourceWeights defines the base weight for each data source.
@@ -181,6 +185,15 @@ func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
 		ff.Confidence = EnsembleToConfidence(er.TempStdDev)
 		ff.EnsembleUncertainty = er.TempStdDev
 		ff.Sources = append(ff.Sources, "ensemble")
+	}
+
+	// TASK-050: fetch NWS active alerts for US cities (non-blocking; errors are
+	// logged and silently ignored so alerts are always an optional enhancement).
+	if alertSummary, err := FetchAlerts(city); err != nil {
+		slog.Debug("noaa alerts fetch failed (non-critical)", "city", city, "err", err)
+	} else {
+		ff.AlertLevel = alertSummary.Level
+		ff.AlertEvents = alertSummary.Events
 	}
 
 	// TASK-042: detect and log significant forecast changes before overwriting cache.
@@ -354,6 +367,14 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 		ff.Confidence = EnsembleToConfidence(er.TempStdDev)
 		ff.EnsembleUncertainty = er.TempStdDev
 		ff.Sources = append(ff.Sources, "ensemble")
+	}
+
+	// TASK-050: fetch NWS active alerts for US cities (non-blocking).
+	if alertSummary, err := FetchAlerts(city); err != nil {
+		slog.Debug("noaa alerts fetch failed (non-critical)", "city", city, "err", err)
+	} else {
+		ff.AlertLevel = alertSummary.Level
+		ff.AlertEvents = alertSummary.Events
 	}
 
 	// TASK-042: detect and log significant forecast changes before overwriting cache.

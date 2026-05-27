@@ -492,3 +492,37 @@
 **Итого строк добавлено:** ~425
 
 **Тесты:** `go test ./...` — все PASS; `go build ./...` — ✅
+
+---
+
+## 2026-05-27 — Итерация 11 (17:57 CET)
+
+### TASK-050: NOAA Weather Alerts — буст вероятности при активных NWS предупреждениях
+
+**Что сделано:**
+- `internal/collectors/noaa_alerts.go` (новый, 230 строк)
+  - `FetchAlerts(city)` → `AlertSummary{Level, Events}`
+  - Кэш 30 минут (sync.Mutex + map)
+  - `alertsUsCities` = new_york, miami, chicago, los_angeles, san_francisco
+  - `classifyEvent()` — 28 NWS event keywords → AlertLevel (0=none…3=warning)
+  - `AlertBoost(summary, signal)` → (probBoost, confBoost) по сигналу и уровню
+    - Warning: +15% prob, +10% conf | Watch: +8%/+5% | Advisory: +4%/+2%
+  - User-Agent header обязателен для NWS API
+- `internal/collectors/aggregator.go` (обновлён)
+  - `FusedForecast` получил поля `AlertLevel int` и `AlertEvents []string`
+  - `FetchAlerts()` вызывается в `Aggregate()` и `AggregateForDay()` после ансамблевой калибровки
+  - Ошибки алертов логируются как DEBUG и не останавливают основной поток
+- `internal/strategy/strategy.go` (обновлён)
+  - В `EvaluateFused()`: перед вызовом `evaluate()` применяется `AlertBoost()`
+  - Для heat: MaxTempC += boost×15; для rain: PrecipitationProbability boosted; для cold/snow: temp снижается; для wind: WindSpeedKMH boosted
+  - Добавлен `levelName()` helper; логируется "alert boost applied" с city/signal/level/events
+  - Confidence boost применяется к `ff.Confidence` после основного evaluate
+
+**Файлы:**
+- `internal/collectors/noaa_alerts.go` (новый, 230 строк)
+- `internal/collectors/aggregator.go` (+18 строк)
+- `internal/strategy/strategy.go` (+53 строки)
+
+**Итого строк добавлено:** ~301
+
+**Тесты:** `go test ./...` — все PASS; `go build ./...` — ✅

@@ -456,3 +456,42 @@ type FusedForecast struct {
 - [x] 2026-05-27 — TASK-011: Telegram notifier (internal/notifier/telegram.go) — NotifyBet, DailyDigest, NotifyError
 - [x] 2026-05-27 — TASK-012: EIP-712 order signing (internal/polymarket/order.go) — PlaceBet, L1 auth, order_test.go
 - [x] 2026-05-27 — TASK-013: Docker + Makefile — multi-stage Dockerfile, Makefile с 12 целями, README обновлён
+
+---
+
+## 🔴 ПРИОРИТЕТ 13 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-050: NOAA Weather Alerts — буст вероятности при активных предупреждениях
+**Файлы:** `internal/collectors/noaa_alerts.go` (новый), `internal/collectors/aggregator.go` (обновить), `internal/strategy/strategy.go` (обновить)
+- Fetch active NWS alerts: `GET https://api.weather.gov/alerts/active?point={lat},{lon}`
+- Парсить severity ("Extreme/Severe/Moderate") и event type ("Tornado Warning", "Excessive Heat Warning", etc.)
+- AlertLevel: 0=None, 1=Advisory, 2=Watch, 3=Warning
+- Добавить в FusedForecast: `AlertLevel int`, `AlertEvents []string`
+- В EvaluateFused(): boost probability на 15%/8%/4% (Warning/Watch/Advisory) для релевантного сигнала
+  - Excessive Heat Warning → heat, cold сигналы
+  - Winter Storm Warning → snow, cold сигналы
+  - Tornado/Severe Thunderstorm → wind, rain сигналы
+  - Flood Warning → rain сигнал
+- Boost confidence на +0.10 при Warning уровне
+- Кэш 30 минут (не чаще NWS rate limit)
+- Только для US городов: new_york, miami, chicago, los_angeles, san_francisco
+- Логировать "alert boost applied: city=X level=Warning event=Y boost=+0.15"
+
+### [ ] TASK-051: /healthz HTTP endpoint
+**Файлы:** `cmd/bot/main.go` (обновить), `internal/metrics/metrics.go` (обновить)
+- Добавить `/healthz` к существующему Prometheus HTTP серверу
+- Возвращает JSON: `{status, uptime_s, last_cycle_at, cycles, bets_placed, open_positions, bankroll_usdc}`
+- `status`: "ok" / "degraded" (если last_cycle_at > 2×loop_sec назад)
+- Полезно для Docker/k8s health checks и внешнего мониторинга
+
+### [ ] TASK-052: Batch market evaluation report — JSON export
+**Файлы:** `cmd/dashboard/main.go` (обновить)
+- Новый sub-command: `dashboard report --output=report.json`
+- Экспортирует полный снимок оценок рынков: timestamp, все рынки с нашей вероятностью, edge, решением
+- Удобно для post-hoc анализа и интеграции с внешними системами
+
+### [ ] TASK-053: Конфигурация через переменные окружения без .env файла
+**Файлы:** `cmd/bot/main.go` (обновить), README.md (обновить)
+- Документировать все ENV vars в README секции "Environment Variables"
+- Добавить валидацию обязательных ENV vars при старте в live-режиме: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS
+- Выводить чёткое сообщение об ошибке с именами пропущенных vars вместо generic panic
