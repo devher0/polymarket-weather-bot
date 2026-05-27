@@ -345,6 +345,26 @@ func EvaluateFused(
 		}
 	}
 
+	// TASK-087: apply RAOB upper-air wind boost for wind markets.
+	// When 850 hPa wind exceeds 50 km/h the surface wind probability is boosted
+	// proportionally (up to +0.20) — upper-level momentum often translates to
+	// surface gusts, especially in frontal and cyclonic situations.
+	if m.Signal == "wind" {
+		raobProfile := collectors.GetAtmosphericProfile(m.City)
+		boost := raobProfile.WindBoost()
+		if boost > 0 {
+			alertForecast.WindSpeedKMH += boost * 80.0 // scale to km/h space used by wind probability
+			slog.Info("raob wind boost applied",
+				"city", m.City,
+				"wind_850hpa_kmh", fmt.Sprintf("%.1f", raobProfile.WindKMH850hPa),
+				"wind_700hpa_kmh", fmt.Sprintf("%.1f", raobProfile.WindKMH700hPa),
+				"max_wind_shear_kmh", fmt.Sprintf("%.1f", raobProfile.MaxWindShear),
+				"boost_fraction", fmt.Sprintf("+%.3f", boost),
+			)
+			sourceNote += fmt.Sprintf(" raob_boost=+%.0f%%", boost*100)
+		}
+	}
+
 	// TASK-055: adjust minEdge based on forecast confidence.
 	// High-confidence forecasts (sources agree) can enter with smaller edge;
 	// low-confidence forecasts require a larger edge as safety margin.

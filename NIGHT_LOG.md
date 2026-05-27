@@ -1,5 +1,16 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-087: Радиозонды RAOB — профиль атмосферы по высотам
+
+**Задача:** TASK-087 — подключить данные метеозондов через rucsoundings.noaa.gov, возвращать AtmosphericProfile с ветрами на 850/700/500 hPa и применять boost в wind-рынках.
+**Файлы изменены:**
+- `internal/collectors/raob.go` (новый, ~210 строк) — парсит GSD/GSL text sounding format, конвертирует узлы → км/ч, вычисляет MaxWindShear, кэш 3 ч, graceful fallback при ошибках
+- `internal/strategy/strategy.go` (+19 строк) — RAOB wind boost в `EvaluateFused`: при 850 hPa > 50 км/ч увеличивает WindSpeedKMH и логирует boost
+
+**Строк добавлено:** ~229
+
+---
+
 ## 2026-05-27 — TASK-086: NOAA HRRR высокоточная модель (3км, hourly updates)
 
 **Задача:** TASK-086 — подключить NOAA HRRR через Open-Meteo как 5-й источник данных для городов США

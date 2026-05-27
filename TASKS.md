@@ -803,7 +803,7 @@ type FusedForecast struct {
 - Добавить как 5-й источник в aggregator с весом 0.15 (перераспределить остальные)
 - HRRR особенно точен для storm/wind рынков (конвективные события)
 
-### TASK-087: Радиозонды RAOB — профиль атмосферы по высотам
+### [x] 2026-05-27 — TASK-087: Радиозонды RAOB — профиль атмосферы по высотам
 **Файл:** `internal/collectors/raob.go`
 Подключить данные метеозондов через rucsoundings.noaa.gov:
 - URL: https://rucsoundings.noaa.gov/get_soundings.cgi?data_source=GFS&airport={lat},{lon}
