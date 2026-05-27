@@ -1385,3 +1385,20 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 - Изменён `cmd/bot/main.go`: StartCommandPoller + IsPaused() check в начале run()
 
 **Строк:** 320 (telegram_commands.go) + 15 (main.go)
+
+## 2026-05-28 00:22 — TASK-112: A/B тест стратегий
+
+**Файлы:** `internal/strategy/ab_strategy.go` (новый, 320 строк), `internal/strategy/strategy.go` (+12 строк), `cmd/dashboard/main.go` (+4 строки)
+
+**Что сделано:**
+- Новый файл `ab_strategy.go` — полная реализация A/B фреймворка
+- `ABRecord` struct + `SaveABRecord()` — логирование каждой ставки в `data/ab_test.csv` с вариантом A/B
+- `EvaluateAB()` — shadow-функция: при каждом бете считает гипотетический размер по обоим фракциям (0.25 vs 0.50) и логирует оба результата
+- `LoadABStats()` — читает CSV, группирует по conditionID+variant, считает Brier score, win rate, ROI для каждой стратегии
+- `ABWinner()` — объявляет победителя после N=50 resolved ставок по Brier score
+- `PrintABTest()` — красивый вывод с таблицей и daily breakdown
+- `printABDailyBreakdown()` — per-day grid A/B wins
+- Интеграция в `EvaluateFused()`: после решения о ставке вызывает `EvaluateAB()`
+- `dashboard ab-test` субкоманда добавлена
+
+**Строк:** 320 (ab_strategy.go) + 16 изменений

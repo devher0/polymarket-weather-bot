@@ -513,6 +513,9 @@ func main() {
 	case "health":
 		// TASK-081: show per-source data availability stats.
 		cmdSourceHealth(dataRoot)
+	case "ab-test":
+		// TASK-112: A/B test comparison between Kelly fraction strategies.
+		strategy.PrintABTest(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)

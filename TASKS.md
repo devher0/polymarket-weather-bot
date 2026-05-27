@@ -1031,3 +1031,57 @@ Spread между источниками = мера неопределённос
 - `/positions` — список открытых ставок
 - `/next` — топ-3 лучших ставки прямо сейчас (dry-run)
 - `/pause` и `/resume` — приостановить/возобновить торговлю
+
+---
+
+## 🔬 ПРИОРИТЕТ 7 — Эксперименты и ML-улучшения
+
+### [x] 2026-05-28 — TASK-112: A/B тест стратегий — сравнение Kelly вариантов
+**Файл:** `internal/strategy/ab_test.go` (новый)
+Реализовать A/B тест двух стратегий ставок с автоматическим сравнением:
+- Стратегия A: quarter-Kelly (fraction=0.25) — консервативная
+- Стратегия B: half-Kelly (fraction=0.50) — агрессивная
+- `ABTest` struct с двумя независимыми bankroll, Brier score, win rate
+- Каждый рынок получает обе оценки — решения логируются в data/ab_test.csv
+- После N=50 resolved ставок — автоматически выбрать лучшую стратегию
+- `dashboard ab-test` субкоманда — показать текущие результаты A/B теста
+- Переключение в production на winner без перезапуска
+
+### [ ] TASK-113: Sharpe ratio трекер — risk-adjusted return
+**Файл:** `internal/calibration/sharpe.go` (новый)
+Считать Sharpe ratio нашего P&L для оценки стратегии как профессионального трейдера:
+- Sharpe = mean(daily_returns) / std(daily_returns) × sqrt(365)
+- Daily returns: (end_bankroll - start_bankroll) / start_bankroll
+- Сохранять daily snapshots в data/daily_returns.json
+- Sharpe > 1.0 = хорошо, > 2.0 = отлично (hedge fund benchmark)
+- Показывать в `/status` Telegram команде и healthz endpoint
+- Alert в Telegram если Sharpe < 0.5 за последние 30 дней
+
+### [ ] TASK-114: Market sentiment — используем order flow imbalance
+**Файл:** `internal/markets/sentiment.go` (новый)
+Анализировать дисбаланс ордеров для детекции "умных денег":
+- CLOB API: GET /book?token_id=... → считать суммарный объём bid vs ask
+- OrderFlowImbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol) → [-1, 1]
+- Положительный imbalance + наш прогноз YES → +5% к edge
+- Отрицательный imbalance → осторожнее
+- Логировать в prediction_log: поле `order_flow_imbalance`
+
+### [ ] TASK-115: Seasonal CLOB patterns — торговые паттерны по дням недели
+**Файл:** `internal/strategy/seasonal.go` (новый)
+Анализировать наши исторические ставки на предмет паттернов:
+- Win rate по дню недели (Mon-Sun)
+- Win rate по времени суток (morning/afternoon/evening)
+- Win rate по сезону (месяц)
+- Если в пятницу вечером win rate < 40% → снизить max_bet на 30%
+- Данные из bets_history.csv, обновлять каждую итерацию
+- Экспортировать как JSON в data/seasonal_patterns.json
+
+### [ ] TASK-116: ML фича инженерия — автогенерация признаков для gradient boost
+**Файл:** `internal/aggregation/feature_engineering.go` (новый)
+Расширить признаки для gradient_boost.go с текущих ~8 до ~25:
+- Взаимодействия: openmeteo_p × nasa_p, temp_rank_vs_historical
+- Лаговые признаки: yesterday_rain_prob, 3day_rain_trend
+- Агрегации: mean_7d_precip, max_7d_temp, std_7d_wind
+- City embeddings: one-hot по 15 городам
+- Signal embeddings: rain=0, heat=1, cold=2, snow=3, wind=4, sunny=5
+- Сохранять feature importance в data/feature_importance.json

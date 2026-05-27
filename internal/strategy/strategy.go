@@ -596,6 +596,16 @@ func EvaluateFused(
 	// TASK-057: log successful bet to prediction journal.
 	logPrediction("BET_"+d.Side, d.SizeUSDC, d.Reason)
 
+	// TASK-112: shadow-log A/B test record for strategy comparison.
+	// bestEdge and bestMarketPrice drive the counterfactual Kelly sizing.
+	bestEdge := yesEdge
+	bestPrice := m.YesPrice
+	if d.Side == "NO" {
+		bestEdge = noEdge
+		bestPrice = m.NoPrice
+	}
+	EvaluateAB(nil, d, ourP, bestPrice, bestEdge, bankroll, maxBet, dataRoot)
+
 	return d
 }
 
