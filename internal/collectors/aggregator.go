@@ -34,11 +34,16 @@ type FusedForecast struct {
 // staticSourceWeights defines the base weight for each data source.
 // At runtime these may be overridden by DynamicWeights() once enough
 // resolved bets have accumulated (TASK-032).
+//
+// TASK-086: added "hrrr" (0.15) as a 5th source for US cities; other weights
+// redistributed proportionally: openmeteo 0.35→0.30, nasa 0.30→0.25,
+// noaa 0.25→0.20, goes unchanged at 0.10.
 var staticSourceWeights = map[string]float64{
-	"openmeteo": 0.35,
-	"nasa":      0.30,
-	"noaa":      0.25,
+	"openmeteo": 0.30,
+	"nasa":      0.25,
+	"noaa":      0.20,
 	"goes":      0.10,
+	"hrrr":      0.15,
 }
 
 // currentWeights returns the active source weights: dynamic if enough data
@@ -73,6 +78,7 @@ const sourceFetchTimeout = 8 * time.Second
 // dayOffset selects which forecast day index to use (0=today … 6).
 // includeGOES enables the GOES-19 satellite cloud-cover source (today only).
 // weights overrides staticSourceWeights when non-nil.
+// TASK-086: HRRR is included as a 5th source for US cities only.
 func collectSources(ctx context.Context, city string, days int, dayOffset int, dataRoot string, includeGOES bool) []sourceResult {
 	weights := currentWeights(dataRoot)
 	type item struct {
@@ -80,9 +86,14 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		ok bool
 	}
 
+	includeHRRR := usCities[city]
+
 	numSources := 3
 	if includeGOES {
-		numSources = 4
+		numSources++
+	}
+	if includeHRRR {
+		numSources++
 	}
 
 	ch := make(chan item, numSources)
@@ -143,6 +154,27 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		}
 		ch <- item{r: sourceResult{name: "noaa", forecast: fc[idx], weight: weights["noaa"]}, ok: true}
 	}()
+
+	// --- NOAA HRRR (high-resolution US-only model, TASK-086) ---
+	if includeHRRR {
+		go func() {
+			fc, err := HRRRGetForecast(city, days)
+			if err != nil || len(fc) == 0 {
+				if err == nil {
+					err = fmt.Errorf("empty forecast")
+				}
+				RecordSourceCall("hrrr", err, dataRoot)
+				ch <- item{}
+				return
+			}
+			RecordSourceCall("hrrr", nil, dataRoot)
+			idx := dayOffset
+			if idx >= len(fc) {
+				idx = len(fc) - 1
+			}
+			ch <- item{r: sourceResult{name: "hrrr", forecast: fc[idx], weight: weights["hrrr"]}, ok: true}
+		}()
+	}
 
 	// --- GOES-19 (cloud cover supplement, today only) ---
 	if includeGOES {

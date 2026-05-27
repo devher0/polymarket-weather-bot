@@ -793,7 +793,7 @@ type FusedForecast struct {
 
 ## 🚀 ПРИОРИТЕТ 5 — Аэрокосмические источники (SpaceX-level данные)
 
-### TASK-086: NOAA HRRR — высокоточная модель (3км, обновление каждый час)
+### [x] 2026-05-27 — TASK-086: NOAA HRRR — высокоточная модель (3км, обновление каждый час)
 **Файл:** `internal/collectors/hrrr.go`
 Подключить NOAA High-Resolution Rapid Refresh через Open-Meteo HRRR endpoint:
 - URL: https://api.open-meteo.com/v1/forecast?models=gfs_seamless (или hrrr)
@@ -912,3 +912,94 @@ Speedwell Climate — институциональный провайдер дл
 - NASA POWER: уже есть RH2M для расчёта heat index
 - Сравнивать apparent_temperature из разных источников для confidence
 - Рынки типа "feels like above 105°F in Phoenix" — точность +15%
+
+---
+
+## 🧠 ПРИОРИТЕТ 6 — Мега-агрегатор (поднять % точности)
+
+### TASK-099: Super-aggregator — все источники в один pipeline
+**Файл:** `internal/collectors/super_aggregator.go`
+Центральный агрегатор который принимает ВСЕ источники и выдаёт единый SuperForecast:
+```go
+type SuperForecast struct {
+    weather.Forecast
+    Sources        []SourceResult   // каждый источник с весом и значением
+    Confidence     float64          // 0-1: консенсус источников
+    Uncertainty    float64          // стандартное отклонение между источниками
+    ModelAgreement float64          // % источников согласных с majority vote
+    SignalStrength float64          // насколько сильный сигнал (для Kelly scaling)
+}
+```
+- Принимать результаты от: OpenMeteo, NASA, NOAA, GOES, HRRR, ECMWF, GFS, RAOB, Lightning, CAPE, MTG
+- Динамические веса: вес источника = его исторический Brier score за последние 30 дней
+- Источники с плохим Brier score → автоматически понижаются
+- Источники с хорошим Brier score → автоматически повышаются
+- Параллельный фетчинг всех источников через goroutines с timeout 10s per source
+- Timeout → источник пропускается без блокировки остальных
+
+### TASK-100: Байесовский ансамбль — не просто среднее
+**Файл:** `internal/aggregation/bayesian_ensemble.go`
+Вместо взвешенного среднего — полноценный байесовский ансамбль:
+- Prior: климатологическая вероятность для города/месяца/сигнала из исторических данных
+- Likelihood: каждый источник обновляет prior через байесовское обновление
+- Posterior = итоговая вероятность
+- Формула: P(rain|sources) = P(sources|rain) × P(rain) / P(sources)
+- Результат: точнее обычного среднего на 8-12% особенно когда источники расходятся
+
+### TASK-101: Gradient boosting калибровка (XGBoost-style в Go)
+**Файл:** `internal/aggregation/gradient_boost.go`
+Обучить лёгкую ML-модель прямо в Go без внешних зависимостей:
+- Features: [openmeteo_p, nasa_p, noaa_p, goes_cloud, cape, pressure_trend, month, city_id]
+- Target: фактический исход рынка (из bets_history.csv resolved=true/false)
+- Алгоритм: простой gradient boosting с 50-100 деревьями решений (gbdt.go)
+- Переобучение каждые 7 дней на свежих данных
+- Хранить модель в data/model.json (веса деревьев)
+- После 50+ resolved ставок — точность +10-15% vs взвешенного среднего
+
+### TASK-102: Метео-консенсус индекс (как рынки используют Reuters Eikon)
+**Файл:** `internal/aggregation/consensus_index.go`
+Профессиональные трейдеры смотрят на консенсус между моделями:
+- Если ECMWF, GFS, HRRR, OpenMeteo все говорят "дождь" → консенсус = 1.0, ставим уверенно
+- Если модели 50/50 → консенсус = 0.0, пропускаем (edge реально нет)
+- ConsensusIndex(models []float64, threshold float64) (consensus, direction float64)
+- Интегрировать в strategy: при ConsensusIndex < 0.3 → skip bet regardless of edge
+- При ConsensusIndex > 0.8 → увеличить Kelly fraction на 20%
+
+### TASK-103: Исторический базис — насколько каждый источник точен по городам
+**Файл:** `internal/aggregation/source_accuracy.go` (расширить)
+Трекать точность каждого источника отдельно по каждому городу и сигналу:
+```
+OpenMeteo / new_york / rain → Brier: 0.12, N=45 (хороший)
+NASA      / london   / rain → Brier: 0.21, N=30 (средний)
+NOAA      / miami    / heat → Brier: 0.08, N=20 (отличный)
+```
+- При агрегации: использовать city+signal специфичные веса
+- NOAA хорош для США тепла → вес 0.40 для miami/heat
+- ECMWF хорош для Европы → вес 0.45 для london/rain
+- Экспортировать в dashboard и Prometheus /metrics
+
+### TASK-104: Real-time re-weighting при расхождении источников
+**Файл:** `internal/collectors/super_aggregator.go` (обновить)
+Когда источники сильно расходятся — не усреднять, а анализировать:
+- Если 1 источник outlier (отклонение > 2σ от остальных) → понизить его вес в текущем цикле
+- Если ECMWF расходится с остальными → ECMWF обычно прав (он точнее), повысить его вес
+- Логировать: "NOAA outlier detected (0.82 vs mean 0.45), weight reduced to 0.05"
+- История outlier'ов влияет на долгосрочный Brier score источника
+
+### TASK-105: Ensemble spread → автоматический размер ставки
+**Файл:** `internal/strategy/strategy.go` (обновить)
+Spread между источниками = мера неопределённости = должна влиять на Kelly:
+- Малый spread (все согласны) → bet_size × 1.3 (высокая уверенность)
+- Средний spread → bet_size × 1.0 (baseline)
+- Большой spread → bet_size × 0.5 (осторожно, неопределённость высокая)
+- SpreadScale(sources []float64) float64 — стандартное отклонение → scaling factor
+- Эффект: автоматически больше ставим когда уверены, меньше когда сомневаемся
+
+### TASK-106: Nowcasting — прогноз на следующие 2-6 часов
+**Файл:** `internal/collectors/nowcast.go`
+Для рынков которые закрываются сегодня — нужен nowcast а не daily forecast:
+- Open-Meteo minutely_15 endpoint: 15-минутные интервалы на 2 суток
+- Параметры: precipitation, temperature_2m, wind_speed_10m
+- NowcastRainProbability(minutes int) float64 — вероятность дождя в следующие N минут
+- Использовать для рынков с EndDate сегодня (DaysUntilExpiry == 0)
+- Точнее daily forecast для intraday рынков на 20-30%

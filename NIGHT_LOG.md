@@ -1,5 +1,18 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-086: NOAA HRRR высокоточная модель (3км, hourly updates)
+
+**Задача:** TASK-086 — подключить NOAA HRRR через Open-Meteo как 5-й источник данных для городов США
+**Файлы изменены:**
+- `internal/collectors/hrrr.go` (новый, 189 строк) — коллектор HRRR с кэшем 60 минут, CAPE-based weather code elevation
+- `internal/collectors/aggregator.go` (~25 строк) — добавлен HRRR как 5-й source, веса перераспределены (openmeteo 0.35→0.30, nasa 0.30→0.25, noaa 0.25→0.20, goes=0.10, hrrr=0.15)
+
+**Строк добавлено:** ~215
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK
+
+---
+
 ## 2026-05-27 20:02 UTC — TASK-084, TASK-085: Apparent temperature + Barometric pressure trend
 
 **Задачи:** TASK-084 (Apparent temperature — heat index / wind chill), TASK-085 (Barometric pressure trend → rain signal boost)
