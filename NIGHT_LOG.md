@@ -1253,3 +1253,13 @@
 - Источники с таймаутом пропускаются без блокировки остальных
 
 **Строк добавлено:** 277 (super_aggregator.go)
+
+---
+
+## 2026-05-27 — TASK-100: Байесовский ансамбль — не просто среднее
+
+**Файлы:**
+- `internal/aggregation/bayesian_ensemble.go` — already implemented (BayesianUpdate, BayesianEnsemble, DefaultNoise with log-space Bayesian updates over 200-point probability grid)
+- `internal/aggregation/bayesian_ensemble_test.go` — new, 8 tests covering edge cases (no beliefs, all agree, conflicting sources, noisy source, DefaultNoise clamping)
+
+**Строк добавлено:** ~90 (bayesian_ensemble_test.go)
