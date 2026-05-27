@@ -1,5 +1,24 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-095: ESA MTG-S1 — атмосферные профили для европейских городов
+
+**Файл:** `internal/collectors/esa_mtg.go` (245 строк)
+
+**Что сделано:**
+- `MTGAtmosphericProfile` — вертикальный зонд атмосферы (925/850/700/500/300 hPa): температура и влажность
+- `GetMTGAtmosphericProfile(city)` — фетчит pressure-level данные из Open-Meteo (те же уровни, что MTG-S1); кэш 3 ч
+- `StormRiskBoost()` — 0–0.25 буст для storm/winter рынков: крутой лапс-рейт (>7 °C/км) → +0.15, влажность 700 hPa >70% → +0.10, инверсия → -0.05
+- `MTGGetAllEuropeanCities()` — параллельный фетч для London, Paris, Berlin
+- Graceful fallback: не-европейские города → нулевой профиль без HTTP-запроса
+
+**Покрытие:** London, Paris, Berlin (города в поле зрения MTG-S1 full-disk)
+
+**Сборка:** `go build ./...` — OK | `go test ./...` — OK
+
+**Строк добавлено:** 245
+
+---
+
 ## 2026-05-27 — TASK-093: CME HDD/CDD индексы — стандарт weather derivatives
 
 **Файлы:** `internal/collectors/cme_degree_days.go` (114 строк), `internal/collectors/cme_degree_days_test.go` (99 строк)
