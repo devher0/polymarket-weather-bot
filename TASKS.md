@@ -7,7 +7,7 @@
 
 ## 🔴 ПРИОРИТЕТ 1 — Данные (основа всего)
 
-### TASK-001: NASA POWER API collector
+### [x] 2026-05-27 — TASK-001: NASA POWER API collector
 **Файл:** `internal/collectors/nasa_power.go`
 Подключить NASA POWER API (https://power.larc.nasa.gov/api/temporal/daily/point)
 - Параметры: T2M (температура), PRECTOTCORR (осадки), WS2M (ветер), RH2M (влажность)
@@ -16,7 +16,7 @@
 - In-memory кэш на 6 часов (sync.Map + time.Time)
 - Проверка компиляции: `go build ./internal/collectors/...`
 
-### TASK-002: NOAA NWS API collector (США)
+### [x] 2026-05-27 — TASK-002: NOAA NWS API collector (США)
 **Файл:** `internal/collectors/noaa_nws.go`
 Подключить National Weather Service API (https://api.weather.gov)
 - Эндпоинт: GET /points/{lat},{lon} → достать gridId/gridX/gridY → GET /gridpoints/.../forecast
@@ -25,7 +25,7 @@
 - Без API ключа, нужен User-Agent заголовок
 - Возвращать `[]weather.Forecast`
 
-### TASK-003: ESA Copernicus / Open-Meteo Historical collector
+### [x] 2026-05-27 — TASK-003: ESA Copernicus / Open-Meteo Historical collector
 **Файл:** `internal/collectors/historical.go`
 Скачать исторические данные через Open-Meteo Historical API (https://archive-api.open-meteo.com)
 - Параметры: те же что у forecast (temperature_2m_max, precipitation_sum, etc.)
@@ -34,7 +34,7 @@
 - Используется для калибровки и бэктеста
 - Проверка: `go run ./cmd/bot --collect-history`
 
-### TASK-004: GOES-19 satellite cloud cover
+### [x] 2026-05-27 — TASK-004: GOES-19 satellite cloud cover
 **Файл:** `internal/collectors/goes_satellite.go`
 Получить данные об облачности из NOAA GOES-19 через AWS S3 (noaa-goes19, публичный)
 - Использовать AWS SDK Go v2 с anonymous credentials
@@ -43,7 +43,7 @@
 - Если AWS недоступен — graceful fallback, не крашить
 - Сохранять в data/satellite/{city}_{date}.json
 
-### TASK-005: Data aggregator — fusion всех источников
+### [x] 2026-05-27 — TASK-005: Data aggregator — fusion всех источников
 **Файл:** `internal/collectors/aggregator.go`
 Объединить все источники в единый `FusedForecast`:
 ```go
@@ -129,3 +129,8 @@ type FusedForecast struct {
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-000: Базовый бот на Go (internal/weather, internal/markets, internal/strategy, cmd/bot)
+- [x] 2026-05-27 — TASK-001: NASA POWER API collector (internal/collectors/nasa_power.go)
+- [x] 2026-05-27 — TASK-002: NOAA NWS API collector (internal/collectors/noaa_nws.go)
+- [x] 2026-05-27 — TASK-003: Open-Meteo Historical collector (internal/collectors/historical.go)
+- [x] 2026-05-27 — TASK-004: GOES-19 satellite cloud cover (internal/collectors/goes_satellite.go)
+- [x] 2026-05-27 — TASK-005: Data aggregator — fusion всех источников (internal/collectors/aggregator.go)

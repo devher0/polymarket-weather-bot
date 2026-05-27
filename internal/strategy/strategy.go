@@ -4,21 +4,23 @@ package strategy
 import (
 	"fmt"
 	"math"
+	"strings"
 
+	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
 
 // Decision is a bet recommendation.
 type Decision struct {
-	Market          markets.Market
-	Side            string  // "YES" or "NO"
-	TokenID         string
-	OurProbability  float64
-	MarketPrice     float64
-	Edge            float64
-	SizeUSDC        float64
-	Reason          string
+	Market         markets.Market
+	Side           string  // "YES" or "NO"
+	TokenID        string
+	OurProbability float64
+	MarketPrice    float64
+	Edge           float64
+	SizeUSDC       float64
+	Reason         string
 }
 
 // halfKelly returns the half-Kelly bet size given edge and decimal odds.
@@ -34,8 +36,34 @@ func halfKelly(edge, odds, bankroll, maxFraction float64) float64 {
 	return frac * bankroll
 }
 
+// minConfidence is the threshold below which we skip the market.
+const minConfidence = 0.4
+
+// EvaluateFused evaluates a market using a FusedForecast from the aggregator.
+// Returns nil when confidence is too low or there is no sufficient edge.
+func EvaluateFused(
+	m markets.Market,
+	ff *collectors.FusedForecast,
+	bankroll float64,
+	minEdge float64,
+	maxBet float64,
+) *Decision {
+	if ff == nil {
+		return nil
+	}
+
+	// Confidence gate: skip if sources disagree too much
+	if ff.Confidence < minConfidence {
+		return nil
+	}
+
+	return evaluate(m, ff.Forecast, bankroll, minEdge, maxBet,
+		fmt.Sprintf("sources=[%s] confidence=%.2f", strings.Join(ff.Sources, ","), ff.Confidence))
+}
+
 // Evaluate compares our weather forecast to a Polymarket price.
 // Returns a Decision when edge ≥ minEdge, otherwise nil.
+// Deprecated: prefer EvaluateFused when aggregator data is available.
 func Evaluate(
 	m markets.Market,
 	forecasts map[string][]weather.Forecast,
@@ -50,7 +78,21 @@ func Evaluate(
 	if !ok || len(flist) == 0 {
 		return nil
 	}
-	f := flist[0] // next-day forecast
+	return evaluate(m, flist[0], bankroll, minEdge, maxBet, "source=openmeteo")
+}
+
+// evaluate is the core logic shared by Evaluate and EvaluateFused.
+func evaluate(
+	m markets.Market,
+	f weather.Forecast,
+	bankroll float64,
+	minEdge float64,
+	maxBet float64,
+	sourceNote string,
+) *Decision {
+	if m.City == "" {
+		return nil
+	}
 
 	var ourP float64
 	switch m.Signal {
@@ -72,13 +114,11 @@ func Evaluate(
 	yesEdge := ourP - m.YesPrice
 	noEdge := (1 - ourP) - m.NoPrice
 
-	var side string
-	var marketP float64
+	baseReason := fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
+		m.City, m.Signal, ourP, 0.0, 0.0, sourceNote)
 
 	if yesEdge >= noEdge && math.Abs(yesEdge) >= minEdge {
-		side = "YES"
-		marketP = m.YesPrice
-		size := halfKelly(yesEdge, 1/marketP, bankroll, 0.05)
+		size := halfKelly(yesEdge, 1/m.YesPrice, bankroll, 0.05)
 		size = math.Min(size, maxBet)
 		if size < 0.5 {
 			return nil
@@ -88,16 +128,15 @@ func Evaluate(
 			Side:           "YES",
 			TokenID:        m.YesTokenID,
 			OurProbability: ourP,
-			MarketPrice:    marketP,
+			MarketPrice:    m.YesPrice,
 			Edge:           yesEdge,
 			SizeUSDC:       size,
-			Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f",
-				m.City, m.Signal, ourP, marketP, yesEdge),
+			Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
+				m.City, m.Signal, ourP, m.YesPrice, yesEdge, sourceNote),
 		}
 	} else if noEdge > yesEdge && math.Abs(noEdge) >= minEdge {
-		_ = side
-		marketP = m.NoPrice
-		size := halfKelly(noEdge, 1/marketP, bankroll, 0.05)
+		_ = baseReason
+		size := halfKelly(noEdge, 1/m.NoPrice, bankroll, 0.05)
 		size = math.Min(size, maxBet)
 		if size < 0.5 {
 			return nil
@@ -107,11 +146,11 @@ func Evaluate(
 			Side:           "NO",
 			TokenID:        m.NoTokenID,
 			OurProbability: ourP,
-			MarketPrice:    marketP,
+			MarketPrice:    m.NoPrice,
 			Edge:           noEdge,
 			SizeUSDC:       size,
-			Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f",
-				m.City, m.Signal, ourP, marketP, noEdge),
+			Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
+				m.City, m.Signal, ourP, m.NoPrice, noEdge, sourceNote),
 		}
 	}
 
