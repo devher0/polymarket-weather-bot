@@ -189,6 +189,49 @@ func TestAllowBet_AllLimitsZeroMeansUnlimited(t *testing.T) {
 	}
 }
 
+// Profit target tests ─────────────────────────────────────────────────────────
+
+func TestAllowBet_ProfitTargetNotReached(t *testing.T) {
+	cfg := risk.Config{MaxDailyProfitUSDC: 100.0}
+	m := risk.New(cfg)
+
+	// Won bet with 10 USDC at market price 0.5 → profit = 10*(1/0.5-1) = 10 USDC
+	records := []calibration.BetRecord{
+		newRecord("a", todayAt(1), 10, 0.5, boolPtr(true)),
+	}
+	if err := m.AllowBet(records); err != nil {
+		t.Fatalf("expected nil (profit 10 < target 100), got %v", err)
+	}
+}
+
+func TestAllowBet_ProfitTargetReached(t *testing.T) {
+	cfg := risk.Config{MaxDailyProfitUSDC: 5.0}
+	m := risk.New(cfg)
+
+	// Won bet: 10 USDC at 0.5 → profit = 10 USDC > target 5
+	records := []calibration.BetRecord{
+		newRecord("a", todayAt(1), 10, 0.5, boolPtr(true)),
+	}
+	err := m.AllowBet(records)
+	if err == nil {
+		t.Fatal("expected error for profit target, got nil")
+	}
+}
+
+func TestAllowBet_ProfitTargetDisabled(t *testing.T) {
+	cfg := risk.Config{MaxDailyProfitUSDC: 0} // 0 = disabled
+	m := risk.New(cfg)
+
+	// Even huge profits should not block when target is 0
+	records := make([]calibration.BetRecord, 10)
+	for i := range records {
+		records[i] = newRecord("x", todayAt(1), 100, 0.1, boolPtr(true)) // massive wins
+	}
+	if err := m.AllowBet(records); err != nil {
+		t.Fatalf("expected nil (target disabled), got %v", err)
+	}
+}
+
 // Summary test ────────────────────────────────────────────────────────────────
 
 func TestSummary_ContainsKeyFields(t *testing.T) {

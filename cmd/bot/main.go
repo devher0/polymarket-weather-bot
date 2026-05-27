@@ -151,9 +151,10 @@ func main() {
 
 	// Initialise risk manager from config.
 	riskMgr := risk.New(risk.Config{
-		MaxDailyLossUSDC: cfg.MaxDailyLossUSDC,
-		MaxDailyBets:     cfg.MaxDailyBets,
-		MaxOpenPositions: cfg.MaxOpenPositions,
+		MaxDailyLossUSDC:   cfg.MaxDailyLossUSDC,
+		MaxDailyProfitUSDC: cfg.MaxDailyProfitUSDC,
+		MaxDailyBets:       cfg.MaxDailyBets,
+		MaxOpenPositions:   cfg.MaxOpenPositions,
 	})
 
 	sess := &sessionStats{startTime: time.Now()}
@@ -184,9 +185,10 @@ func main() {
 
 		// Risk summary at cycle start.
 		slog.Info(risk.Summary(history, risk.Config{
-			MaxDailyLossUSDC: cfg.MaxDailyLossUSDC,
-			MaxDailyBets:     cfg.MaxDailyBets,
-			MaxOpenPositions: cfg.MaxOpenPositions,
+			MaxDailyLossUSDC:   cfg.MaxDailyLossUSDC,
+			MaxDailyProfitUSDC: cfg.MaxDailyProfitUSDC,
+			MaxDailyBets:       cfg.MaxDailyBets,
+			MaxOpenPositions:   cfg.MaxOpenPositions,
 		}))
 
 		// Pre-check: if already over a session-level limit, skip entire cycle.
@@ -329,6 +331,18 @@ func main() {
 		for _, sc := range scoredList {
 			m := sc.m
 			ff := sc.ff
+
+			// TASK-037: skip markets that are too close to expiry.
+			if cfg.MinHoursToExpiry > 0 {
+				if hoursLeft := m.HoursUntilExpiry(); hoursLeft < cfg.MinHoursToExpiry {
+					slog.Info("skipped: near-expiry market",
+						"conditionID", m.ConditionID,
+						"hours_left", fmt.Sprintf("%.1fh", hoursLeft),
+						"min_hours", fmt.Sprintf("%.1fh", cfg.MinHoursToExpiry),
+						"question", truncate(m.Question, 60))
+					continue
+				}
+			}
 
 			// Skip markets where we already have an open position.
 			if openPositions[m.ConditionID] {

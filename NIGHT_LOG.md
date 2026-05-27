@@ -323,3 +323,36 @@
 - `TASKS.md` — TASK-036 отмечена [x]
 
 **Строк добавлено:** ~108
+
+## 2026-05-27 15:02 UTC — TASK-037 + TASK-038: Near-expiry filter + Daily profit target
+
+**Что сделано:**
+
+### TASK-037: Near-expiry filter
+- `internal/markets/markets.go` — новый метод `HoursUntilExpiry() float64` (точные часы до закрытия)
+- `config/config.go` — новое поле `MinHoursToExpiry float64` (default 6.0) + ENV `MIN_HOURS_TO_EXPIRY`
+- `config/config.yaml` — задокументирован `min_hours_to_expiry: 6.0` с пояснением
+- `cmd/bot/main.go` — проверка перед evaluate: если `HoursUntilExpiry() < cfg.MinHoursToExpiry` → skip с логом "skipped: near-expiry market, hours_left=Xh"
+- Защита от ставок в последние часы где bid/ask спред максимален
+
+### TASK-038: Daily profit target auto-pause
+- `internal/risk/risk.go` — новое поле `MaxDailyProfitUSDC float64` в `Config`; проверка 2b в `AllowBet()`: если resolved P&L > target → return error "daily profit target reached"
+- `Summary()` показывает `max_daily_profit` если включён
+- `config/config.go` — поле `MaxDailyProfitUSDC` + ENV `MAX_DAILY_PROFIT_USDC`
+- `config/config.yaml` — `max_daily_profit_usdc: 0.0` (disabled by default)
+- `cmd/bot/main.go` — `MaxDailyProfitUSDC` передаётся в оба места создания `risk.Config`
+- `internal/risk/risk_test.go` — 3 новых теста: `TestAllowBet_ProfitTargetNotReached`, `TestAllowBet_ProfitTargetReached`, `TestAllowBet_ProfitTargetDisabled`
+
+**Файлы (5):**
+- `internal/markets/markets.go` (+22 строки)
+- `config/config.go` (+6 строк)
+- `config/config.yaml` (+10 строк)
+- `cmd/bot/main.go` (+16 строк)
+- `internal/risk/risk.go` (+14 строк)
+- `internal/risk/risk_test.go` (+40 строк)
+
+**Итого строк добавлено:** ~108
+
+**Тесты:** `go test ./...` — все PASS (risk: 16 тестов, остальные без изменений)
+
+`go build ./...` — ✅ чистая компиляция

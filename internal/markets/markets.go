@@ -128,6 +128,30 @@ type polyResp struct {
 
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
+// HoursUntilExpiry returns the fractional hours from now until this market
+// closes. Returns 0 when the end date is missing, already past, or cannot be
+// parsed. Used for the near-expiry filter (TASK-037).
+func (m Market) HoursUntilExpiry() float64 {
+	if m.EndDate == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, m.EndDate)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05Z", m.EndDate)
+	}
+	if err != nil {
+		t, err = time.Parse("2006-01-02", m.EndDate)
+	}
+	if err != nil {
+		return 0
+	}
+	h := time.Until(t).Hours()
+	if h < 0 {
+		return 0
+	}
+	return h
+}
+
 // DaysUntilExpiry returns the number of full days from now until this market
 // closes, clamped to [0, 6] for safe forecast indexing.
 // Returns 0 when the end date is missing, already past, or cannot be parsed.

@@ -37,13 +37,15 @@ type Config struct {
 	DataRoot    string `yaml:"data_root"`    // root dir for data/ files (default ".")
 
 	// Risk management
-	MaxDailyLossUSDC float64 `yaml:"max_daily_loss_usdc"` // stop if today's P&L < -this (0 = disabled)
-	MaxDailyBets     int     `yaml:"max_daily_bets"`      // max bets per UTC day (0 = disabled)
-	MaxOpenPositions int     `yaml:"max_open_positions"`  // max unresolved bets at once (0 = disabled)
+	MaxDailyLossUSDC   float64 `yaml:"max_daily_loss_usdc"`   // stop if today's P&L < -this (0 = disabled)
+	MaxDailyProfitUSDC float64 `yaml:"max_daily_profit_usdc"` // stop if today's P&L > this (0 = disabled)
+	MaxDailyBets       int     `yaml:"max_daily_bets"`        // max bets per UTC day (0 = disabled)
+	MaxOpenPositions   int     `yaml:"max_open_positions"`    // max unresolved bets at once (0 = disabled)
 
 	// Forecast quality
 	MaxForecastAgeHours float64 `yaml:"max_forecast_age_hours"` // skip bets on forecasts older than this (0 = disabled)
 	MaxBetsPerCycle     int     `yaml:"max_bets_per_cycle"`     // max bets per single run loop (0 = unlimited)
+	MinHoursToExpiry    float64 `yaml:"min_hours_to_expiry"`    // skip markets closing within this many hours (0 = disabled)
 
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
@@ -75,6 +77,7 @@ func defaults() Config {
 		MaxOpenPositions:    30,
 		MaxForecastAgeHours: 3.0,
 		MaxBetsPerCycle:     5,
+		MinHoursToExpiry:    6.0,
 	}
 }
 
@@ -174,6 +177,9 @@ func applyEnv(cfg *Config) {
 	if v := envFloat("MAX_DAILY_LOSS_USDC"); v != nil {
 		cfg.MaxDailyLossUSDC = *v
 	}
+	if v := envFloat("MAX_DAILY_PROFIT_USDC"); v != nil {
+		cfg.MaxDailyProfitUSDC = *v
+	}
 	if v := envInt("MAX_DAILY_BETS"); v != nil {
 		cfg.MaxDailyBets = *v
 	}
@@ -187,6 +193,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envInt("MAX_BETS_PER_CYCLE"); v != nil {
 		cfg.MaxBetsPerCycle = *v
+	}
+	if v := envFloat("MIN_HOURS_TO_EXPIRY"); v != nil {
+		cfg.MinHoursToExpiry = *v
 	}
 
 	// Telegram

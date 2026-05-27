@@ -26,6 +26,11 @@ type Config struct {
 	// calendar day (e.g. 50.0 means stop when today's P&L < -50 USDC).
 	MaxDailyLossUSDC float64
 
+	// MaxDailyProfitUSDC is the daily profit target: stop betting when today's
+	// realised P&L exceeds this value (0 = disabled). Prevents overtrading
+	// after a lucky morning run.
+	MaxDailyProfitUSDC float64
+
 	// MaxDailyBets is the maximum number of bets that may be placed in a single
 	// UTC calendar day (0 = unlimited).
 	MaxDailyBets int
@@ -38,9 +43,10 @@ type Config struct {
 // DefaultConfig returns conservative risk limits suitable for a small bankroll.
 func DefaultConfig() Config {
 	return Config{
-		MaxDailyLossUSDC: 50.0,
-		MaxDailyBets:     20,
-		MaxOpenPositions: 30,
+		MaxDailyLossUSDC:   50.0,
+		MaxDailyProfitUSDC: 0, // disabled by default
+		MaxDailyBets:       20,
+		MaxOpenPositions:   30,
 	}
 }
 
@@ -116,6 +122,12 @@ func (m *Manager) AllowBet(records []calibration.BetRecord) error {
 			-dailyPnL, m.cfg.MaxDailyLossUSDC)
 	}
 
+	// 2b. Daily profit target — lock in gains, prevent overtrading.
+	if m.cfg.MaxDailyProfitUSDC > 0 && dailyPnL >= m.cfg.MaxDailyProfitUSDC {
+		return fmt.Errorf("daily profit target reached (+%.2f USDC today, target %.2f USDC) — locking in gains",
+			dailyPnL, m.cfg.MaxDailyProfitUSDC)
+	}
+
 	// 3. Open-position cap.
 	open := OpenPositionsCount(records)
 	if m.cfg.MaxOpenPositions > 0 && open >= m.cfg.MaxOpenPositions {
@@ -148,6 +160,9 @@ func Summary(records []calibration.BetRecord, cfg Config) string {
 	}
 	if cfg.MaxDailyLossUSDC > 0 {
 		limits = append(limits, fmt.Sprintf("max_daily_loss=%.0f USDC", cfg.MaxDailyLossUSDC))
+	}
+	if cfg.MaxDailyProfitUSDC > 0 {
+		limits = append(limits, fmt.Sprintf("max_daily_profit=%.0f USDC", cfg.MaxDailyProfitUSDC))
 	}
 	if cfg.MaxOpenPositions > 0 {
 		limits = append(limits, fmt.Sprintf("max_open=%d", cfg.MaxOpenPositions))

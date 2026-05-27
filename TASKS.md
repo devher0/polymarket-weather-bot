@@ -314,6 +314,43 @@ type FusedForecast struct {
 
 ---
 
+## 🔴 ПРИОРИТЕТ 10 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-037: Near-expiry filter — пропускать рынки < MinHoursToExpiry
+**Файлы:** `internal/markets/markets.go` (обновить), `config/config.go` (обновить), `config/config.yaml` (обновить), `cmd/bot/main.go` (обновить)
+- Добавить `HoursUntilExpiry() float64` в Market — точное время до закрытия в часах
+- Добавить `MinHoursToExpiry float64` в Config (default 6.0) + env `MIN_HOURS_TO_EXPIRY`
+- В bot loop перед evaluate: если `HoursUntilExpiry() < cfg.MinHoursToExpiry` — пропускать с логом
+- Логировать "skipped: market expires in Xh (min=6h), conditionID=..."
+- Защита от ставок в последние часы где спред максимален и ликвидность минимальна
+
+### [x] 2026-05-27 — TASK-038: Daily profit target auto-pause
+**Файлы:** `internal/risk/risk.go` (обновить), `config/config.go` (обновить), `config/config.yaml` (обновить)
+- Добавить `MaxDailyProfitUSDC float64` в Config (default 0 = disabled)
+- В `risk.AllowBet()` добавить проверку: если resolved P&L сегодня > MaxDailyProfitUSDC → стоп
+- Логировать "daily profit target reached: pnl=+X USDC (target=Y), pausing for the day"
+- Защита от ситуации «overtrading после удачного утра»
+- Тест в risk_test.go: `TestAllowBetProfitTarget`
+
+### [ ] TASK-039: `dashboard forecast` — таблица прогнозов по всем городам
+**Файл:** `cmd/dashboard/main.go` (обновить)
+- Новый sub-command: `go run ./cmd/dashboard forecast`
+- Загружает fusedForecasts для всех городов из data/forecasts/ (если нет — вызывает AggregateAll)
+- Таблица: City | MaxTemp°C | Precip mm | Rain% | Cloud% | Confidence | Sources | Age
+- Подсвечивает строки с confidence < 0.4 суффиксом "(low conf)"
+- Позволяет оператору быстро видеть качество данных перед запуском бота
+
+### [ ] TASK-040: Collector smoke-test с реальными HTTP вызовами
+**Файл:** `internal/collectors/collectors_integration_test.go` (новый)
+- Build tag `//go:build integration` — не запускается в обычном `go test ./...`
+- `TestSmokeOpenMeteo` — реальный HTTP запрос, проверяет что возвращается > 0 прогнозов
+- `TestSmokeNASAPower` — реальный HTTP, не nil forecast
+- `TestSmokeNOAANWS` — только для new_york, проверяет хотя бы 1 период
+- Запуск: `go test -tags=integration -timeout=30s ./internal/collectors/`
+- Помогает быстро проверить не сломался ли upstream API
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config

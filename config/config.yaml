@@ -46,6 +46,11 @@ data_root: "."
 # Env override: MAX_DAILY_LOSS_USDC=50
 max_daily_loss_usdc: 50.0
 
+# Daily profit target: stop betting when today's realised P&L exceeds this
+# value — locks in gains and prevents overtrading after a lucky run (0 = disabled).
+# Env override: MAX_DAILY_PROFIT_USDC=100
+max_daily_profit_usdc: 0.0
+
 # Maximum number of bets per UTC calendar day (0 = unlimited).
 # Env override: MAX_DAILY_BETS=20
 max_daily_bets: 20
@@ -53,6 +58,20 @@ max_daily_bets: 20
 # Maximum number of simultaneously open (unresolved) positions (0 = unlimited).
 # Env override: MAX_OPEN_POSITIONS=30
 max_open_positions: 30
+
+# ── Forecast quality ─────────────────────────────────────────────────────────
+# Skip bets on forecasts older than this many hours (0 = disabled).
+# Env override: MAX_FORECAST_AGE_HOURS=3
+max_forecast_age_hours: 3.0
+
+# Maximum bets to place per single bot cycle (0 = unlimited).
+# Env override: MAX_BETS_PER_CYCLE=5
+max_bets_per_cycle: 5
+
+# Skip markets closing within this many hours — near-expiry spreads are wide
+# and liquidity is thin. Set 0 to disable. (TASK-037)
+# Env override: MIN_HOURS_TO_EXPIRY=6
+min_hours_to_expiry: 6.0
 
 # ── Polymarket CLOB credentials ───────────────────────────────────────────────
 # These are sensitive — prefer ENV variables or .env file over this yaml.
