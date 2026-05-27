@@ -19,6 +19,8 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
+	"github.com/devher0/polymarket-weather-bot/internal/notifier"
+	"github.com/devher0/polymarket-weather-bot/internal/polymarket"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
@@ -27,9 +29,20 @@ func main() {
 	live           := flag.Bool("live", false, "Disable dry-run (real money)")
 	loop           := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once)")
 	collectHistory := flag.Bool("collect-history", false, "Download 90-day historical data and exit")
+	testTelegram   := flag.Bool("test-telegram", false, "Send a test Telegram message and exit")
 	flag.Parse()
 
 	_ = godotenv.Load()
+
+	// --- Telegram test mode ---
+	if *testTelegram {
+		if err := notifier.SendTestMessage(); err != nil {
+			slog.Error("Telegram test failed", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("Telegram test message sent successfully")
+		return
+	}
 
 	// --- Historical collection mode ---
 	if *collectHistory {
@@ -132,10 +145,15 @@ func main() {
 			if !dryRun {
 				if err := placeBet(d); err != nil {
 					slog.Error("order failed", "err", err)
+					_ = notifier.NotifyError("placeBet", err)
 				} else {
 					// Record bet for calibration tracking
 					if err := calibration.SaveBet(d, "."); err != nil {
 						slog.Warn("calibration save failed", "err", err)
+					}
+					// Notify via Telegram
+					if err := notifier.NotifyBet(d); err != nil {
+						slog.Warn("telegram notify failed", "err", err)
 					}
 					placed++
 				}
@@ -156,16 +174,31 @@ func main() {
 	if *loop > 0 {
 		t := time.Duration(*loop) * time.Second
 		slog.Info("loop mode", "interval", t)
+
+		lastDigest := time.Time{}
 		for range time.Tick(t) {
 			run()
+
+			// Send daily digest at ~09:00 UTC
+			now := time.Now().UTC()
+			if now.Hour() == 9 && now.Sub(lastDigest) > 23*time.Hour {
+				if err := notifier.DailyDigest("."); err != nil {
+					slog.Warn("daily digest failed", "err", err)
+				} else {
+					lastDigest = now
+				}
+			}
 		}
 	}
 }
 
-// placeBet submits an order to Polymarket CLOB.
-// TODO: implement via EIP-712 signing — see TASK-012.
+// placeBet submits an order to Polymarket CLOB using EIP-712 signing.
 func placeBet(d *strategy.Decision) error {
-	slog.Warn("placeBet not yet implemented — see TASK-012", "token", d.TokenID)
+	orderID, err := polymarket.PlaceBet(d)
+	if err != nil {
+		return fmt.Errorf("placeBet: %w", err)
+	}
+	slog.Info("order submitted", "orderID", orderID, "token", d.TokenID, "side", d.Side)
 	return nil
 }
 

@@ -87,28 +87,28 @@ type FusedForecast struct {
 
 ## 🟢 ПРИОРИТЕТ 3 — Инфраструктура
 
-### TASK-009: Бэктест
+### [x] 2026-05-27 — TASK-009: Бэктест
 **Файл:** `cmd/backtest/main.go`
 - Скачать исторические данные (TASK-003)
 - Получить исторические цены рынков через Polymarket Gamma API (https://gamma-api.polymarket.com)
 - Симулировать все ставки за последние 90 дней
 - Вывести: total P&L, win rate, avg edge, Sharpe ratio
 
-### TASK-010: CLI Dashboard
+### [x] 2026-05-27 — TASK-010: CLI Dashboard
 **Файл:** `cmd/dashboard/main.go`
 - `go run ./cmd/dashboard positions` — открытые позиции
 - `go run ./cmd/dashboard pnl` — P&L из data/bets_history.csv
 - `go run ./cmd/dashboard next` — топ-5 ставок прямо сейчас
 - Использовать github.com/jedib0t/go-pretty/v6/table
 
-### TASK-011: Telegram уведомления
+### [x] 2026-05-27 — TASK-011: Telegram уведомления
 **Файл:** `internal/notifier/telegram.go`
 - Функция NotifyBet(decision) — сообщение при каждой реальной ставке
 - Функция DailyDigest(bets []BetRecord) — P&L дайджест в 09:00
 - TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID из .env
 - Использовать https://api.telegram.org/bot{token}/sendMessage
 
-### TASK-012: Polymarket CLOB order signing (EIP-712)
+### [x] 2026-05-27 — TASK-012: Polymarket CLOB order signing (EIP-712)
 **Файл:** `internal/polymarket/order.go`
 - Реализовать PlaceBet(decision Decision) из заглушки в cmd/bot/main.go
 - EIP-712 подпись через go-ethereum/crypto
@@ -116,7 +116,7 @@ type FusedForecast struct {
 - L1 Auth headers (CLOB API key + signature)
 - Тесты в order_test.go
 
-### TASK-013: Docker + Makefile
+### [x] 2026-05-27 — TASK-013: Docker + Makefile
 **Файл:** `Dockerfile`, `Makefile`
 - Multi-stage build: builder → alpine
 - `make run` — dry run
@@ -134,3 +134,8 @@ type FusedForecast struct {
 - [x] 2026-05-27 — TASK-003: Open-Meteo Historical collector (internal/collectors/historical.go)
 - [x] 2026-05-27 — TASK-004: GOES-19 satellite cloud cover (internal/collectors/goes_satellite.go)
 - [x] 2026-05-27 — TASK-005: Data aggregator — fusion всех источников (internal/collectors/aggregator.go)
+- [x] 2026-05-27 — TASK-009: Backtest (cmd/backtest/main.go) — Gamma API + synthetic fallback + P&L/Sharpe/drawdown
+- [x] 2026-05-27 — TASK-010: CLI Dashboard (cmd/dashboard/main.go) — positions/pnl/next с go-pretty tables
+- [x] 2026-05-27 — TASK-011: Telegram notifier (internal/notifier/telegram.go) — NotifyBet, DailyDigest, NotifyError
+- [x] 2026-05-27 — TASK-012: EIP-712 order signing (internal/polymarket/order.go) — PlaceBet, L1 auth, order_test.go
+- [x] 2026-05-27 — TASK-013: Docker + Makefile — multi-stage Dockerfile, Makefile с 12 целями, README обновлён

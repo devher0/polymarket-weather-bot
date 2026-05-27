@@ -1,5 +1,26 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 15:16 — TASK-009..013: Backtest, Dashboard, Telegram, EIP-712, Docker
+
+**Задачи:** TASK-009, TASK-010, TASK-011, TASK-012, TASK-013
+
+**Файлы созданы/изменены:**
+- `cmd/backtest/main.go` (~290 строк): бэктест на 90 дней — Gamma API клиент с пагинацией, synthetic market fallback (при недоступности Gamma), классификатор рынков (зеркало markets package), simulation loop, статистика: total P&L, win rate, avg edge, max drawdown, Sharpe ratio, per-signal breakdown
+- `cmd/dashboard/main.go` (~220 строк): CLI дашборд с go-pretty/v6/table — sub-commands: positions (открытые позиции), pnl (история resolved ставок с P&L), next (top-5 ставок прямо сейчас с fused+legacy forecasts), all (всё вместе)
+- `internal/notifier/telegram.go` (~190 строк): NotifyBet() → HTML-форматированное сообщение при ставке; DailyDigest() → P&L дайджест с Brier score; NotifyError() → алерт при ошибке; SendTestMessage() для тестирования; graceful no-op если токен не задан
+- `internal/polymarket/order.go` (~230 строк): PlaceBet() — EIP-712 order signing через go-ethereum/crypto + apitypes.TypedDataAndHash; order struct с CTF Exchange; l1AuthHeaders с HMAC; POST /order на CLOB; toMicroUnits/priceToCTFAmount конвертации
+- `internal/polymarket/order_test.go` (~100 строк): TestToMicroUnits, TestNewSalt, TestPriceToCTFAmount, TestLoadPrivateKey(Invalid/Missing/Valid), TestSignOrder
+- `Dockerfile` — multi-stage builder (golang:1.23-alpine + CGO) → runtime (alpine:3.19); binaries: bot, backtest, dashboard
+- `Makefile` — 18 целей: build/run/live/loop/live-loop/history/backtest/backtest-30/dashboard/positions/pnl/next/test/test-short/lint/vet/tidy/docker/docker-run/docker-live/docker-backtest/clean/help
+- `.env.example` — расширен: POLYMARKET_ADDRESS, TELEGRAM_*
+- `README.md` — полный гайд: архитектура, быстрый старт, Docker, таблица env vars, описание стратегии
+- `cmd/bot/main.go` — интегрированы: notifier.NotifyBet/NotifyError, polymarket.PlaceBet (вместо заглушки), --test-telegram флаг, DailyDigest в loop
+- `go.mod/go.sum` — добавлены: go-pretty/v6, go-ethereum v1.15.11 + зависимости
+
+**Итого: ~11 файлов, ~1300 строк**
+
+`go build ./...` — ✅  |  `go test ./...` — ✅ (polymarket: 5/5 тестов)
+
 Автоматический лог агентских итераций.
 
 ---
