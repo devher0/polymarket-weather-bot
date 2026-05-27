@@ -805,3 +805,33 @@
 **Тесты:** `go test ./...` — все OK (13 новых тестов в collectors, все зелёные)
 
 **Строк добавлено:** ~440 (openmeteo_hourly.go: ~210, aggregator.go: ~40, hourly_test.go: ~190)
+
+---
+
+## 2026-05-27 19:40 UTC — TASK-078, TASK-079: Dashboard Hourly Sub-command + Rain Window Probability
+
+**Задачи:** TASK-078 (Dashboard `hourly` sub-command), TASK-079 (Probabilistic rain window probability)
+
+**Контекст:** все предыдущие задачи (TASK-001 – TASK-077) выполнены. Реализованы TASK-078 и TASK-079.
+
+**Файлы созданы/изменены:**
+- `cmd/dashboard/main.go` (~110 строк нетто):
+  - TASK-078: `cmdHourly(city string)` — полная таблица почасового прогноза: Date | Hour UTC | Temp°C | Precip mm | Rain% | Wind km/h | Cloud% | WMO | Note; строки с PrecipProb>50% помечаются "(rain likely)" (зелёным); строки с TempC > AvgMaxTempC текущего месяца — суффикс `!` (жёлтым); тяжёлые осадки (≥5мм) — красным; внизу таблицы summary: full-day vs window [06-18 UTC] rain probability для сегодня и завтра; климатическая справка (AvgMaxTempC, RainDays%, SunDays%)
+  - Добавлен `case "hourly":` в main switch с парсингом города из os.Args[2]
+  - Добавлена строка в printUsage()
+- `internal/collectors/openmeteo_hourly.go` (~40 строк нетто):
+  - TASK-079: `RainWindowProbability(points []HourlyPoint, fromUTC, toUTC time.Time) float64` — фильтрует точки по временному окну, применяет ту же логику boosting что hourlyRainProbability
+  - `HourlyRainProbabilityPublic(points []HourlyPoint) float64` — экспортированная обёртка для использования в dashboard
+  - В `RefineWithHourly`: добавлено вычисление windowProb для [06-18 UTC] с логированием "rain window [06-18 UTC]: prob=X.XX (full day: Y.YY)" через slog.Info
+- `internal/markets/markets.go` (~15 строк нетто):
+  - TASK-079: добавлено поле `ExpiryUTC time.Time` в struct Market
+  - Парсинг ExpiryUTC из EndDateISO при создании Market: RFC3339 → "2006-01-02T15:04:05Z" → plain date (→ 23:59:59 UTC)
+
+**Ключевые эффекты:**
+- TASK-078: `go run ./cmd/dashboard hourly new_york` показывает 48 строк почасового прогноза; легко видеть пики дождя и превышения температурной нормы перед ставкой
+- TASK-079: `RainWindowProbability` позволяет вычислять вероятность дождя только в часы до экспирации рынка (например "дождь в NYC до 18:00" → window 00-18 UTC вместо 00-24 UTC); `Market.ExpiryUTC` доступен для стратегии; в логах бота теперь всегда печатается window [06-18 UTC] prob vs full-day prob для сравнения
+
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK (все 8 пакетов зелёные)
+
+**Строк добавлено:** ~165 (dashboard/main.go: ~110, openmeteo_hourly.go: ~40, markets.go: ~15)

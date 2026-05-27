@@ -503,6 +503,13 @@ func main() {
 	case "heatmap":
 		// TASK-075: show today's heatmap summary.
 		cmdHeatmap(dataRoot)
+	case "hourly":
+		// TASK-078: show hourly forecast table for a city.
+		city := ""
+		if len(os.Args) >= 3 {
+			city = os.Args[2]
+		}
+		cmdHourly(city)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -531,6 +538,7 @@ func printUsage() {
 	fmt.Println("  export-predictions [--date=D]     Export prediction log to CSV (stdout or --output=f)")
 	fmt.Println("  snapshot                          Print calibration model snapshot (TASK-074)")
 	fmt.Println("  heatmap                           Show today's market opportunity heatmap summary (TASK-075)")
+	fmt.Println("  hourly <city>                     Hourly weather table for city (today + tomorrow) (TASK-078)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -881,6 +889,117 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// ── hourly (TASK-078) ─────────────────────────────────────────────────────────
+
+// cmdHourly fetches and displays an hourly weather table for a single city.
+// Usage: go run ./cmd/dashboard hourly <city>
+//
+// Columns: Hour UTC | Temp°C | Precip mm | Rain% | Wind km/h | Cloud% | WMO
+// Rows with Rain% > 50 are annotated "(rain likely)".
+// Rows with TempC above the monthly climatological normal are annotated "!".
+func cmdHourly(city string) {
+	if city == "" {
+		fmt.Fprintln(os.Stderr, "  usage: dashboard hourly <city>")
+		fmt.Fprintln(os.Stderr, "  available cities: new_york, london, tokyo, miami, paris, chicago, los_angeles, san_francisco, berlin, ...")
+		os.Exit(1)
+	}
+
+	header(fmt.Sprintf("🕐 HOURLY FORECAST — %s", city))
+
+	fmt.Print("  Fetching hourly data (today + tomorrow)…")
+	points, err := collectors.FetchHourlyForecast(city, 2)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n  error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf(" %d hourly points loaded\n\n", len(points))
+
+	// Get current month's climate norm (AvgMaxTempC) to flag above-norm temps.
+	now := time.Now().UTC()
+	norm, hasNorm := weather.GetSeasonal(city, now.Month())
+
+	// Separate today and tomorrow for visual grouping.
+	todayStr := now.Format("2006-01-02")
+	tomorrowStr := now.AddDate(0, 0, 1).Format("2006-01-02")
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"Date", "Hour UTC", "Temp°C", "Precip mm", "Rain%", "Wind km/h", "Cloud%", "WMO", "Note",
+	})
+
+	for _, p := range points {
+		dateStr := p.Time.UTC().Format("2006-01-02")
+		if dateStr != todayStr && dateStr != tomorrowStr {
+			continue // only show today + tomorrow
+		}
+
+		hourStr := fmt.Sprintf("%02d:00", p.Time.UTC().Hour())
+		tempStr := fmt.Sprintf("%.1f", p.TempC)
+		precipStr := fmt.Sprintf("%.1f", p.PrecipMM)
+		rainPctStr := fmt.Sprintf("%.0f%%", p.PrecipProb)
+		windStr := fmt.Sprintf("%.0f", p.WindKMH)
+		cloudStr := fmt.Sprintf("%.0f%%", p.CloudCover)
+		wmoStr := fmt.Sprintf("%d", p.WeatherCode)
+
+		note := ""
+		// Mark above-climate-norm temperature with !
+		if hasNorm && p.TempC > norm.AvgMaxTempC {
+			tempStr = styleNeutral.Sprint(tempStr + "!")
+		}
+		// Mark high rain probability rows.
+		if p.PrecipProb > 50 {
+			rainPctStr = styleWin.Sprint(rainPctStr)
+			note = "(rain likely)"
+		}
+		// Highlight heavy precip.
+		if p.PrecipMM >= 5 {
+			precipStr = styleLoss.Sprint(precipStr)
+		}
+
+		dayLabel := "today"
+		if dateStr == tomorrowStr {
+			dayLabel = "tmrw"
+		}
+
+		t.AppendRow(table.Row{
+			dayLabel, hourStr, tempStr, precipStr, rainPctStr, windStr, cloudStr, wmoStr, note,
+		})
+	}
+
+	t.Render()
+
+	// Summary: full-day rain probability for today and tomorrow.
+	todayPts := collectors.FilterHourlyByDate(points, todayStr)
+	tomorrowPts := collectors.FilterHourlyByDate(points, tomorrowStr)
+
+	fmt.Println()
+	if len(todayPts) > 0 {
+		// Compute business-hours window prob (06–18 UTC) via RainWindowProbability.
+		refDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		windowFrom := refDate.Add(6 * time.Hour)
+		windowTo := refDate.Add(18 * time.Hour)
+		fullDayP := collectors.HourlyRainProbabilityPublic(todayPts)
+		windowP := collectors.RainWindowProbability(todayPts, windowFrom, windowTo)
+		fmt.Printf("  Today     → full-day rain prob: %.0f%%  |  window [06-18 UTC]: %.0f%%\n",
+			fullDayP*100, windowP*100)
+	}
+	if len(tomorrowPts) > 0 {
+		refDate := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+		windowFrom := refDate.Add(6 * time.Hour)
+		windowTo := refDate.Add(18 * time.Hour)
+		fullDayP := collectors.HourlyRainProbabilityPublic(tomorrowPts)
+		windowP := collectors.RainWindowProbability(tomorrowPts, windowFrom, windowTo)
+		fmt.Printf("  Tomorrow  → full-day rain prob: %.0f%%  |  window [06-18 UTC]: %.0f%%\n",
+			fullDayP*100, windowP*100)
+	}
+
+	if hasNorm {
+		fmt.Printf("\n  Climate norm (month %d): AvgMaxTemp %.1f°C   RainDays %.0f%%   SunDays %.0f%%\n",
+			int(now.Month()), norm.AvgMaxTempC, norm.RainProb*100, norm.SunProb*100)
+		fmt.Printf("  Temp rows marked '!' are above this month's historical average maximum.\n")
+	}
 }
 
 // ── heatmap (TASK-075) ────────────────────────────────────────────────────────

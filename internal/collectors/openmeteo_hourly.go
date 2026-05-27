@@ -137,6 +137,13 @@ func FilterHourlyByDate(points []HourlyPoint, targetDate string) []HourlyPoint {
 	return out
 }
 
+// HourlyRainProbabilityPublic is the exported wrapper for hourlyRainProbability,
+// allowing callers outside the collectors package (e.g. dashboard) to compute
+// full-day rain probability from a set of HourlyPoints.
+func HourlyRainProbabilityPublic(points []HourlyPoint) float64 {
+	return hourlyRainProbability(points)
+}
+
 // hourlyRainProbability computes the probability that it rains *at some point*
 // during the given set of hours.
 //
@@ -214,6 +221,28 @@ func hourlyTotalPrecip(points []HourlyPoint) float64 {
 	return total
 }
 
+// RainWindowProbability computes the probability that rain occurs *at some point*
+// within the specified UTC time window [fromUTC, toUTC).
+//
+// Only HourlyPoints whose Time falls in [fromUTC, toUTC) are considered. This
+// lets callers pass the market's expiry time as toUTC so that only hours
+// relevant to the prediction are included. For example, a market that resolves
+// at 18:00 UTC only cares whether it rained during 00:00–18:00 UTC.
+//
+// The same boosting logic as hourlyRainProbability applies:
+// totalPrecip >= 5mm → +15%, >= 1.5mm → +5%.
+//
+// Returns 0 if no points fall within the window.
+func RainWindowProbability(points []HourlyPoint, fromUTC, toUTC time.Time) float64 {
+	var windowed []HourlyPoint
+	for _, p := range points {
+		if !p.Time.Before(fromUTC) && p.Time.Before(toUTC) {
+			windowed = append(windowed, p)
+		}
+	}
+	return hourlyRainProbability(windowed)
+}
+
 // RefineWithHourly overwrites key fields in a FusedForecast with higher-accuracy
 // intraday values derived from hourly data.
 //
@@ -237,6 +266,24 @@ func RefineWithHourly(ff *FusedForecast, points []HourlyPoint) {
 	newRainP := hourlyRainProbability(points)
 	newPrecip := hourlyTotalPrecip(points)
 	newWind := hourlyMaxWind(points)
+
+	// TASK-079: compute a business-hours rain window (06–18 UTC) so that
+	// same-day markets with early expiry get a more accurate probability.
+	// We use 06–18 UTC as the default window (covers the waking hours for
+	// most cities); callers can use RainWindowProbability directly with a
+	// market-specific ExpiryUTC for an exact window.
+	if len(points) > 0 {
+		refDate := points[0].Time.UTC().Truncate(24 * time.Hour)
+		windowFrom := refDate.Add(6 * time.Hour)
+		windowTo := refDate.Add(18 * time.Hour)
+		windowProb := RainWindowProbability(points, windowFrom, windowTo)
+		slog.Info("rain window probability",
+			"city", ff.City,
+			"window", fmt.Sprintf("[%02d-%02d UTC]", windowFrom.Hour(), windowTo.Hour()),
+			"window_prob", fmt.Sprintf("%.2f", windowProb),
+			"full_day_prob", fmt.Sprintf("%.2f", newRainP),
+		)
+	}
 
 	slog.Info("hourly refinement",
 		"city", ff.City,

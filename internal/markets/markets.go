@@ -30,6 +30,7 @@ type Market struct {
 	Spread         float64    // top-of-book bid-ask spread (set by EnrichWithLiquidity)
 	Stale          bool       // TASK-063: no trades >24h AND spread > 0.08
 	LastTradeTime  time.Time  // TASK-063: timestamp of last recorded trade (zero if unknown)
+	ExpiryUTC      time.Time  // TASK-079: parsed expiry time (UTC); zero if unparseable
 }
 
 type signal struct {
@@ -281,6 +282,19 @@ func GetWeatherMarkets() ([]Market, error) {
 				}
 			}
 
+			// TASK-079: parse ExpiryUTC from EndDateISO for use in rain-window probability.
+			var expiryUTC time.Time
+			if m.EndDateISO != "" {
+				if t, err := time.Parse(time.RFC3339, m.EndDateISO); err == nil {
+					expiryUTC = t.UTC()
+				} else if t, err := time.Parse("2006-01-02T15:04:05Z", m.EndDateISO); err == nil {
+					expiryUTC = t.UTC()
+				} else if t, err := time.Parse("2006-01-02", m.EndDateISO); err == nil {
+					// Plain date: treat as end-of-day UTC (23:59:59).
+					expiryUTC = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second).UTC()
+				}
+			}
+
 			out = append(out, Market{
 				ConditionID:   m.ConditionID,
 				Question:      m.Question,
@@ -293,6 +307,7 @@ func GetWeatherMarkets() ([]Market, error) {
 				EndDate:       m.EndDateISO,
 				ThresholdC:    thresholdC,
 				LastTradeTime: lastTrade,
+				ExpiryUTC:     expiryUTC,
 			})
 		}
 

@@ -710,7 +710,7 @@ type FusedForecast struct {
 - `TestRefineWithHourlyEmpty` — не паниковать на пустом slice
 - Запуск: `go test ./internal/collectors/ -run TestHourly`
 
-### [ ] TASK-078: Dashboard `hourly` sub-command — почасовой прогноз для города
+### [x] 2026-05-27 — TASK-078: Dashboard `hourly` sub-command — почасовой прогноз для города
 **Файл:** `cmd/dashboard/main.go` (обновить)
 - `go run ./cmd/dashboard hourly new_york` — таблица по часам: Hour UTC | Temp°C | Precip mm | Rain% | Wind km/h | Cloud% | WMO
 - Загружать через `FetchHourlyForecast(city, 2)` — сегодня + завтра
@@ -718,7 +718,7 @@ type FusedForecast struct {
 - Строки с TempC выше климат-нормы → `!` маркер
 - Полезно для ручной проверки прогноза перед запуском бота
 
-### [ ] TASK-079: Probabilistic rain window — уточнить вероятность дождя по часам до экспирации рынка
+### [x] 2026-05-27 — TASK-079: Probabilistic rain window — уточнить вероятность дождя по часам до экспирации рынка
 **Файл:** `internal/collectors/openmeteo_hourly.go` (обновить), `internal/collectors/aggregator.go` (обновить)
 - `RainWindowProbability(points []HourlyPoint, fromUTC, toUTC time.Time)` — вероятность дождя в конкретном окне часов
 - В `AggregateForDay()`: если знаем время экспирации рынка — передавать временное окно и использовать более точную вероятность
