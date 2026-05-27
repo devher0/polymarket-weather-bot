@@ -10,6 +10,7 @@ import (
 
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
+	"github.com/devher0/polymarket-weather-bot/internal/ratelimit"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
 
@@ -523,6 +524,8 @@ func evaluate(
 
 	size := halfKelly(best.edge, best.odds, bankroll, MaxKellyFraction)
 	size = math.Min(size, maxBet)
+	// Apply size fuzzing (±3–7%) to avoid mechanical round-number detection.
+	size = ratelimit.FuzzSize(size)
 
 	// Liquidity gate: skip thin markets when expected position size < $50 USDC
 	// to avoid moving the price on illiquid books.

@@ -55,6 +55,10 @@ type Config struct {
 	KellyFraction    float64 `yaml:"kelly_fraction"`     // fraction of full Kelly (0.25=quarter, 0.5=half, 1.0=full; default 0.5)
 	MaxKellyFraction float64 `yaml:"max_kelly_fraction"` // hard cap on bankroll fraction per bet (default 0.05 = 5%)
 
+	// Anti-detection / rate limiting
+	BetJitterEnabled    bool    `yaml:"bet_jitter_enabled"`     // sleep 30s–3min before each live bet (default: true)
+	MinBetIntervalHours float64 `yaml:"min_bet_interval_hours"` // cooldown per conditionID in hours (default: 4.0)
+
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
 	PolyAddress      string `yaml:"poly_address"`
@@ -94,6 +98,8 @@ func defaults() Config {
 		MinHoursToExpiry:    6.0,
 		KellyFraction:       0.5,
 		MaxKellyFraction:    0.05,
+		BetJitterEnabled:    true,
+		MinBetIntervalHours: 4.0,
 	}
 }
 
@@ -232,6 +238,14 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("MAX_KELLY_FRACTION"); v != nil {
 		cfg.MaxKellyFraction = *v
+	}
+
+	// Anti-detection / rate limiting
+	if v := os.Getenv("BET_JITTER_ENABLED"); v != "" {
+		cfg.BetJitterEnabled = v == "true" || v == "1"
+	}
+	if v := envFloat("MIN_BET_INTERVAL_HOURS"); v != nil {
+		cfg.MinBetIntervalHours = *v
 	}
 
 	// Telegram

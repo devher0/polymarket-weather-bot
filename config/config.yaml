@@ -94,6 +94,16 @@ kelly_fraction: 0.5
 # Env override: MAX_KELLY_FRACTION=0.05
 max_kelly_fraction: 0.05
 
+# ── Anti-detection / rate limiting ───────────────────────────────────────────
+# Sleep a random 30s–3min before each live bet to avoid mechanical timing patterns.
+# Env override: BET_JITTER_ENABLED=true
+bet_jitter_enabled: true
+
+# Minimum hours between bets on the same conditionID (market cooldown).
+# Prevents re-betting the same market too frequently. 0 = disabled.
+# Env override: MIN_BET_INTERVAL_HOURS=4
+min_bet_interval_hours: 4.0
+
 # ── Polymarket CLOB credentials ───────────────────────────────────────────────
 # These are sensitive — prefer ENV variables or .env file over this yaml.
 # Env overrides: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS, POLYMARKET_API_KEY,

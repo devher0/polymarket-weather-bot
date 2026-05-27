@@ -31,6 +31,7 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/metrics"
 	"github.com/devher0/polymarket-weather-bot/internal/notifier"
 	"github.com/devher0/polymarket-weather-bot/internal/polymarket"
+	"github.com/devher0/polymarket-weather-bot/internal/ratelimit"
 	"github.com/devher0/polymarket-weather-bot/internal/risk"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
@@ -814,6 +815,12 @@ func main() {
 				}
 				if refreshed != nil {
 					d = refreshed
+				}
+
+				// Anti-detection: sleep a random human-like delay before each bet.
+				if cfg.BetJitterEnabled {
+					slog.Info("bet jitter: sleeping before order placement")
+					ratelimit.BetJitter()
 				}
 
 				if err := placeBet(d); err != nil {
