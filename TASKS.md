@@ -174,13 +174,13 @@ type FusedForecast struct {
 - Встроенный rate limiter через `golang.org/x/time/rate` (10 req/s по умолчанию)
 - Заменить все `&http.Client{}` в collectors/ на этот клиент
 
-### [ ] TASK-020: Конфигурационный файл config.yaml
+### [x] 2026-05-27 — TASK-020: Конфигурационный файл config.yaml
 **Файл:** `config/config.go` (новый), `config/config.yaml` (пример)
 - Структура Config: Cities []string, MinEdge, MaxBet, LoopSec, MetricsPort, ...
 - Загрузка из config.yaml через gopkg.in/yaml.v3, с fallback на ENV
 - Вся конфигурация бота через один файл вместо разрозненных env-переменных
 
-### [ ] TASK-021: Юнит-тесты для strategy и calibration
+### [x] 2026-05-27 — TASK-021: Юнит-тесты для strategy и calibration
 **Файлы:** `internal/strategy/strategy_test.go`, `internal/calibration/calibration_test.go`
 - Тесты для Evaluate(), EvaluateFused() — edge cases: no edge, confidence < 0.4
 - Тесты для BrierScore(), LoadHistory(), SaveBet(), LoadOpenPositions()

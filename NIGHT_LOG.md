@@ -110,3 +110,22 @@
 **Итого: 6 файлов, ~300 строк**
 
 `go build ./...` — ✅ чистая компиляция
+
+## 2026-05-27 15:47 — TASK-020, TASK-021: Config file + Unit tests
+
+**Задачи:** TASK-020 (config.yaml), TASK-021 (unit tests)
+
+**Файлы созданы/изменены:**
+- `config/config.go` — новый пакет (~165 строк): структура Config со всеми параметрами бота; Load(path) с yaml.Unmarshal + ENV overlay; LoadDefault(); applyEnv() с envFloat/envInt helpers; fallback к defaults при отсутствии файла
+- `config/config.yaml` — пример конфига со всеми параметрами, комментарии на каждую настройку, ~60 строк
+- `cmd/bot/main.go` — рефакторинг: заменены разрозненные `os.Getenv()` на `config.Load()`; новый флаг `--config path/to/config.yaml`; `--loop` и `--metrics-port` из CLI переопределяют yaml; `DataRoot` прокинут во все функции; лог конфига при старте; убрана дублирующая функция `envFloat()`; ~+30 строк нетто
+- `internal/strategy/strategy_test.go` — 16 тестов (~180 строк): Evaluate() (no edge, YES/NO edge, unknown city/signal, heat, size cap), EvaluateFused() (nil, low confidence, high confidence, boundary, multi-source), halfKelly() edge cases
+- `internal/calibration/calibration_test.go` — 16 тестов (~180 строк): SaveBet (create, nil, multi), LoadHistory (empty, roundtrip), UpdateOutcome (win/loss/not-found), BrierScore (no resolved, perfect, random, mixed), LoadOpenPositions (empty, unresolved-only, dup), timestamp ordering
+
+**Зависимости:** `gopkg.in/yaml.v3` переведён из indirect в direct dep
+
+**Тесты:** 32 теста, все PASS — `go test ./internal/strategy/... ./internal/calibration/...`
+
+**Итого: 5 файлов, ~535 строк**
+
+`go build ./...` — ✅ чистая компиляция

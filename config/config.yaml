@@ -1,0 +1,57 @@
+# ── Polymarket Weather Bot — Configuration ───────────────────────────────────
+# Values here can be overridden by environment variables (ENV wins over yaml).
+# Secrets (private key, API keys) are best kept in .env or real ENV — not here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Cities to trade (must match keys in internal/weather/weather.go).
+# Env override: CITIES=new_york,london,tokyo (comma-separated)
+cities:
+  - new_york
+  - london
+  - tokyo
+  - miami
+  - paris
+  - chicago
+  - los_angeles
+  - san_francisco
+  - berlin
+
+# Minimum edge required to place a bet (5% default).
+# Env override: MIN_EDGE=0.05
+min_edge: 0.05
+
+# Maximum bet per market in USDC.
+# Env override: MAX_BET_USDC=10.0
+max_bet: 10.0
+
+# Loop interval in seconds (0 = run once and exit).
+# Env override: LOOP_SEC=3600
+loop_sec: 0
+
+# Prometheus /metrics port (0 = disabled).
+# Env override: METRICS_PORT=9090
+metrics_port: 9090
+
+# Log level: debug | info | warn | error
+# Env override: LOG_LEVEL=info
+log_level: info
+
+# Root directory for data/ files (bets_history.csv, historical/, satellite/).
+# Env override: DATA_ROOT=.
+data_root: "."
+
+# ── Polymarket CLOB credentials ───────────────────────────────────────────────
+# These are sensitive — prefer ENV variables or .env file over this yaml.
+# Env overrides: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS, POLYMARKET_API_KEY,
+#                POLYMARKET_API_SECRET, POLYMARKET_API_PASSPHRASE
+poly_private_key: ""
+poly_address: ""
+poly_api_key: ""
+poly_api_secret: ""
+poly_api_passphrase: ""
+
+# ── Telegram notifications ────────────────────────────────────────────────────
+# Create a bot via @BotFather; get your chat ID via @userinfobot.
+# Env overrides: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+telegram_bot_token: ""
+telegram_chat_id: ""

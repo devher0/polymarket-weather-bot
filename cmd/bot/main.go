@@ -1,9 +1,10 @@
 // Polymarket Weather Bot
 // Usage:
-//   go run ./cmd/bot                   — dry run (no real orders)
-//   go run ./cmd/bot --live            — real money mode
-//   go run ./cmd/bot --loop 3600       — repeat every N seconds
-//   go run ./cmd/bot --collect-history — download 90-day historical data
+//   go run ./cmd/bot                         — dry run (no real orders)
+//   go run ./cmd/bot --live                  — real money mode
+//   go run ./cmd/bot --loop 3600             — repeat every N seconds
+//   go run ./cmd/bot --collect-history       — download 90-day historical data
+//   go run ./cmd/bot --config path/to/config.yaml  — use a specific config file
 package main
 
 import (
@@ -11,11 +12,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 
+	"github.com/devher0/polymarket-weather-bot/config"
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
@@ -28,18 +29,48 @@ import (
 
 func main() {
 	live           := flag.Bool("live", false, "Disable dry-run (real money)")
-	loop           := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once)")
+	loopFlag       := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once; overrides config)")
 	collectHistory := flag.Bool("collect-history", false, "Download 90-day historical data and exit")
 	testTelegram   := flag.Bool("test-telegram", false, "Send a test Telegram message and exit")
-	metricsPort    := flag.Int("metrics-port", 9090, "Prometheus /metrics port (0 = disabled)")
+	metricsPortFlag := flag.Int("metrics-port", -1, "Prometheus /metrics port (0=disabled; overrides config)")
+	configFile     := flag.String("config", "", "Path to config.yaml (default: config/config.yaml)")
 	flag.Parse()
 
-	// Start the Prometheus metrics server unless disabled.
-	if *metricsPort > 0 {
-		metrics.Start(fmt.Sprintf(":%d", *metricsPort), ".")
+	// Load .env first so ENV vars are available for config overlay.
+	_ = godotenv.Load()
+
+	// Load configuration: yaml file + ENV overlay.
+	cfgPath := *configFile
+	if cfgPath == "" {
+		cfgPath = "config/config.yaml"
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		slog.Warn("config load failed, using defaults", "err", err)
+		cfg, _ = config.Load("") // pure defaults + ENV
 	}
 
-	_ = godotenv.Load()
+	// CLI flags win over config file for loop and metrics-port.
+	if *loopFlag > 0 {
+		cfg.LoopSec = *loopFlag
+	}
+	if *metricsPortFlag >= 0 {
+		cfg.MetricsPort = *metricsPortFlag
+	}
+
+	// Start the Prometheus metrics server unless disabled.
+	if cfg.MetricsPort > 0 {
+		metrics.Start(fmt.Sprintf(":%d", cfg.MetricsPort), cfg.DataRoot)
+	}
+
+	slog.Info("config loaded",
+		"cities", cfg.Cities,
+		"min_edge", cfg.MinEdge,
+		"max_bet", cfg.MaxBet,
+		"loop_sec", cfg.LoopSec,
+		"metrics_port", cfg.MetricsPort,
+		"data_root", cfg.DataRoot,
+	)
 
 	// --- Telegram test mode ---
 	if *testTelegram {
@@ -54,7 +85,7 @@ func main() {
 	// --- Historical collection mode ---
 	if *collectHistory {
 		slog.Info("collecting 90-day historical data for all cities...")
-		if err := collectors.CollectHistory("."); err != nil {
+		if err := collectors.CollectHistory(cfg.DataRoot); err != nil {
 			slog.Error("history collection failed", "err", err)
 			os.Exit(1)
 		}
@@ -70,16 +101,13 @@ func main() {
 	}
 
 	// Print Brier score from past bets at startup
-	calibration.PrintBrierScore(".")
-
-	maxBet  := envFloat("MAX_BET_USDC", 5.0)
-	minEdge := envFloat("MIN_EDGE", 0.05)
+	calibration.PrintBrierScore(cfg.DataRoot)
 
 	run := func() {
 		slog.Info("=== cycle start", "time", time.Now().Format(time.RFC3339))
 
 		// 0. Load open positions to avoid double-betting the same conditionID.
-		openPositions, err := calibration.LoadOpenPositions(".")
+		openPositions, err := calibration.LoadOpenPositions(cfg.DataRoot)
 		if err != nil {
 			slog.Warn("failed to load open positions, proceeding without dedup", "err", err)
 			openPositions = make(map[string]bool)
@@ -87,14 +115,23 @@ func main() {
 		slog.Info("open positions loaded", "count", len(openPositions))
 
 		// 1. Fetch fused forecasts from all sources (aggregator)
-		fusedForecasts, err := collectors.AggregateAll(".")
+		fusedForecasts, err := collectors.AggregateAll(cfg.DataRoot)
 		if err != nil {
 			slog.Warn("aggregator failed, falling back to OpenMeteo only", "err", err)
 		}
 
-		// 2. Also keep plain OpenMeteo map for fallback Evaluate()
+		// 2. Build active-city set from config.
+		activeCity := make(map[string]bool, len(cfg.Cities))
+		for _, c := range cfg.Cities {
+			activeCity[c] = true
+		}
+
+		// 3. Fetch plain OpenMeteo forecasts for fallback Evaluate().
 		legacyForecasts := make(map[string][]weather.Forecast)
 		for city := range weather.Cities {
+			if !activeCity[city] {
+				continue
+			}
 			fc, err := weather.GetForecast(city, 3)
 			if err != nil {
 				slog.Warn("forecast failed", "city", city, "err", err)
@@ -117,7 +154,7 @@ func main() {
 			)
 		}
 
-		// 3. Discover weather markets
+		// 4. Discover weather markets
 		mkt, err := markets.GetWeatherMarkets()
 		if err != nil {
 			slog.Error("markets fetch failed", "err", err)
@@ -130,9 +167,14 @@ func main() {
 			return
 		}
 
-		// 4. Evaluate and place bets
+		// 5. Evaluate and place bets
 		placed := 0
 		for _, m := range mkt {
+			// Skip cities not in active set (if city is recognisable).
+			if m.City != "" && !activeCity[m.City] {
+				continue
+			}
+
 			// Skip markets where we already have an open position.
 			if openPositions[m.ConditionID] {
 				slog.Info("skipped: already have position on", "conditionID", m.ConditionID,
@@ -143,29 +185,26 @@ func main() {
 			var d *strategy.Decision
 
 			// Select forecast for the day the market expires.
-			// Markets expiring in N days use day-N forecast instead of today.
 			dayOffset := m.DaysUntilExpiry()
 
 			var ff *collectors.FusedForecast
 			if dayOffset > 0 && m.City != "" {
-				// Fetch day-specific fused forecast (tolerates partial failure).
-				dayFF, err := collectors.AggregateForDay(m.City, dayOffset, ".")
+				dayFF, err := collectors.AggregateForDay(m.City, dayOffset, cfg.DataRoot)
 				if err == nil {
 					ff = dayFF
 				}
 			}
 			if ff == nil {
-				// Fall back to today's pre-fetched fused forecast.
 				if v, ok := fusedForecasts[m.City]; ok {
 					ff = v
 				}
 			}
 
 			if ff != nil {
-				d = strategy.EvaluateFused(m, ff, 100.0, minEdge, maxBet)
+				d = strategy.EvaluateFused(m, ff, 100.0, cfg.MinEdge, cfg.MaxBet)
 			}
 			if d == nil {
-				d = strategy.Evaluate(m, legacyForecasts, 100.0, minEdge, maxBet)
+				d = strategy.Evaluate(m, legacyForecasts, 100.0, cfg.MinEdge, cfg.MaxBet)
 			}
 			if d == nil {
 				continue
@@ -187,11 +226,9 @@ func main() {
 					slog.Error("order failed", "err", err)
 					_ = notifier.NotifyError("placeBet", err)
 				} else {
-					// Record bet for calibration tracking
-					if err := calibration.SaveBet(d, "."); err != nil {
+					if err := calibration.SaveBet(d, cfg.DataRoot); err != nil {
 						slog.Warn("calibration save failed", "err", err)
 					}
-					// Notify via Telegram
 					if err := notifier.NotifyBet(d); err != nil {
 						slog.Warn("telegram notify failed", "err", err)
 					}
@@ -211,12 +248,12 @@ func main() {
 
 	run()
 
-	if *loop > 0 {
-		t := time.Duration(*loop) * time.Second
+	if cfg.LoopSec > 0 {
+		t := time.Duration(cfg.LoopSec) * time.Second
 		slog.Info("loop mode", "interval", t)
 
 		// Start the auto-resolver goroutine: checks resolved markets every hour.
-		calibration.StartResolver(".")
+		calibration.StartResolver(cfg.DataRoot)
 
 		lastDigest := time.Time{}
 		for range time.Tick(t) {
@@ -225,7 +262,7 @@ func main() {
 			// Send daily digest at ~09:00 UTC
 			now := time.Now().UTC()
 			if now.Hour() == 9 && now.Sub(lastDigest) > 23*time.Hour {
-				if err := notifier.DailyDigest("."); err != nil {
+				if err := notifier.DailyDigest(cfg.DataRoot); err != nil {
 					slog.Warn("daily digest failed", "err", err)
 				} else {
 					lastDigest = now
@@ -243,15 +280,6 @@ func placeBet(d *strategy.Decision) error {
 	}
 	slog.Info("order submitted", "orderID", orderID, "token", d.TokenID, "side", d.Side)
 	return nil
-}
-
-func envFloat(key string, def float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
-	}
-	return def
 }
 
 func truncate(s string, n int) string {
