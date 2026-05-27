@@ -1113,3 +1113,25 @@ Spread между источниками = мера неопределённос
 - При consecutiveAPIFails >= 3 → отправить Telegram: "⚠️ Polymarket API down: N consecutive failures"
 - Сбрасывать счётчик при успехе; не спамить — слать уведомление только при переходе 2→3
 - Логировать "api_fail_streak=N" каждую итерацию при ошибках
+
+---
+
+## 🔴 ПРИОРИТЕТ 24 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-120: Fog / Humid / Dry signal support
+**Файлы:** `internal/weather/weather.go`, `internal/weather/seasonal.go`, `internal/strategy/strategy.go`
+- `FogProbability(f)` — WMO коды 45/48 (fog) + humidity/wind proxy (0.08–0.92)
+- `HumidProbability(f, threshold)` — относительная влажность vs порога (default 75%), fallback через rain
+- `DryProbability(f)` — 1-rain + WMO код бонусы/штрафы + осадки > 5 мм
+- Добавлены case "fog"|"humid"|"dry" в `ScoreMarket()`, `evaluate()`, `EvaluateFused()`
+- Сезонные прiors в `priorForSignal()`: fog≈rain×0.30, humid≈rain×0.80+0.10, dry≈1-rain
+- Рынки по туману/влажности/засухе теперь торгуются (раньше — default: return nil)
+
+### [x] 2026-05-28 — TASK-121: HTML performance report generator
+**Файл:** `cmd/report/main.go` (новый)
+- `go run ./cmd/report` → пишет `data/report.html` (самодостаточный HTML)
+- Флаги: `--data` (корень данных), `--out` (путь к файлу)
+- 4 Chart.js графика: кумулятивный P&L, win rate по сигналу, rolling Brier score (окно 10), кол-во ставок по сигналу
+- Таблица городов: бетов / побед / win rate / P&L
+- Таблица открытых позиций: город, сигнал, сторона, размер, вероятность, дата
+- Тёмная тема, responsive 2-колоночная сетка

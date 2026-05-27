@@ -1484,3 +1484,34 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 `go build ./...` — OK
 
 **Строк:** ~35 (config.go: +15, config.yaml: +12, cmd/bot/main.go: +25)
+
+---
+
+## 2026-05-28 01:02 UTC — TASK-120 + TASK-121
+
+### TASK-120: Fog / Humid / Dry signal support
+**Файлы:** `internal/weather/weather.go` (+58 строк), `internal/weather/seasonal.go` (+9 строк), `internal/strategy/strategy.go` (+12 строк)
+
+- Добавлены три новые функции вероятности в `weather.go`:
+  - `FogProbability`: WMO fog codes 45/48 → 0.92; humidity+wind proxy для остальных случаев
+  - `HumidProbability(threshold)`: diff-based шкала относительно порога, fallback через rain
+  - `DryProbability`: complement rain + WMO bonus/penalty + precip > 5 мм
+- `seasonal.go`: три новых случая в `priorForSignal()` для fog/humid/dry байесовских прiors
+- `strategy.go`: добавлены case "fog"|"humid"|"dry" в `ScoreMarket()`, `evaluate()`, `EvaluateFused()`
+- Сигналы fog/humid/dry ранее игнорировались (default: return nil/0.5) — теперь полностью поддерживаются
+
+### TASK-121: HTML performance report
+**Файл:** `cmd/report/main.go` (новый, ~300 строк)
+
+- `go run ./cmd/report [--data .] [--out path]` генерирует самодостаточный HTML
+- Тёмная тема, 4 Chart.js графика через CDN:
+  1. Кумулятивный P&L curve
+  2. Win rate по сигналам (зелёный ≥50%, красный <50%)
+  3. Rolling Brier score (окно 10 ставок)
+  4. Количество ставок по сигналам
+- Таблица городов (Count/Wins/WinRate/PnL) + открытые позиции
+- Данные встроены как JSON прямо в HTML
+
+`go build ./...` и `go test ./...` — OK
+
+**Итого строк:** ~340 (weather.go: +58, seasonal.go: +9, strategy.go: +12, cmd/report/main.go: ~261)

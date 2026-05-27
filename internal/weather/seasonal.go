@@ -146,6 +146,16 @@ func priorForSignal(city string, month time.Month, signal string, thresholdC flo
 	case "wind":
 		// Wind has no direct climatology entry; return -1 to skip adjustment.
 		return -1
+	case "fog":
+		// Fog is more likely in high-rain months when humidity is elevated.
+		// Approximate: fog_prob ≈ rain_prob × 0.30 (rough empirical ratio).
+		return clamp(mc.RainProb*0.30, 0.03, 0.40)
+	case "humid":
+		// High humidity correlates strongly with rain probability and warm temps.
+		return clamp(mc.RainProb*0.80+0.10, 0.10, 0.90)
+	case "dry":
+		// Dry = complement of rain on most days.
+		return clamp(1-mc.RainProb, 0.05, 0.95)
 	}
 	return -1
 }

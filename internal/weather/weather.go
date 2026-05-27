@@ -238,6 +238,69 @@ func CAPEStormProbability(cape float64) float64 {
 	}
 }
 
+// FogProbability returns 0–1 probability of fog or low-visibility conditions.
+// Uses WMO weather codes (45=fog, 48=rime fog) as primary signal; falls back to
+// a humidity + wind-speed proxy when WMO code is not a fog code.
+func FogProbability(f Forecast) float64 {
+	if f.WeatherCode == 45 || f.WeatherCode == 48 {
+		return 0.92
+	}
+	// Proxy: high humidity + calm wind is the classic radiation-fog recipe.
+	switch {
+	case f.HumidityPct >= 95 && f.WindSpeedKMH <= 10:
+		return 0.70
+	case f.HumidityPct >= 90 && f.WindSpeedKMH <= 15:
+		return 0.45
+	case f.HumidityPct >= 85:
+		return 0.25
+	default:
+		return 0.08
+	}
+}
+
+// HumidProbability returns 0–1 probability that relative humidity meets or
+// exceeds humidThreshold (%). Pass 0 to use the default of 75 %.
+func HumidProbability(f Forecast, humidThreshold float64) float64 {
+	if humidThreshold <= 0 {
+		humidThreshold = 75
+	}
+	if f.HumidityPct <= 0 {
+		// No direct humidity reading: proxy via rain probability.
+		return clamp(RainProbability(f)*0.70+0.15, 0.05, 0.80)
+	}
+	diff := f.HumidityPct - humidThreshold
+	switch {
+	case diff >= 15:
+		return 0.92
+	case diff >= 5:
+		return clamp(0.70+diff*0.022, 0, 0.92)
+	case diff >= 0:
+		return clamp(0.55+diff*0.030, 0, 0.70)
+	case diff >= -10:
+		return clamp(0.55+diff*0.050, 0.05, 0.55)
+	default:
+		return 0.05
+	}
+}
+
+// DryProbability returns 0–1 probability of a dry day (precipitation < 1 mm,
+// low rain probability). Complements RainProbability but is not simply 1−rain:
+// it adds a bonus for explicitly clear WMO codes and a penalty for known
+// precipitation codes, making it more sensitive to marginal-rain cases.
+func DryProbability(f Forecast) float64 {
+	p := 1 - RainProbability(f)
+	switch {
+	case f.WeatherCode == 0 || f.WeatherCode == 1: // clear / mainly clear
+		p = clamp(p+0.05, 0, 0.97)
+	case f.WeatherCode >= 51 && f.WeatherCode <= 99: // drizzle / rain / snow codes
+		p = clamp(p-0.10, 0.02, 1)
+	}
+	if f.PrecipitationMM > 5 {
+		p = clamp(p-0.20, 0.02, 1)
+	}
+	return clamp(p, 0.02, 0.97)
+}
+
 func clamp(v, lo, hi float64) float64 {
 	if v < lo {
 		return lo
