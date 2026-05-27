@@ -38,15 +38,21 @@ type Config struct {
 	// MaxOpenPositions is the maximum number of unresolved bets allowed at any
 	// time (0 = unlimited).
 	MaxOpenPositions int
+
+	// MaxSameCitySignalBets is the maximum number of simultaneously open
+	// (unresolved) bets on the same (city, signal) pair (0 = unlimited).
+	// Prevents over-concentration, e.g. multiple open new_york/rain bets.
+	MaxSameCitySignalBets int
 }
 
 // DefaultConfig returns conservative risk limits suitable for a small bankroll.
 func DefaultConfig() Config {
 	return Config{
-		MaxDailyLossUSDC:   50.0,
-		MaxDailyProfitUSDC: 0, // disabled by default
-		MaxDailyBets:       20,
-		MaxOpenPositions:   30,
+		MaxDailyLossUSDC:      50.0,
+		MaxDailyProfitUSDC:    0, // disabled by default
+		MaxDailyBets:          20,
+		MaxOpenPositions:      30,
+		MaxSameCitySignalBets: 2,
 	}
 }
 
@@ -138,6 +144,33 @@ func (m *Manager) AllowBet(records []calibration.BetRecord) error {
 	return nil
 }
 
+// ── Correlation guard ─────────────────────────────────────────────────────────
+
+// CheckCorrelation returns an error when opening a new bet on (city, signal)
+// would exceed MaxSameCitySignalBets open positions on that same pair.
+//
+// The guard prevents over-concentration in a single weather outcome across
+// multiple market expiries (e.g. holding three simultaneous new_york/rain bets).
+// Returns nil when MaxSameCitySignalBets is 0 (disabled) or city/signal is empty.
+func (m *Manager) CheckCorrelation(records []calibration.BetRecord, city, signal string) error {
+	if m.cfg.MaxSameCitySignalBets <= 0 || city == "" || signal == "" {
+		return nil
+	}
+
+	count := 0
+	for _, r := range records {
+		if r.Outcome == nil && r.City == city && r.Signal == signal {
+			count++
+		}
+	}
+
+	if count >= m.cfg.MaxSameCitySignalBets {
+		return fmt.Errorf("corr guard: city=%s signal=%s already has %d/%d open positions",
+			city, signal, count, m.cfg.MaxSameCitySignalBets)
+	}
+	return nil
+}
+
 // ── Reporting ─────────────────────────────────────────────────────────────────
 
 // Summary returns a one-line human-readable status string showing the current
@@ -166,6 +199,9 @@ func Summary(records []calibration.BetRecord, cfg Config) string {
 	}
 	if cfg.MaxOpenPositions > 0 {
 		limits = append(limits, fmt.Sprintf("max_open=%d", cfg.MaxOpenPositions))
+	}
+	if cfg.MaxSameCitySignalBets > 0 {
+		limits = append(limits, fmt.Sprintf("max_same_city_signal=%d", cfg.MaxSameCitySignalBets))
 	}
 
 	if len(limits) > 0 {

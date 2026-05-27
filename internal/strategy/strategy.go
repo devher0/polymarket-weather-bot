@@ -105,6 +105,24 @@ func halfKelly(edge, odds, bankroll, maxFraction float64) float64 {
 // minConfidence is the threshold below which we skip the market.
 const minConfidence = 0.4
 
+// confidenceEdgeFactor returns a multiplier for minEdge based on forecast confidence.
+// TASK-055: high-confidence forecasts tolerate a smaller edge (we trust the signal more);
+// low-confidence forecasts require a bigger cushion (model disagreement = more risk).
+//
+//	confidence > 0.80 → factor 0.80  (accept 20% smaller edge)
+//	confidence 0.50–0.80 → factor 1.00  (baseline)
+//	confidence < 0.50 → factor 1.50  (require 50% larger edge)
+func confidenceEdgeFactor(confidence float64) float64 {
+	switch {
+	case confidence > 0.80:
+		return 0.80
+	case confidence >= 0.50:
+		return 1.00
+	default:
+		return 1.50
+	}
+}
+
 // ensembleUncertaintyScale converts an ensemble temperature stddev (°C) into a
 // bet-size multiplier. High uncertainty → smaller position.
 //
@@ -207,7 +225,21 @@ func EvaluateFused(
 		}
 	}
 
-	d := evaluate(m, alertForecast, bankroll, minEdge, maxBet, sourceNote)
+	// TASK-055: adjust minEdge based on forecast confidence.
+	// High-confidence forecasts (sources agree) can enter with smaller edge;
+	// low-confidence forecasts require a larger edge as safety margin.
+	edgeFactor := confidenceEdgeFactor(ff.Confidence)
+	adjustedMinEdge := minEdge * edgeFactor
+	if edgeFactor != 1.0 {
+		slog.Debug("min_edge adjusted",
+			"base", fmt.Sprintf("%.3f", minEdge),
+			"factor", fmt.Sprintf("%.2f", edgeFactor),
+			"adjusted", fmt.Sprintf("%.3f", adjustedMinEdge),
+			"confidence", fmt.Sprintf("%.2f", ff.Confidence),
+		)
+	}
+
+	d := evaluate(m, alertForecast, bankroll, adjustedMinEdge, maxBet, sourceNote)
 	if d == nil {
 		return nil
 	}

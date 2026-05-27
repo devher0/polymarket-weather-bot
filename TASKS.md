@@ -495,3 +495,34 @@ type FusedForecast struct {
 - Документировать все ENV vars в README секции "Environment Variables"
 - Добавить валидацию обязательных ENV vars при старте в live-режиме: POLYMARKET_PRIVATE_KEY, POLYMARKET_ADDRESS
 - Выводить чёткое сообщение об ошибке с именами пропущенных vars вместо generic panic
+
+---
+
+## 🔴 ПРИОРИТЕТ 14 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-054: Correlated positions guard — защита от over-концентрации по city+signal
+**Файлы:** `internal/risk/risk.go` (обновить), `internal/risk/risk_test.go` (обновить), `config/config.go` (обновить), `config/config.yaml` (обновить), `cmd/bot/main.go` (обновить)
+- Добавить `MaxSameCitySignalBets int` в `risk.Config` и `config.Config`
+- Метод `CheckCorrelation(records []BetRecord, city, signal string) error`:
+  - Считает открытые (unresolved) ставки на данную (city, signal) пару
+  - Возвращает ошибку если count ≥ MaxSameCitySignalBets (default: 2)
+- Вызывать перед каждой ставкой в `cmd/bot/main.go`
+- Логировать "corr guard: skip (city=X signal=Y open=N max=2)"
+- Тесты в risk_test.go
+
+### [x] 2026-05-27 — TASK-055: Confidence-adaptive min_edge — меньший порог для уверенных прогнозов
+**Файл:** `internal/strategy/strategy.go` (обновить)
+- В `EvaluateFused()` вычислять `adjustedMinEdge = minEdge × confidenceFactor(ff.Confidence)`:
+  - confidence > 0.80 → factor 0.80 (высокая уверенность → принимать меньший edge)
+  - confidence 0.50-0.80 → factor 1.00 (baseline)
+  - confidence < 0.50 → factor 1.50 (низкая уверенность → требовать больший edge)
+- Логировать "min_edge adjusted: base=X factor=Y adj=Z conf=W"
+- Не менять логику Kelly sizing — только порог входа
+
+### [x] 2026-05-27 — TASK-056: Market price snapshot tracker — отслеживание движения цен рынков
+**Файл:** `internal/markets/price_tracker.go` (новый), `cmd/bot/main.go` (обновить)
+- `SnapshotPrice(conditionID, yesTokenID, dataRoot string) error` — сохранить текущую YesPrice в `data/price_snapshots/{conditionID}.jsonl` (append JSON lines)
+- `GetPriceHistory(conditionID, dataRoot string) ([]PricePoint, error)` — загрузить историю
+- Структура: `{timestamp, yes_price, no_price}`
+- `DetectAdverseMove(conditionID, ourSide string, history []PricePoint) (bool, float64)` — true если цена нашей стороны упала >0.15 за последние 3 точки (признак информированного движения против нас)
+- В bot/main.go: перед каждой ставкой проверять adverse move — если true, логировать предупреждение и увеличить требуемый edge на +0.05

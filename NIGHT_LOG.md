@@ -561,3 +561,23 @@
 - `TASKS.md` (3 задачи → [x])
 
 **Итого:** ~215 строк. `go build ./...` ✅
+
+## 2026-05-27 18:17 UTC — TASK-054 + TASK-055 + TASK-056: Correlated guard + Adaptive edge + Price tracker
+
+**Задачи:** TASK-054, TASK-055, TASK-056
+
+**Файлы созданы/изменены:**
+- `internal/risk/risk.go` — новое поле `MaxSameCitySignalBets int` в `Config`; метод `CheckCorrelation(records, city, signal)` считает открытые ставки на (city, signal) пару и блокирует при превышении лимита; обновлён `Summary` для отображения лимита; ~35 строк
+- `internal/risk/risk_test.go` — 6 новых тестов для `CheckCorrelation`: disabled, under limit, at limit, resolved bets not count, different signal, different city; ~90 строк
+- `config/config.go` — поле `MaxSameCitySignalBets int` в `Config` + default=2 + ENV override `MAX_SAME_CITY_SIGNAL_BETS`; ~8 строк
+- `config/config.yaml` — документация `max_same_city_signal_bets: 2`; ~5 строк
+- `internal/strategy/strategy.go` — функция `confidenceEdgeFactor(confidence)`: >0.80→0.80, 0.50-0.80→1.00, <0.50→1.50; применяется в `EvaluateFused` к `minEdge` перед вызовом `evaluate()`; логирует при отклонении; ~30 строк
+- `internal/markets/price_tracker.go` — НОВЫЙ (~175 строк): `SnapshotPrice(condID, yesTokenID, dataRoot)` → fetches mid-price from CLOB book API, appends JSON line в `data/price_snapshots/{condID}.jsonl`; `GetPriceHistory(condID, dataRoot)` → загружает JSONL; `DetectAdverseMove(ourSide, history)` → true если цена нашей стороны упала >0.15 за последние 3 точки; `SnapshotOpenPositions(map, dataRoot)` → batch snapshot
+- `cmd/bot/main.go` — (1) `riskMgr` получает `MaxSameCitySignalBets` из config; (2) `CheckCorrelation` вызывается перед каждой ставкой; (3) `SnapshotOpenPositions` вызывается после загрузки рынков; (4) `DetectAdverseMove` + elevated edge check (+0.05) перед ставкой; ~40 строк нетто
+
+**Ключевые эффекты:**
+- TASK-054: бот не открывает >2 позиций на одну (city, signal) пару — защита от overconcentration в e.g. new_york/rain при нескольких экспирях
+- TASK-055: при confidence >0.80 принимаем edge от 0.04 (было 0.05); при confidence <0.50 требуем edge 0.075+ — динамичный порог входа
+- TASK-056: каждый цикл сохраняет снапшоты цен открытых позиций; обнаруживает adverse move >0.15 за 3 точки и блокирует ставку если edge недостаточен
+
+**Тесты:** все пакеты OK (`go test ./...`), `go build ./...` проходит без ошибок

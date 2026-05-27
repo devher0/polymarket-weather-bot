@@ -192,10 +192,11 @@ func main() {
 
 	// Initialise risk manager from config.
 	riskMgr := risk.New(risk.Config{
-		MaxDailyLossUSDC:   cfg.MaxDailyLossUSDC,
-		MaxDailyProfitUSDC: cfg.MaxDailyProfitUSDC,
-		MaxDailyBets:       cfg.MaxDailyBets,
-		MaxOpenPositions:   cfg.MaxOpenPositions,
+		MaxDailyLossUSDC:      cfg.MaxDailyLossUSDC,
+		MaxDailyProfitUSDC:    cfg.MaxDailyProfitUSDC,
+		MaxDailyBets:          cfg.MaxDailyBets,
+		MaxOpenPositions:      cfg.MaxOpenPositions,
+		MaxSameCitySignalBets: cfg.MaxSameCitySignalBets,
 	})
 
 	sess := &sessionStats{startTime: time.Now()}
@@ -345,6 +346,21 @@ func main() {
 			)
 		}
 
+		// TASK-056: snapshot prices for open positions using current market data.
+		// Build a conditionID→yesTokenID lookup from fetched markets and snapshot
+		// each open position so we can detect adverse price moves later.
+		{
+			openTokens := make(map[string]string, len(openPositions))
+			for _, m := range mkt {
+				if openPositions[m.ConditionID] && m.YesTokenID != "" {
+					openTokens[m.ConditionID] = m.YesTokenID
+				}
+			}
+			if len(openTokens) > 0 {
+				markets.SnapshotOpenPositions(openTokens, cfg.DataRoot)
+			}
+		}
+
 		// 4. Enrich markets with liquidity data (order book depth).
 		markets.EnrichWithLiquidity(mkt)
 
@@ -482,6 +498,39 @@ func main() {
 					slog.Warn("webhook notify failed", "event", "bet_skipped_risk", "err", wErr)
 				}
 				break // stop placing more bets this cycle
+			}
+
+			// TASK-054: correlation guard — skip if already over-concentrated in (city, signal).
+			if err := riskMgr.CheckCorrelation(history, m.City, m.Signal); err != nil {
+				slog.Info("corr guard: skip bet",
+					"city", m.City,
+					"signal", m.Signal,
+					"reason", err.Error(),
+				)
+				continue
+			}
+
+			// TASK-056: adverse move check — if price of our side has fallen >0.15
+			// over the last 3 snapshots, require extra edge (+0.05) as safety margin.
+			if priceHistory, phErr := markets.GetPriceHistory(m.ConditionID, cfg.DataRoot); phErr == nil {
+				if adverse, drop := markets.DetectAdverseMove(d.Side, priceHistory); adverse {
+					requiredEdge := cfg.MinEdge + 0.05
+					if d.Edge < requiredEdge {
+						slog.Info("adverse move: edge below elevated threshold, skipping",
+							"conditionID", m.ConditionID,
+							"our_side", d.Side,
+							"edge", fmt.Sprintf("%.3f", d.Edge),
+							"required", fmt.Sprintf("%.3f", requiredEdge),
+							"price_drop", fmt.Sprintf("%.3f", drop),
+						)
+						continue
+					}
+					slog.Info("adverse move detected but edge sufficient",
+						"conditionID", m.ConditionID,
+						"edge", fmt.Sprintf("%.3f", d.Edge),
+						"required", fmt.Sprintf("%.3f", requiredEdge),
+					)
+				}
 			}
 
 			prefix := ""

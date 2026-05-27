@@ -37,10 +37,11 @@ type Config struct {
 	DataRoot    string `yaml:"data_root"`    // root dir for data/ files (default ".")
 
 	// Risk management
-	MaxDailyLossUSDC   float64 `yaml:"max_daily_loss_usdc"`   // stop if today's P&L < -this (0 = disabled)
-	MaxDailyProfitUSDC float64 `yaml:"max_daily_profit_usdc"` // stop if today's P&L > this (0 = disabled)
-	MaxDailyBets       int     `yaml:"max_daily_bets"`        // max bets per UTC day (0 = disabled)
-	MaxOpenPositions   int     `yaml:"max_open_positions"`    // max unresolved bets at once (0 = disabled)
+	MaxDailyLossUSDC      float64 `yaml:"max_daily_loss_usdc"`        // stop if today's P&L < -this (0 = disabled)
+	MaxDailyProfitUSDC    float64 `yaml:"max_daily_profit_usdc"`      // stop if today's P&L > this (0 = disabled)
+	MaxDailyBets          int     `yaml:"max_daily_bets"`             // max bets per UTC day (0 = disabled)
+	MaxOpenPositions      int     `yaml:"max_open_positions"`         // max unresolved bets at once (0 = disabled)
+	MaxSameCitySignalBets int     `yaml:"max_same_city_signal_bets"`  // max open bets on same (city,signal) pair (0 = disabled)
 
 	// Forecast quality
 	MaxForecastAgeHours float64 `yaml:"max_forecast_age_hours"` // skip bets on forecasts older than this (0 = disabled)
@@ -75,10 +76,11 @@ func defaults() Config {
 		MetricsPort:      9090,
 		LogLevel:         "info",
 		DataRoot:         ".",
-		MaxDailyLossUSDC:    50.0,
-		MaxDailyBets:        20,
-		MaxOpenPositions:    30,
-		MaxForecastAgeHours: 3.0,
+		MaxDailyLossUSDC:      50.0,
+		MaxDailyBets:          20,
+		MaxOpenPositions:      30,
+		MaxSameCitySignalBets: 2,
+		MaxForecastAgeHours:   3.0,
 		MaxBetsPerCycle:     5,
 		MinHoursToExpiry:    6.0,
 	}
@@ -188,6 +190,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envInt("MAX_OPEN_POSITIONS"); v != nil {
 		cfg.MaxOpenPositions = *v
+	}
+	if v := envInt("MAX_SAME_CITY_SIGNAL_BETS"); v != nil {
+		cfg.MaxSameCitySignalBets = *v
 	}
 
 	// Forecast quality

@@ -59,6 +59,11 @@ max_daily_bets: 20
 # Env override: MAX_OPEN_POSITIONS=30
 max_open_positions: 30
 
+# Maximum number of simultaneously open bets on the same (city, signal) pair (0 = unlimited).
+# Prevents over-concentration, e.g. holding 3 open new_york/rain bets at once.
+# Env override: MAX_SAME_CITY_SIGNAL_BETS=2
+max_same_city_signal_bets: 2
+
 # ── Forecast quality ─────────────────────────────────────────────────────────
 # Skip bets on forecasts older than this many hours (0 = disabled).
 # Env override: MAX_FORECAST_AGE_HOURS=3

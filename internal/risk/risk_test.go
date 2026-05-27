@@ -259,3 +259,108 @@ func containsStr(s, sub string) bool {
 	}
 	return false
 }
+
+// CheckCorrelation tests — TASK-054 ──────────────────────────────────────────
+
+// newCitySignalRecord builds a BetRecord with city+signal and given outcome.
+func newCitySignalRecord(condID, city, signal string, outcome *bool) calibration.BetRecord {
+	return calibration.BetRecord{
+		ConditionID:    condID,
+		Timestamp:      todayAt(10),
+		Side:           "YES",
+		OurProbability: 0.6,
+		MarketPrice:    0.5,
+		SizeUSDC:       5,
+		Outcome:        outcome,
+		City:           city,
+		Signal:         signal,
+	}
+}
+
+func TestCheckCorrelation_Disabled(t *testing.T) {
+	cfg := risk.DefaultConfig()
+	cfg.MaxSameCitySignalBets = 0 // disabled
+	mgr := risk.New(cfg)
+
+	records := []calibration.BetRecord{
+		newCitySignalRecord("a", "new_york", "rain", nil),
+		newCitySignalRecord("b", "new_york", "rain", nil),
+		newCitySignalRecord("c", "new_york", "rain", nil),
+	}
+	if err := mgr.CheckCorrelation(records, "new_york", "rain"); err != nil {
+		t.Errorf("expected nil when disabled, got %v", err)
+	}
+}
+
+func TestCheckCorrelation_UnderLimit(t *testing.T) {
+	cfg := risk.DefaultConfig()
+	cfg.MaxSameCitySignalBets = 2
+	mgr := risk.New(cfg)
+
+	records := []calibration.BetRecord{
+		newCitySignalRecord("a", "new_york", "rain", nil), // 1 open
+	}
+	if err := mgr.CheckCorrelation(records, "new_york", "rain"); err != nil {
+		t.Errorf("expected nil (1 < 2), got %v", err)
+	}
+}
+
+func TestCheckCorrelation_AtLimit(t *testing.T) {
+	cfg := risk.DefaultConfig()
+	cfg.MaxSameCitySignalBets = 2
+	mgr := risk.New(cfg)
+
+	records := []calibration.BetRecord{
+		newCitySignalRecord("a", "new_york", "rain", nil), // open
+		newCitySignalRecord("b", "new_york", "rain", nil), // open — count=2 → at limit
+	}
+	if err := mgr.CheckCorrelation(records, "new_york", "rain"); err == nil {
+		t.Error("expected error when at limit, got nil")
+	}
+}
+
+func TestCheckCorrelation_ResolvedDoNotCount(t *testing.T) {
+	cfg := risk.DefaultConfig()
+	cfg.MaxSameCitySignalBets = 2
+	mgr := risk.New(cfg)
+
+	won := true
+	records := []calibration.BetRecord{
+		newCitySignalRecord("a", "new_york", "rain", &won), // resolved — should not count
+		newCitySignalRecord("b", "new_york", "rain", &won), // resolved — should not count
+		newCitySignalRecord("c", "new_york", "rain", nil),  // open — count=1
+	}
+	if err := mgr.CheckCorrelation(records, "new_york", "rain"); err != nil {
+		t.Errorf("expected nil (only 1 open), got %v", err)
+	}
+}
+
+func TestCheckCorrelation_DifferentSignalAllowed(t *testing.T) {
+	cfg := risk.DefaultConfig()
+	cfg.MaxSameCitySignalBets = 2
+	mgr := risk.New(cfg)
+
+	records := []calibration.BetRecord{
+		newCitySignalRecord("a", "new_york", "rain", nil),
+		newCitySignalRecord("b", "new_york", "rain", nil), // 2 rain — at limit
+	}
+	// heat signal in same city should still be allowed
+	if err := mgr.CheckCorrelation(records, "new_york", "heat"); err != nil {
+		t.Errorf("expected nil for different signal, got %v", err)
+	}
+}
+
+func TestCheckCorrelation_DifferentCityAllowed(t *testing.T) {
+	cfg := risk.DefaultConfig()
+	cfg.MaxSameCitySignalBets = 2
+	mgr := risk.New(cfg)
+
+	records := []calibration.BetRecord{
+		newCitySignalRecord("a", "new_york", "rain", nil),
+		newCitySignalRecord("b", "new_york", "rain", nil), // new_york rain at limit
+	}
+	// london rain should still be allowed
+	if err := mgr.CheckCorrelation(records, "london", "rain"); err != nil {
+		t.Errorf("expected nil for different city, got %v", err)
+	}
+}
