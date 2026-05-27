@@ -41,6 +41,10 @@ type Config struct {
 	MaxDailyBets     int     `yaml:"max_daily_bets"`      // max bets per UTC day (0 = disabled)
 	MaxOpenPositions int     `yaml:"max_open_positions"`  // max unresolved bets at once (0 = disabled)
 
+	// Forecast quality
+	MaxForecastAgeHours float64 `yaml:"max_forecast_age_hours"` // skip bets on forecasts older than this (0 = disabled)
+	MaxBetsPerCycle     int     `yaml:"max_bets_per_cycle"`     // max bets per single run loop (0 = unlimited)
+
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
 	PolyAddress      string `yaml:"poly_address"`
@@ -66,9 +70,11 @@ func defaults() Config {
 		MetricsPort:      9090,
 		LogLevel:         "info",
 		DataRoot:         ".",
-		MaxDailyLossUSDC: 50.0,
-		MaxDailyBets:     20,
-		MaxOpenPositions: 30,
+		MaxDailyLossUSDC:    50.0,
+		MaxDailyBets:        20,
+		MaxOpenPositions:    30,
+		MaxForecastAgeHours: 3.0,
+		MaxBetsPerCycle:     5,
 	}
 }
 
@@ -173,6 +179,14 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envInt("MAX_OPEN_POSITIONS"); v != nil {
 		cfg.MaxOpenPositions = *v
+	}
+
+	// Forecast quality
+	if v := envFloat("MAX_FORECAST_AGE_HOURS"); v != nil {
+		cfg.MaxForecastAgeHours = *v
+	}
+	if v := envInt("MAX_BETS_PER_CYCLE"); v != nil {
+		cfg.MaxBetsPerCycle = *v
 	}
 
 	// Telegram

@@ -12,6 +12,71 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
 
+// ScoredMarket pairs a market with its pre-computed priority score
+// and the fused forecast used to compute it.
+type ScoredMarket struct {
+	Market markets.Market
+	FF     *collectors.FusedForecast
+	Score  float64
+}
+
+// ScoreMarket returns a priority score for a market:
+//
+//	score = rough_edge × confidence × urgency_factor
+//
+// Higher score → evaluate and bet this market first.
+// Markets with no forecast (ff == nil) score 0.
+func ScoreMarket(m markets.Market, ff *collectors.FusedForecast) float64 {
+	if ff == nil || m.City == "" || m.Signal == "" {
+		return 0
+	}
+
+	// Rough probability estimate (before seasonal correction) to approximate edge.
+	heatThreshold := 35.0
+	if m.ThresholdC != 0 {
+		heatThreshold = m.ThresholdC
+	}
+	var roughP float64
+	switch m.Signal {
+	case "heat":
+		roughP = weather.HeatProbability(ff.Forecast, heatThreshold)
+	case "cold":
+		roughP = 1 - weather.HeatProbability(ff.Forecast, heatThreshold)
+	case "rain":
+		roughP = weather.RainProbability(ff.Forecast)
+	case "sunny":
+		roughP = weather.SunnyProbability(ff.Forecast)
+	case "wind":
+		roughP = math.Min(0.95, ff.Forecast.WindSpeedKMH/80.0)
+	case "snow":
+		roughP = (1 - weather.HeatProbability(ff.Forecast, 2.0)) * weather.RainProbability(ff.Forecast) * 0.8
+	default:
+		roughP = 0.5
+	}
+
+	yesEdge := math.Abs(roughP - m.YesPrice)
+	noEdge := math.Abs((1 - roughP) - m.NoPrice)
+	roughEdge := math.Max(yesEdge, noEdge)
+
+	// Urgency factor: markets expiring sooner need to be evaluated first.
+	days := m.DaysUntilExpiry()
+	var urgency float64
+	switch days {
+	case 0, 1:
+		urgency = 1.5
+	case 2:
+		urgency = 1.2
+	case 3:
+		urgency = 1.0
+	case 4:
+		urgency = 0.8
+	default:
+		urgency = 0.6
+	}
+
+	return roughEdge * ff.Confidence * urgency
+}
+
 // Decision is a bet recommendation.
 type Decision struct {
 	Market         markets.Market

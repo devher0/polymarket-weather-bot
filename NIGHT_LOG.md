@@ -1,5 +1,22 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 16:22 — TASK-027/028/029/030: Ensemble, Correlation, Staleness, Scoring
+
+**Задачи:** TASK-027, TASK-028, TASK-029, TASK-030
+
+**Файлы созданы/изменены:**
+- `internal/collectors/openmeteo_ensemble.go` — НОВЫЙ (~155 строк): `GetEnsembleForecast()` — запрашивает ICON-EPS 16 членов с Open-Meteo ensemble API, агрегирует почасовые данные в дневные, считает mean + stddev температуры и осадков по членам; `EnsembleToConfidence()` — конвертирует stddev → 0-1 confidence (0°C→1.0, ≥5°C→0.0)
+- `internal/collectors/aggregator.go` — добавлены поля `EnsembleUncertainty float64`, `FetchedAt time.Time` в `FusedForecast`; в `Aggregate()` и `AggregateForDay()` после fuse() вызывается `GetEnsembleForecast()` — если ансамбль доступен, его confidence заменяет межмодельный; `FetchedAt` устанавливается в `fuse()`
+- `internal/risk/correlation.go` — НОВЫЙ (~75 строк): карта корреляций 5 пар городов (NY-Miami=0.70, London-Paris=0.80, LA-SF=0.85, Chicago-NY=0.65); `CorrelatedCitiesOpen(m, placedMarkets)` — пропускает рынки с r>0.75 и тем же сигналом; логирует "skipped: correlated position in {city}"
+- `config/config.go` — добавлены `MaxForecastAgeHours float64` (default 3.0) и `MaxBetsPerCycle int` (default 5) + ENV overlay
+- `internal/strategy/strategy.go` — добавлены `ScoredMarket` struct и `ScoreMarket(m, ff)` — приоритет = rough_edge × confidence × urgency_factor (1.5/1.2/1.0/0.8/0.6 по дням до экспирации)
+- `cmd/bot/main.go` — TASK-028: `placedThisCycle` slice + `risk.CorrelatedCitiesOpen()` перед каждой ставкой; TASK-029: `maxForecastAge()` + проверка `ff.FetchedAt` перед оценкой; TASK-030: предварительный скоринг + сортировка рынков по убыванию score + `MaxBetsPerCycle` hard cap; логирование score при каждой ставке
+
+**Результат:** `go build ./...` ✅, все тесты pass (calibration/polymarket/risk/strategy/weather)
+**Строки кода:** ~460 новых/изменённых строк
+
+---
+
 ## 2026-05-27 16:12 — TASK-026: Risk Manager — дневные лимиты потерь
 
 **Задача:** TASK-026

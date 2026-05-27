@@ -13,8 +13,10 @@ import (
 // FusedForecast combines forecasts from multiple sources with confidence score.
 type FusedForecast struct {
 	weather.Forecast
-	Confidence float64  // 0-1: how much sources agree (1 = full agreement)
-	Sources    []string // which sources contributed
+	Confidence          float64   // 0-1: how much sources agree (1 = full agreement)
+	Sources             []string  // which sources contributed
+	EnsembleUncertainty float64   // stddev of temperature across ensemble members (°C); 0 if unavailable
+	FetchedAt           time.Time // when this forecast was assembled (for staleness checks)
 }
 
 // sourceWeights defines the base weight for each data source.
@@ -79,7 +81,18 @@ func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
 		return nil, fmt.Errorf("aggregator: no data sources available for city %q", city)
 	}
 
-	return fuse(city, results), nil
+	ff := fuse(city, results)
+
+	// TASK-027: replace inter-model confidence with ensemble-based uncertainty
+	// when the ICON seamless ensemble is reachable. Lower temperature spread
+	// across members → higher confidence.
+	if er, err := GetEnsembleForecast(city, 0); err == nil {
+		ff.Confidence = EnsembleToConfidence(er.TempStdDev)
+		ff.EnsembleUncertainty = er.TempStdDev
+		ff.Sources = append(ff.Sources, "ensemble")
+	}
+
+	return ff, nil
 }
 
 // fuse computes weighted averages and confidence from source results.
@@ -168,6 +181,7 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		},
 		Confidence: confidence,
 		Sources:    sourceNames,
+		FetchedAt:  time.Now(),
 	}
 
 	// Extreme-event confidence boost: when the fused forecast shows an obvious
@@ -262,6 +276,16 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 	if ff.Forecast.Date == "" || ff.Forecast.Date == "unknown" {
 		ff.Forecast.Date = time.Now().UTC().AddDate(0, 0, dayOffset).Format("2006-01-02")
 	}
+
+	// TASK-027: replace inter-model confidence with ensemble-based uncertainty.
+	// For dayOffset > 0 the ensemble may have lower accuracy; that's fine — the
+	// stddev naturally widens for distant days, reducing confidence as expected.
+	if er, err := GetEnsembleForecast(city, dayOffset); err == nil {
+		ff.Confidence = EnsembleToConfidence(er.TempStdDev)
+		ff.EnsembleUncertainty = er.TempStdDev
+		ff.Sources = append(ff.Sources, "ensemble")
+	}
+
 	return ff, nil
 }
 

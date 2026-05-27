@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -33,6 +34,15 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
+
+// maxForecastAge converts MaxForecastAgeHours from config to a Duration.
+// Returns 0 (no limit) when cfg.MaxForecastAgeHours is 0.
+func maxForecastAge(cfg *config.Config) time.Duration {
+	if cfg.MaxForecastAgeHours <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.MaxForecastAgeHours * float64(time.Hour))
+}
 
 // sessionStats tracks cumulative statistics for the current process run.
 type sessionStats struct {
@@ -237,30 +247,28 @@ func main() {
 		// 4b. Enrich markets with liquidity data (order book depth).
 		markets.EnrichWithLiquidity(mkt)
 
-		// 5. Evaluate and place bets
-		placed := 0
+		// 4c. TASK-030: score and sort markets before evaluation.
+		// This ensures the highest-value opportunities are evaluated first,
+		// preventing the daily cap from being consumed by marginal markets.
+		type scored struct {
+			m     markets.Market
+			ff    *collectors.FusedForecast
+			score float64
+		}
+		scoredList := make([]scored, 0, len(mkt))
+
+		staleThreshold := maxForecastAge(cfg)
+
 		for _, m := range mkt {
-			// Skip cities not in active set (if city is recognisable).
 			if m.City != "" && !activeCity[m.City] {
 				continue
 			}
 
-			// Skip markets where we already have an open position.
-			if openPositions[m.ConditionID] {
-				slog.Info("skipped: already have position on", "conditionID", m.ConditionID,
-					"question", truncate(m.Question, 60))
-				continue
-			}
-
-			var d *strategy.Decision
-
-			// Select forecast for the day the market expires.
+			// Resolve the best fused forecast for this market's expiry day.
 			dayOffset := m.DaysUntilExpiry()
-
 			var ff *collectors.FusedForecast
 			if dayOffset > 0 && m.City != "" {
-				dayFF, err := collectors.AggregateForDay(m.City, dayOffset, cfg.DataRoot)
-				if err == nil {
+				if dayFF, err := collectors.AggregateForDay(m.City, dayOffset, cfg.DataRoot); err == nil {
 					ff = dayFF
 				}
 			}
@@ -270,6 +278,66 @@ func main() {
 				}
 			}
 
+			// TASK-029: skip stale forecasts.
+			if ff != nil && staleThreshold > 0 && !ff.FetchedAt.IsZero() {
+				age := time.Since(ff.FetchedAt)
+				if age > staleThreshold {
+					slog.Info("stale forecast, skipping market",
+						"city", m.City,
+						"age", age.Round(time.Minute).String(),
+						"max_age", staleThreshold.String(),
+					)
+					ff = nil
+				}
+			}
+
+			sc := strategy.ScoreMarket(m, ff)
+			scoredList = append(scoredList, scored{m, ff, sc})
+		}
+
+		// Sort descending by score.
+		sort.Slice(scoredList, func(i, j int) bool {
+			return scoredList[i].score > scoredList[j].score
+		})
+
+		// Respect MaxBetsPerCycle limit when sorting (cap the candidate list).
+		maxCycle := cfg.MaxBetsPerCycle
+		if maxCycle > 0 && len(scoredList) > maxCycle*3 {
+			// Keep 3× the cap as candidates (some will be skipped by guards).
+			scoredList = scoredList[:maxCycle*3]
+		}
+
+		// 5. Evaluate and place bets
+		placed := 0
+		// placedThisCycle tracks markets we've committed to this cycle —
+		// used by the correlation guard (TASK-028).
+		var placedThisCycle []markets.Market
+
+		for _, sc := range scoredList {
+			m := sc.m
+			ff := sc.ff
+
+			// Skip markets where we already have an open position.
+			if openPositions[m.ConditionID] {
+				slog.Info("skipped: already have position on", "conditionID", m.ConditionID,
+					"question", truncate(m.Question, 60))
+				continue
+			}
+
+			// TASK-028: skip if a correlated city has already been bet this cycle.
+			if corr, reason := risk.CorrelatedCitiesOpen(m, placedThisCycle); corr {
+				slog.Info("skipped: "+reason, "conditionID", m.ConditionID)
+				continue
+			}
+
+			// TASK-030: enforce MaxBetsPerCycle hard cap.
+			if maxCycle > 0 && placed >= maxCycle {
+				slog.Info("max_bets_per_cycle reached, stopping",
+					"limit", maxCycle, "placed", placed)
+				break
+			}
+
+			var d *strategy.Decision
 			if ff != nil {
 				d = strategy.EvaluateFused(m, ff, 100.0, cfg.MinEdge, cfg.MaxBet)
 			}
@@ -293,6 +361,7 @@ func main() {
 			slog.Info(prefix+"bet",
 				"side", d.Side,
 				"size", fmt.Sprintf("$%.2f", d.SizeUSDC),
+				"score", fmt.Sprintf("%.3f", sc.score),
 				"question", truncate(d.Market.Question, 60),
 				"reason", d.Reason,
 			)
@@ -310,10 +379,12 @@ func main() {
 					}
 					placed++
 					sess.betsPlaced.Add(1)
+					placedThisCycle = append(placedThisCycle, m)
 				}
 			} else {
 				placed++
 				sess.betsPlaced.Add(1)
+				placedThisCycle = append(placedThisCycle, m)
 				// Accumulate estimated dry-run P&L (edge × size, in cents).
 				pnlCents := int64(d.Edge * d.SizeUSDC * 100)
 				sess.dryRunPnL.Add(pnlCents)

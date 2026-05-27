@@ -208,7 +208,7 @@ type FusedForecast struct {
 - Новые поля в Config: max_daily_loss_usdc, max_daily_bets, max_open_positions
 - 13 unit-тестов в risk_test.go
 
-### [ ] TASK-027: Open-Meteo Ensemble (16 members) для точной неопределённости
+### [x] 2026-05-27 — TASK-027: Open-Meteo Ensemble (16 members) для точной неопределённости
 **Файл:** `internal/collectors/openmeteo_ensemble.go` (новый), `internal/collectors/aggregator.go` (обновить)
 - Endpoint: https://ensemble-api.open-meteo.com/v1/ensemble с models=icon_seamless
 - Парсить 16 членов ансамбля → stddev температуры и осадков
@@ -216,20 +216,20 @@ type FusedForecast struct {
 - Добавить EnsembleUncertainty float64 в FusedForecast
 - Обновить aggregator: если ensemble доступен, заменить confidence на ensemble-based
 
-### [ ] TASK-028: Portfolio correlation guard — не ставить на коррелированные города
+### [x] 2026-05-27 — TASK-028: Portfolio correlation guard — не ставить на коррелированные города
 **Файл:** `internal/risk/correlation.go` (новый), `cmd/bot/main.go` (обновить)
 - Карта корреляций: (new_york, miami)=0.7, (london, paris)=0.8, (los_angeles, san_francisco)=0.85
 - `CorrelatedCitiesOpen(market, openBets)` — есть ли открытая ставка в коррелированном городе?
 - Если correlation > 0.75 И тот же сигнал — пропускать второй рынок
 - Логировать "skipped: correlated position in {city} (r=X)"
 
-### [ ] TASK-029: Forecast staleness guard — пропускать ставки по старым данным
+### [x] 2026-05-27 — TASK-029: Forecast staleness guard — пропускать ставки по старым данным
 **Файл:** `internal/collectors/aggregator.go` (обновить), `internal/collectors/openmeteo.go` (проверить)
 - Добавить FetchedAt time.Time в FusedForecast
 - Если age > 3 часов — логировать "stale forecast, skipping market" и return nil из EvaluateFused
 - Порог настраивается через config: max_forecast_age_hours (default: 3)
 
-### [ ] TASK-030: Market score ranking — сортировка рынков перед оценкой
+### [x] 2026-05-27 — TASK-030: Market score ranking — сортировка рынков перед оценкой
 **Файл:** `internal/markets/markets.go` (обновить), `internal/strategy/strategy.go` (обновить)
 - `ScoreMarket(m Market, ff FusedForecast)` → float64 = edge × confidence × daysUntilExpiry_factor
 - Сортировать рынки по Score desc перед циклом ставок
