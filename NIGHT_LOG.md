@@ -412,3 +412,31 @@
 **Тесты:** `go test ./...` — все PASS (risk: 16 тестов, остальные без изменений)
 
 `go build ./...` — ✅ чистая компиляция
+
+## 2026-05-27 15:43 UTC — TASK-045: dashboard explain — Decision Audit Trail
+
+**Что сделано:**
+- `internal/strategy/explain.go` (новый, 161 строка) — тип `ExplainResult` с полным аудитом:
+  - Confidence, Sources, EnsUnc из FusedForecast
+  - RawP (до seasonal adj), SeasonP (после), FinalP
+  - YesEdge / NoEdge, BestSide, BestEdge
+  - KellyRaw (до ансамблевого скейлинга), EnsScale, FinalSize
+  - SkipReason + Action ("BET YES $8.42" или "SKIP: low confidence (0.35)")
+- Функция `ExplainEvaluate(m, ff, bankroll, minEdge, maxBet)` — проходит ВСЕ gate'ы стратегии (nil ff, confidence, signal→rawP, seasonal, edge, Kelly, ensemble scale, min size)
+- `cmd/dashboard/main.go` (+118 строк) — новый sub-command `explain`:
+  - Фетчит прогнозы (с кэшем) + активные рынки
+  - Таблица: City/Signal | OurP | YesP→Edge | NoP→Edge | Conf | EnsUnc | Action
+  - BET — зелёным, SKIP — красным
+  - Итог: "Markets evaluated: N | BET: K | SKIP: N-K"
+  - Добавлен в `printUsage()`
+- Добавлено в TASKS.md: TASK-046..049 (новые улучшения)
+
+**Файлы (4):**
+- `internal/strategy/explain.go` (новый, 161 строк)
+- `cmd/dashboard/main.go` (+118 строк)
+- `TASKS.md` (+54 строки: 5 новых задач, 045 отмечена [x])
+- `NIGHT_LOG.md` (эта запись)
+
+**Строк добавлено:** ~280
+
+**Тесты:** `go test ./...` — все PASS; `go build ./...` — ✅

@@ -389,6 +389,58 @@ type FusedForecast struct {
 
 ---
 
+## 🔴 ПРИОРИТЕТ 12 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-045: `dashboard explain` — полный аудит-трейл решений
+**Файл:** `internal/strategy/explain.go` (новый), `cmd/dashboard/main.go` (обновить)
+- Новый тип `ExplainResult` с полями: RawP, SeasonP, FinalP, YesEdge, NoEdge, BestSide, BestEdge, KellyRaw, EnsScale, FinalSize, SkipReason, Action
+- Функция `ExplainEvaluate(m, ff, bankroll, minEdge, maxBet)` → `*ExplainResult`
+  - Проходит ВСЕ шаги стратегии: confidence gate, rawP, seasonal adj, edge check, Kelly, ensemble scale
+  - При каждом шаге фиксирует почему пропускает / продолжает
+- Новый sub-command `dashboard explain`:
+  - Фетчит рынки + прогнозы
+  - Для каждого рынка выводит полную таблицу: City/Sig | OurP | YesP | NoP | YesEdge | NoEdge | Conf | EnsUnc | Action
+  - BET — зелёным, SKIP — красным с причиной
+  - Итог: "Evaluated: N | Bets: K | Skipped: N-K"
+- Полезно для дебаггинга: понять почему бот не ставит на конкретный рынок
+
+### [ ] — TASK-046: Webhook уведомления при ставках
+**Файл:** `internal/notifier/webhook.go` (новый), `config/config.go` (обновить), `config/config.yaml` (обновить), `cmd/bot/main.go` (обновить)
+- `PostWebhook(url string, payload any) error` — POST JSON с таймаутом 3s, retry 1 раз
+- Payload: `{event, conditionID, side, size, edge, ourP, marketP, city, signal, timestamp}`
+- Events: "bet_placed", "bet_skipped_risk", "cycle_complete", "error"
+- Настройка через `webhook_url: ""` в config.yaml и `WEBHOOK_URL` env
+- В bot/main.go: вызывать PostWebhook после каждой ставки и в конце цикла
+- Позволяет интегрировать бота с внешними системами (алерты, trading journal, Zapier)
+
+### [ ] — TASK-047: Adaptive loop interval — динамический интервал цикла
+**Файл:** `cmd/bot/main.go` (обновить)
+- После каждого цикла вычислять следующий интервал на основе результатов:
+  - Нашли ≥1 ставку с edge > 0.15 → следующий цикл через 5 мин (проверить остались ли открытые рынки)
+  - Ничего не нашли → ждать min(loop_sec × 1.5, 3600) — exponential backoff
+  - Нашли только рынки с thin liquidity → ждать 30 мин
+- Сбрасывать backoff до base loop_sec если находим новые рынки
+- Логировать "next cycle in Xs (adaptive: found N bets)"
+- Экономия API вызовов и compute в тихие периоды
+
+### [ ] — TASK-048: Расширенные regex для парсинга рынков
+**Файл:** `internal/markets/markets.go` (обновить)
+- Добавить температурный regex без явного C/F: `(\d+)\s*degrees?` → попытаться угадать единицу по контексту (если >50 → скорее F)
+- Добавить сигналы: "fog" (туман), "humid" (влажность), "dry" (засуха)
+- Расширить cityPatterns: "Big Apple" (new_york), "Windy City" (chicago), "City of Light" (paris), "Eternal City" → skip, "Silicon Valley" (san_francisco)
+- Добавить парсинг диапазона температур: "between 20°C and 30°C" → для heat сигнала ThresholdC = верхняя граница
+- Тест: `markets_test.go` с 10 новыми тест-кейсами
+
+### [ ] — TASK-049: `--dry-run-file` — экспорт результатов цикла в JSON
+**Файл:** `cmd/bot/main.go` (обновить)
+- Флаг `--dry-run-file=output.json` — после каждого цикла записывать результаты в JSON файл
+- Структура: `{timestamp, cycle, markets_evaluated, bets_recommended, decisions: [{market, side, ourP, edge, size, reason}]}`
+- Создавать/перезаписывать файл после каждого цикла (не append)
+- Позволяет внешним инструментам (скрипты, мониторинг) читать результаты последнего цикла
+- Работает в dry-run И live режиме
+
+---
+
 ## ✅ ВЫПОЛНЕНО
 
 - [x] 2026-05-27 — TASK-026: Risk Manager (internal/risk/risk.go + risk_test.go) — дневной лимит ставок, P&L лимит, cap открытых позиций; интеграция в bot и config

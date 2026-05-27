@@ -5,6 +5,7 @@
 //	go run ./cmd/dashboard positions  — show open positions (from bets_history.csv)
 //	go run ./cmd/dashboard pnl        — P&L summary from data/bets_history.csv
 //	go run ./cmd/dashboard next       — top-5 bet candidates right now
+//	go run ./cmd/dashboard explain    — full decision audit table for all current markets
 //	go run ./cmd/dashboard all        — run all sub-commands
 package main
 
@@ -473,6 +474,8 @@ func main() {
 		cmdForecast(dataRoot)
 	case "cache":
 		cmdCacheStats(dataRoot)
+	case "explain":
+		cmdExplain(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -495,7 +498,122 @@ func printUsage() {
 	fmt.Println("  next        Top-5 bet candidates right now")
 	fmt.Println("  forecast    Fused weather forecast table for all cities")
 	fmt.Println("  cache       Show forecast cache status (age of cached data)")
+	fmt.Println("  explain     Full decision audit: why each market is BET or SKIP")
 	fmt.Println("  all         Run all sub-commands")
+}
+
+// cmdExplain fetches all active markets and runs ExplainEvaluate on each,
+// printing a full audit table of BET vs SKIP decisions with intermediate values.
+// Useful for debugging why the bot is or is not placing bets on specific markets.
+func cmdExplain(dataRoot string) {
+	header("🔍 DECISION AUDIT — Why each market is BET or SKIP")
+
+	fmt.Print("  Fetching weather data (uses cache if fresh)…")
+	fusedForecasts, _ := collectors.AggregateAll(dataRoot)
+	fmt.Printf(" %d cities loaded\n", len(fusedForecasts))
+
+	fmt.Print("  Fetching Polymarket markets…")
+	mkt, err := markets.GetWeatherMarkets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n  error fetching markets: %v\n", err)
+		return
+	}
+	fmt.Printf(" %d weather markets found\n", len(mkt))
+
+	const bankroll = 1000.0
+	const minEdge = 0.05
+	const maxBet = 25.0
+
+	type row struct {
+		r    *strategy.ExplainResult
+		m    markets.Market
+	}
+
+	var rows []row
+	for _, m := range mkt {
+		if m.City == "" || m.Signal == "" {
+			// Unclassified: report with no forecast
+			rows = append(rows, row{
+				r: &strategy.ExplainResult{
+					Market: m,
+					Action: "SKIP: unclassified (no city/signal match)",
+				},
+				m: m,
+			})
+			continue
+		}
+		ff := fusedForecasts[m.City] // nil when city has no forecast
+		r := strategy.ExplainEvaluate(m, ff, bankroll, minEdge, maxBet)
+		rows = append(rows, row{r: r, m: m})
+	}
+
+	// Sort: BET first (by edge desc), then SKIP (by best edge desc)
+	sort.Slice(rows, func(i, j int) bool {
+		ri, rj := rows[i].r, rows[j].r
+		bi, bj := ri.IsBet(), rj.IsBet()
+		if bi != bj {
+			return bi // bets before skips
+		}
+		return ri.BestEdge > rj.BestEdge
+	})
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"City/Signal", "OurP", "YesP→Edge", "NoP→Edge", "Conf", "EnsUnc", "Action",
+	})
+
+	betCount := 0
+	for _, row := range rows {
+		r := row.r
+		m := row.m
+
+		yesEdgeStr := fmt.Sprintf("%.2f→%+.3f", m.YesPrice, r.YesEdge)
+		noEdgeStr := fmt.Sprintf("%.2f→%+.3f", m.NoPrice, r.NoEdge)
+		confStr := fmt.Sprintf("%.2f", r.Confidence)
+		encStr := fmt.Sprintf("%.1f°C", r.EnsUnc)
+
+		actionStr := r.Action
+		if r.IsBet() {
+			actionStr = styleWin.Sprint(r.Action)
+			betCount++
+		} else {
+			actionStr = styleLoss.Sprint(r.Action)
+		}
+
+		if r.Confidence > 0 && r.Confidence < 0.4 {
+			confStr = styleNeutral.Sprint(confStr)
+		}
+
+		ourPStr := "—"
+		if r.FinalP > 0 {
+			ourPStr = fmt.Sprintf("%.3f", r.FinalP)
+		}
+		if r.RawP != r.SeasonP && r.RawP > 0 {
+			ourPStr += fmt.Sprintf("(raw=%.3f)", r.RawP)
+		}
+
+		t.AppendRow(table.Row{
+			fmt.Sprintf("%s/%s", m.City, m.Signal),
+			ourPStr,
+			yesEdgeStr,
+			noEdgeStr,
+			confStr,
+			encStr,
+			actionStr,
+		})
+	}
+
+	t.Render()
+
+	skipCount := len(rows) - betCount
+	fmt.Printf("\n  Markets evaluated: %d | %s | %s\n",
+		len(rows),
+		styleWin.Sprintf("BET: %d", betCount),
+		styleLoss.Sprintf("SKIP: %d", skipCount),
+	)
+	if betCount > 0 {
+		fmt.Println("\n  Tip: run `go run ./cmd/dashboard next` to see top-5 candidates with full sizing.")
+	}
 }
 
 // cmdCacheStats shows the age of each cached fused forecast in data/forecasts/.
