@@ -1239,3 +1239,17 @@
 - 7 unit-тестов в consensus_index_test.go
 
 **Строк добавлено:** 105 + 70 (strategy.go) + 65 (test)
+
+## 2026-05-27 — TASK-099: Super-aggregator — все источники в один pipeline
+
+**Файл:** `internal/collectors/super_aggregator.go` (277 строк)
+
+**Что сделано:**
+- `SuperForecast` — расширяет `weather.Forecast` полями: `Sources []SourceResult`, `Confidence`, `Uncertainty`, `ModelAgreement`, `SignalStrength`, `LightningRisk`, `CapeJkg`
+- `AggregateSuperForecast(city, dayOffset, dataRoot)` — параллельный фетчинг всех источников (OpenMeteo, NASA, NOAA, ECMWF, GFS, HRRR, GOES, Lightning, RAOB, MTG) с таймаутом 10s per source
+- Динамические веса через существующий Brier-score механизм `superWeights()`
+- `ModelAgreement` — доля источников согласных с majority vote
+- `SignalStrength` — расстояние консенсус-вероятности от 0.5 (для Kelly scaling)
+- Источники с таймаутом пропускаются без блокировки остальных
+
+**Строк добавлено:** 277 (super_aggregator.go)

@@ -917,7 +917,7 @@ Speedwell Climate — институциональный провайдер дл
 
 ## 🧠 ПРИОРИТЕТ 6 — Мега-агрегатор (поднять % точности)
 
-### TASK-099: Super-aggregator — все источники в один pipeline
+### [x] 2026-05-27 — TASK-099: Super-aggregator — все источники в один pipeline
 **Файл:** `internal/collectors/super_aggregator.go`
 Центральный агрегатор который принимает ВСЕ источники и выдаёт единый SuperForecast:
 ```go
