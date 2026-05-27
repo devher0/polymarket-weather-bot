@@ -1,5 +1,21 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-092: NOAA GFS — глобальный прогноз 16 дней
+
+**Задача:** TASK-092 — добавить NOAA GFS (Global Forecast System) как 7-й источник прогноза с уникальным горизонтом 16 дней, интегрировать в агрегатор, добавить поле `Forecast16Days []Forecast` для долгосрочных рынков.
+
+**Файлы изменены:**
+- `internal/collectors/gfs.go` (158 строк) — клиент Open-Meteo GFS seamless endpoint, `GFSGetForecast` (до 16 дней, кэш 6 ч), `GFSGet16DayForecast` для длинного горизонта
+- `internal/collectors/aggregator.go` (~25 строк) — `Forecast16Days []weather.Forecast` в `FusedForecast`, GFS как 7-й source (вес 0.10), вызов `GFSGet16DayForecast` в `Aggregate()`
+- `internal/collectors/gfs_test.go` (новый, 155 строк) — тесты: базовый fetch, clamp дней (>16→16), кэш (1 HTTP-запрос при двух вызовах), unknown city, 16-day variant, FusedForecast поле
+
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK (6 новых тестов GFS)
+
+**Строк добавлено:** ~338 (gfs.go: 158, aggregator.go: ~25, gfs_test.go: 155)
+
+---
+
 ## 2026-05-27 — TASK-091: ECMWF AIFS — лучшая мировая AI-модель прогноза
 
 **Задача:** TASK-091 — подключить ECMWF AIFS (AI Forecasting System) как 6-й источник прогноза с весом 0.25 (наивысший среди источников), graceful fallback на IFS при недоступности AIFS.
