@@ -776,3 +776,32 @@
 **Сборка:** `go build ./...` — OK; `go test ./...` — all OK (8 пакетов зелёные)
 
 **Строк добавлено:** ~475 (snapshot.go: ~185, heatmap.go: ~185, bot/main.go: ~35, dashboard/main.go: ~70)
+
+---
+
+## 2026-05-27 19:33 UTC — TASK-076, TASK-077: OpenMeteo Hourly + Unit Tests
+
+**Задачи:** TASK-076 (OpenMeteo hourly forecast для intraday точности), TASK-077 (unit-тесты для hourly collector)
+
+**Контекст:** все предыдущие задачи (TASK-001 – TASK-075) выполнены. Добавлены новые задачи ПРИОРИТЕТ 20 (TASK-076..TASK-079), реализованы TASK-076 и TASK-077.
+
+**Файлы созданы/изменены:**
+- `internal/collectors/openmeteo_hourly.go` — НОВЫЙ (~210 строк): `HourlyPoint` struct; `FetchHourlyForecast(city, days)` — скачивает почасовые данные (tempC, precipMM, precipProb, wind, cloud, WMO); `FilterHourlyByDate(points, date)`; `RefineWithHourly(ff, points)` — перезаписывает MaxTemp/MinTemp/PrecipP/PrecipMM/Wind более точными hourly-значениями (буст confidence +0.05, добавляет "hourly" в Sources); `hourlyRainProbability` — "at-some-point" логика (maxHourlyProb + буст 1.5мм→+5%, 5мм→+15%)
+- `internal/collectors/aggregator.go` — обновлён (~40 строк добавлено): в `Aggregate()` добавлен вызов `FetchHourlyForecast` + `RefineWithHourly` перед сохранением в кэш; в `AggregateForDay()` — аналогично для dayOffset 0-1 (для dayOffset≥2 hourly не используется — там точность не лучше daily)
+- `internal/collectors/hourly_test.go` — НОВЫЙ (~190 строк, 13 тестов): TestFilterHourlyByDate_MatchesTarget/Empty/NoMatch; TestHourlyRainProbability_NoPrecip/HighProbLowPrecip/ModeratePrecipBoost/HeavyRain/Empty; TestHourlyMaxMinTemp/SinglePoint; TestHourlyMaxWind; TestHourlyTotalPrecip; TestRefineWithHourly_UpdatesFields/NilForecast/EmptyPoints/ConfidenceCappedAt1
+
+**Новые задачи добавлены в TASKS.md:**
+- TASK-076: ✅ выполнено
+- TASK-077: ✅ выполнено
+- TASK-078: Dashboard `hourly` sub-command
+- TASK-079: Probabilistic rain window по временному окну до экспирации рынка
+
+**Логика ключевых улучшений:**
+- Дневные агрегированные прогнозы (daily max temp, precipitation_probability_max) сглаживают реальную картину. Для same-day/tomorrow рынков теперь используем 24 точки в час — знаем точный пик температуры и реальное "в какой-то момент дня пойдёт дождь" vs "суммарные осадки за 24ч"
+- Для рынков типа "будет ли дождь в NYC сегодня?" maxHourlyPrecipProb=80% в 14:00 → вероятность 0.80 (vs daily_max мог быть 60% из-за averaging)
+- RefineWithHourly изменяет только реальные поля прогноза — ensemble uncertainty, sources, alert level сохраняются
+
+**Сборка:** `go build ./...` — OK
+**Тесты:** `go test ./...` — все OK (13 новых тестов в collectors, все зелёные)
+
+**Строк добавлено:** ~440 (openmeteo_hourly.go: ~210, aggregator.go: ~40, hourly_test.go: ~190)

@@ -687,3 +687,41 @@ type FusedForecast struct {
 - Колонки: timestamp, city, signal, our_p, yes_edge, no_edge, confidence, ensemble_unc, decision, size_usdc
 - В cmd/bot/main.go: после каждого цикла вызывать `exportHeatmapFromPredictions()` — экспортирует все сегодняшние predictions
 - Новый dashboard subcommand `heatmap` — агрегированная таблица city×signal с avg_edge и avg_conf
+
+---
+
+## 🔴 ПРИОРИТЕТ 20 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-076: OpenMeteo hourly forecast — intraday точность для day-0/day-1 рынков
+**Файл:** `internal/collectors/openmeteo_hourly.go` (новый), `internal/collectors/aggregator.go` (обновить)
+- `FetchHourlyForecast(city, days)` → `[]HourlyPoint` — 24× точки в сутки (temp, precip, precipProb, wind, cloud, WMO)
+- `FilterHourlyByDate(points, date)` — фильтр по дате (UTC)
+- `RefineWithHourly(ff *FusedForecast, points []HourlyPoint)` — перезаписывает MaxTemp/MinTemp/PrecipProb/PrecipMM/Wind более точными hourly-значениями; буст confidence +0.05; добавляет "hourly" в Sources
+- `hourlyRainProbability` — "at-some-point" вероятность: maxHourlyProb + буст при накоплении осадков (1.5мм→+5%, 5мм→+15%)
+- Интеграция в `Aggregate()` (dayOffset=0) и `AggregateForDay()` (dayOffset 0-1): вызов перед сохранением в кэш
+- Эффект: rain probability теперь отражает реальный пик часа, а не smoothed daily max
+
+### [x] 2026-05-27 — TASK-077: Unit-тесты для openmeteo_hourly
+**Файл:** `internal/collectors/hourly_test.go` (новый)
+- `TestFilterHourlyByDate` — проверить фильтрацию по дате
+- `TestHourlyRainProbability` — тест без осадков, с малыми осадками (1мм), с большими (6мм)
+- `TestHourlyMaxMinTemp` — проверить max/min из набора точек
+- `TestRefineWithHourly` — mock FusedForecast + проверить все поля после refinement
+- `TestRefineWithHourlyEmpty` — не паниковать на пустом slice
+- Запуск: `go test ./internal/collectors/ -run TestHourly`
+
+### [ ] TASK-078: Dashboard `hourly` sub-command — почасовой прогноз для города
+**Файл:** `cmd/dashboard/main.go` (обновить)
+- `go run ./cmd/dashboard hourly new_york` — таблица по часам: Hour UTC | Temp°C | Precip mm | Rain% | Wind km/h | Cloud% | WMO
+- Загружать через `FetchHourlyForecast(city, 2)` — сегодня + завтра
+- Выделять строки с PrecipProb>50% суффиксом "(rain likely)"
+- Строки с TempC выше климат-нормы → `!` маркер
+- Полезно для ручной проверки прогноза перед запуском бота
+
+### [ ] TASK-079: Probabilistic rain window — уточнить вероятность дождя по часам до экспирации рынка
+**Файл:** `internal/collectors/openmeteo_hourly.go` (обновить), `internal/collectors/aggregator.go` (обновить)
+- `RainWindowProbability(points []HourlyPoint, fromUTC, toUTC time.Time)` — вероятность дождя в конкретном окне часов
+- В `AggregateForDay()`: если знаем время экспирации рынка — передавать временное окно и использовать более точную вероятность
+- Например: рынок "дождь в NYC до 18:00" → считать только часы 00-18, не 00-24
+- Добавить поле `Market.ExpiryUTC time.Time` — парсить из Gamma API ответа
+- Логировать "rain window [06-18 UTC]: prob=0.73 (full day: 0.45)"

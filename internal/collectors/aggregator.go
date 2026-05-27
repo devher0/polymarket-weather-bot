@@ -196,6 +196,21 @@ func Aggregate(city string, dataRoot string) (*FusedForecast, error) {
 		ff.AlertEvents = alertSummary.Events
 	}
 
+	// TASK-076: refine today's forecast with hourly intraday data.
+	// Hourly granularity gives a more accurate "at-some-point" rain probability
+	// and true diurnal temperature/wind peaks for same-day markets.
+	if hourlyPts, hErr := FetchHourlyForecast(city, 1); hErr == nil {
+		targetDate := ff.Forecast.Date
+		if targetDate == "" {
+			targetDate = time.Now().UTC().Format("2006-01-02")
+		}
+		if dayHourly := FilterHourlyByDate(hourlyPts, targetDate); len(dayHourly) > 0 {
+			RefineWithHourly(ff, dayHourly)
+		}
+	} else {
+		slog.Debug("hourly data unavailable (non-critical)", "city", city, "err", hErr)
+	}
+
 	// TASK-042: detect and log significant forecast changes before overwriting cache.
 	// Telegram notifications for shifts are sent from cmd/bot/main.go to avoid
 	// an import cycle (collectors → notifier → calibration → collectors).
@@ -436,6 +451,26 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 	// TASK-062: apply confidence decay based on how far ahead this forecast is.
 	// A 6-day forecast is significantly less reliable than today's — decay accordingly.
 	applyConfidenceDecay(ff, dayOffset)
+
+	// TASK-076: for day-0 and day-1 markets refine forecast with hourly data.
+	// Hourly granularity captures the true diurnal max temperature, hourly rain
+	// accumulation, and peak wind — reducing daily aggregation errors.
+	// Only fetch 2 days of hourly (today + tomorrow); beyond that hourly accuracy
+	// degrades to match daily data so the overhead isn't worth it.
+	if dayOffset <= 1 {
+		hourlyDays := dayOffset + 1
+		if hourlyPts, hErr := FetchHourlyForecast(city, hourlyDays); hErr == nil {
+			targetDate := ff.Forecast.Date
+			if targetDate == "" {
+				targetDate = time.Now().UTC().AddDate(0, 0, dayOffset).Format("2006-01-02")
+			}
+			if dayHourly := FilterHourlyByDate(hourlyPts, targetDate); len(dayHourly) > 0 {
+				RefineWithHourly(ff, dayHourly)
+			}
+		} else {
+			slog.Debug("hourly data unavailable (non-critical)", "city", city, "day_offset", dayOffset, "err", hErr)
+		}
+	}
 
 	// TASK-042: detect and log significant forecast changes before overwriting cache.
 	if shift := DetectForecastShift(city, dayOffset, ff, dataRoot); shift != nil && shift.Significant {
