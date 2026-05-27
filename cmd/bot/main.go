@@ -213,6 +213,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// TASK-073: SIGHUP triggers a config hot-reload without restarting the bot.
+	sighupCh := make(chan os.Signal, 1)
+	signal.Notify(sighupCh, syscall.SIGHUP)
+
 	// Load .env first so ENV vars are available for config overlay.
 	_ = godotenv.Load()
 
@@ -302,12 +306,17 @@ func main() {
 	calibration.PrintBrierScore(cfg.DataRoot)
 
 	// TASK-072: weak signal alert — warn if any signal type has <40% win rate (≥10 samples).
+	// TASK-074: export calibration snapshot at startup.
 	if startupHistory, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
 		sigBreakdown := calibration.SignalBreakdown(startupHistory)
 		weakSignals := calibration.WeakSignalAlert(sigBreakdown, 10, 40.0)
 		for _, warn := range weakSignals {
 			slog.Warn("weak signal detected: "+warn, "action", "consider raising min_edge")
 			_ = notifier.NotifyError("weak signal", fmt.Errorf("%s", warn))
+		}
+		// TASK-074: persist snapshot for dashboard / external tools
+		if err := calibration.ExportSnapshot(startupHistory, cfg.MinEdge, cfg.MaxDrawdownFraction, cfg.DataRoot); err != nil {
+			slog.Warn("calibration snapshot export failed", "err", err)
 		}
 	}
 
@@ -955,6 +964,14 @@ func main() {
 				writeDryRunFile(loopResult) // TASK-049
 				metrics.UpdateCycle(loopResult.placed) // TASK-051: update /healthz state
 
+				// TASK-075: append market opportunity heatmap CSV for today.
+				if hmRows, hmErr := strategy.LoadTodayHeatmap(cfg.DataRoot); hmErr == nil && len(hmRows) == 0 {
+					// File doesn't exist yet — LoadTodayHeatmap returns nil slice, heatmap
+					// is written inside EvaluateFused via the prediction log. We load and
+					// re-export from today's prediction JSONL instead.
+					_ = exportHeatmapFromPredictions(cfg.DataRoot)
+				}
+
 				// Send daily digest at ~09:00 UTC
 				now := time.Now().UTC()
 				if now.Hour() == 9 && now.Sub(lastDigest) > 23*time.Hour {
@@ -973,6 +990,34 @@ func main() {
 				// Schedule next cycle with adaptive interval.
 				next := adaptiveInterval(loopResult)
 				timer.Reset(next)
+
+			// TASK-073: config hot-reload on SIGHUP.
+			// Reloads config.yaml and updates the cfg pointer captured by the run closure.
+			// In-flight runs are not affected — the new config takes effect on the next cycle.
+			// CLI flag overrides (--loop, --metrics-port) are preserved.
+			case <-sighupCh:
+				slog.Info("SIGHUP received — reloading config", "path", cfgPath)
+				newCfg, loadErr := config.Load(cfgPath)
+				if loadErr != nil {
+					slog.Warn("config reload failed, keeping current config", "err", loadErr)
+					break
+				}
+				// Preserve CLI-flag overrides that were applied at startup.
+				if *loopFlag > 0 {
+					newCfg.LoopSec = *loopFlag
+				}
+				if *metricsPortFlag >= 0 {
+					newCfg.MetricsPort = *metricsPortFlag
+				}
+				// Swap config (run() closure captures cfg by variable reference —
+				// next cycle automatically picks up the updated pointer).
+				*cfg = *newCfg
+				slog.Info("config reloaded",
+					"min_edge", cfg.MinEdge,
+					"max_bet", cfg.MaxBet,
+					"cities", cfg.Cities,
+					"loop_sec", cfg.LoopSec,
+				)
 			}
 		}
 	}
@@ -1078,4 +1123,20 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// exportHeatmapFromPredictions loads today's prediction JSONL and appends
+// all records to the daily heatmap CSV (TASK-075).
+// Called once per loop cycle to ensure the heatmap stays current.
+func exportHeatmapFromPredictions(dataRoot string) error {
+	today := time.Now().UTC().Format("2006-01-02")
+	recs, err := strategy.LoadPredictions(today, dataRoot)
+	if err != nil || len(recs) == 0 {
+		return err
+	}
+	rows := make([]strategy.HeatmapRow, 0, len(recs))
+	for _, r := range recs {
+		rows = append(rows, strategy.HeatmapRowFromPrediction(r))
+	}
+	return strategy.AppendHeatmap(rows, dataRoot)
 }

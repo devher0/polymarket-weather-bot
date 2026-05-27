@@ -748,3 +748,31 @@
 **Сборка:** `go build ./...` — OK; `go test ./...` — OK (все пакеты зелёные)
 
 **Строк добавлено:** ~230 (telegram.go +145, risk.go +25, calibration.go +32, config.go +3, main.go +25)
+
+---
+
+## 2026-05-27 19:17 UTC — TASK-073, TASK-074, TASK-075: Config hot-reload, Calibration snapshot, Heatmap CSV
+
+**Задачи:** TASK-073 (Config hot-reload via SIGHUP), TASK-074 (Calibration model snapshot export), TASK-075 (Market opportunity heatmap CSV)
+
+**Контекст:** все предыдущие задачи (TASK-001 – TASK-072) выполнены. Добавлены новые задачи ПРИОРИТЕТ 19 и сразу реализованы.
+
+**Файлы созданы/изменены:**
+- `internal/calibration/snapshot.go` — НОВЫЙ (~185 строк): `CalibrationSnapshot` struct (JSON-дамп текущего состояния модели); `ExportSnapshot(records, baseMinEdge, maxDrawdownFraction, dataRoot)` — компилирует overall Brier, win rate, resolved/open bets, adaptive edge factor, drawdown %, bankroll/peak, per-city/signal breakdown; `PrintSnapshot(dataRoot)` — форматированный вывод для dashboard
+- `internal/strategy/heatmap.go` — НОВЫЙ (~185 строк): `HeatmapRow` struct; `AppendHeatmap(rows, dataRoot)` — append в `data/heatmap/YYYY-MM-DD.csv` с автоматическим header при первом запуске; `HeatmapRowFromPrediction(PredictionRecord)` — конвертер; `LoadTodayHeatmap(dataRoot)` — загрузить и разобрать сегодняшний файл
+- `cmd/bot/main.go` (~35 строк нетто):
+  - TASK-073: `sighupCh` + `signal.Notify(sighupCh, syscall.SIGHUP)`; в select loop новый `case <-sighupCh:` — reload config.yaml, preserve CLI overrides, swap `*cfg` in-place
+  - TASK-074: `calibration.ExportSnapshot()` при старте (после PrintBrierScore)
+  - TASK-075: `exportHeatmapFromPredictions(dataRoot)` helper + вызов в loop; загружает сегодняшний prediction JSONL и конвертирует в heatmap CSV
+- `cmd/dashboard/main.go` (~70 строк нетто):
+  - TASK-074: `case "snapshot":` → `calibration.PrintSnapshot(dataRoot)`
+  - TASK-075: `case "heatmap":` → `cmdHeatmap(dataRoot)` — агрегированная таблица city×signal с Evals/Bets/AvgEdge/AvgConf; `cmdHeatmap()` (~65 строк): группирует по (city,signal), считает avg edge и confidence, рендерит go-pretty таблицу
+
+**Ключевые эффекты:**
+- TASK-073: `kill -HUP $(pidof bot)` → бот перечитает config.yaml и применит новые min_edge/max_bet/cities без рестарта; in-flight цикл не прерывается
+- TASK-074: при каждом старте создаётся/обновляется `data/calibration_snapshot.json` — Grafana/скрипты могут читать его для дашбордов без парсинга логов; `dashboard snapshot` показывает полный срез
+- TASK-075: накопительный CSV по дням позволяет анализировать edge/confidence в Excel/pandas; `dashboard heatmap` показывает агрегированную таблицу за сегодня
+
+**Сборка:** `go build ./...` — OK; `go test ./...` — all OK (8 пакетов зелёные)
+
+**Строк добавлено:** ~475 (snapshot.go: ~185, heatmap.go: ~185, bot/main.go: ~35, dashboard/main.go: ~70)

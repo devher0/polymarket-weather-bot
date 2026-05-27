@@ -658,3 +658,32 @@ type FusedForecast struct {
 - `WeakSignalAlert(breakdown map[string]BreakdownStats, minSamples int) []string` — возвращает список сигналов с win rate <40% (≥minSamples=10 ставок)
 - В cmd/bot/main.go: проверять при старте, если есть слабые сигналы — Telegram предупреждение "⚠️ Weak signal detected: rain win_rate=32% (n=15) — consider raising min_edge"
 - Логировать все слабые сигналы
+
+---
+
+## 🔴 ПРИОРИТЕТ 19 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-073: Config hot-reload via SIGHUP
+**Файлы:** `cmd/bot/main.go` (обновить)
+- Добавить `sighupCh := make(chan os.Signal, 1)` + `signal.Notify(sighupCh, syscall.SIGHUP)`
+- В select loop: `case <-sighupCh:` → перечитать config.yaml, обновить `*cfg` на месте
+- Сохранять CLI-flag overrides (--loop, --metrics-port) при reload
+- In-flight run() не затрагивается; следующий цикл получит новый конфиг
+- Логировать "SIGHUP received — reloading config" + key fields после reload
+
+### [x] 2026-05-27 — TASK-074: Calibration model snapshot export — JSON-дамп состояния модели
+**Файлы:** `internal/calibration/snapshot.go` (новый), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить)
+- `ExportSnapshot(records, baseMinEdge, maxDrawdownFraction, dataRoot)` → `data/calibration_snapshot.json`
+- Содержимое: overall_brier, win_rate, resolved/open bets, adaptive_edge_factor, drawdown_pct/mult, bankroll/peak, city/signal breakdown
+- Вызывать при старте бота (после PrintBrierScore)
+- Новый dashboard subcommand `snapshot` → `calibration.PrintSnapshot(dataRoot)` — форматированный вывод в терминал
+- Позволяет внешним инструментам (Grafana, скрипты) читать текущее состояние модели без парсинга логов
+
+### [x] 2026-05-27 — TASK-075: Market opportunity heatmap CSV — накопительный CSV с edge/confidence
+**Файлы:** `internal/strategy/heatmap.go` (новый), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить)
+- `AppendHeatmap(rows []HeatmapRow, dataRoot string)` → append в `data/heatmap/YYYY-MM-DD.csv`
+- `HeatmapRowFromPrediction(PredictionRecord) HeatmapRow` — конвертация из prediction log
+- `LoadTodayHeatmap(dataRoot string)` — загрузить сегодняшний файл
+- Колонки: timestamp, city, signal, our_p, yes_edge, no_edge, confidence, ensemble_unc, decision, size_usdc
+- В cmd/bot/main.go: после каждого цикла вызывать `exportHeatmapFromPredictions()` — экспортирует все сегодняшние predictions
+- Новый dashboard subcommand `heatmap` — агрегированная таблица city×signal с avg_edge и avg_conf

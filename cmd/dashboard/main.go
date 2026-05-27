@@ -497,6 +497,12 @@ func main() {
 		epOutput := epFlags.String("output", "", "Write CSV to this file (default: stdout)")
 		_ = epFlags.Parse(os.Args[2:])
 		cmdExportPredictions(dataRoot, *epDate, *epOutput)
+	case "snapshot":
+		// TASK-074: print calibration model snapshot.
+		calibration.PrintSnapshot(dataRoot)
+	case "heatmap":
+		// TASK-075: show today's heatmap summary.
+		cmdHeatmap(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -523,6 +529,8 @@ func printUsage() {
 	fmt.Println("  analysis                          Per-city/signal breakdown of today's prediction log")
 	fmt.Println("  report [--output=f]               Export market evaluation snapshot to JSON")
 	fmt.Println("  export-predictions [--date=D]     Export prediction log to CSV (stdout or --output=f)")
+	fmt.Println("  snapshot                          Print calibration model snapshot (TASK-074)")
+	fmt.Println("  heatmap                           Show today's market opportunity heatmap summary (TASK-075)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -873,4 +881,75 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// ── heatmap (TASK-075) ────────────────────────────────────────────────────────
+
+// cmdHeatmap prints a summary of today's market opportunity heatmap.
+// The heatmap CSV accumulates all market evaluations across cycles.
+func cmdHeatmap(dataRoot string) {
+	rows, err := strategy.LoadTodayHeatmap(dataRoot)
+	if err != nil {
+		fmt.Printf("Heatmap error: %v\n", err)
+		return
+	}
+	if len(rows) == 0 {
+		fmt.Println("No heatmap data for today. Run the bot at least once in loop mode.")
+		return
+	}
+
+	fmt.Printf("\n=== Market Opportunity Heatmap (%s, %d evaluations) ===\n\n",
+		time.Now().UTC().Format("2006-01-02"), len(rows))
+
+	// Aggregate by city+signal
+	type cellKey struct{ city, signal string }
+	type cellStats struct {
+		count     int
+		totalEdge float64
+		totalConf float64
+		bets      int
+	}
+	cells := make(map[cellKey]*cellStats)
+
+	for _, r := range rows {
+		k := cellKey{r.City, r.Signal}
+		s := cells[k]
+		if s == nil {
+			s = &cellStats{}
+			cells[k] = s
+		}
+		s.count++
+		edge := r.YesEdge
+		if r.NoEdge > edge {
+			edge = r.NoEdge
+		}
+		s.totalEdge += edge
+		s.totalConf += r.Confidence
+		if r.Decision == "BET_YES" || r.Decision == "BET_NO" {
+			s.bets++
+		}
+	}
+
+	// Print table
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetStyle(table.StyleLight)
+	t.AppendHeader(table.Row{"City", "Signal", "Evals", "Bets", "Avg Edge", "Avg Conf"})
+
+	for k, s := range cells {
+		avgEdge := s.totalEdge / float64(s.count)
+		avgConf := s.totalConf / float64(s.count)
+		t.AppendRow(table.Row{
+			k.city,
+			k.signal,
+			s.count,
+			s.bets,
+			fmt.Sprintf("%+.3f", avgEdge),
+			fmt.Sprintf("%.3f", avgConf),
+		})
+	}
+	t.SortBy([]table.SortBy{{Name: "Avg Edge", Mode: table.DscNumeric}})
+	t.Render()
+
+	fmt.Printf("\nHeatmap file: data/heatmap/%s.csv\n", time.Now().UTC().Format("2006-01-02"))
 }
