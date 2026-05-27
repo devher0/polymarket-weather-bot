@@ -65,6 +65,12 @@ func ScoreMarket(m markets.Market, ff *collectors.FusedForecast) float64 {
 		roughP = math.Min(0.95, ff.Forecast.WindSpeedKMH/80.0)
 	case "snow":
 		roughP = (1 - weather.HeatProbability(ff.Forecast, 2.0)) * weather.RainProbability(ff.Forecast) * 0.8
+	case "uv": // TASK-083
+		uvThreshold := 8.0
+		if m.ThresholdC != 0 {
+			uvThreshold = m.ThresholdC
+		}
+		roughP = weather.UVProbability(ff.Forecast, uvThreshold)
 	default:
 		roughP = 0.5
 	}
@@ -188,6 +194,12 @@ func ComputeOurP(m markets.Market, f weather.Forecast) float64 {
 		p = math.Min(0.95, f.WindSpeedKMH/80.0)
 	case "sunny":
 		p = weather.SunnyProbability(f)
+	case "uv": // TASK-083
+		uvThreshold := 8.0
+		if m.ThresholdC != 0 {
+			uvThreshold = m.ThresholdC
+		}
+		p = weather.UVProbability(f, uvThreshold)
 	default:
 		p = 0.5
 	}

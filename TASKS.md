@@ -755,3 +755,36 @@ type FusedForecast struct {
 - Предупреждения: MinEdge < 0.03 ("very aggressive"), MaxBet > 100 ("large bets"), LoopSec > 0 && LoopSec < 60 ("tight loop")
 - Ошибки: Cities пустой, MinEdge <= 0, MaxBet <= 0
 - В cmd/bot/main.go: вызывать Validate при старте; если warnings — логировать slog.Warn; если errors — exit(1)
+
+---
+
+## 🔴 ПРИОРИТЕТ 22 — Новые улучшения (добавлено 2026-05-27)
+
+### [x] 2026-05-27 — TASK-083: UV Index signal — новый тип сигнала для UV-рынков
+**Файлы:** `internal/weather/weather.go`, `internal/markets/markets.go`, `internal/strategy/strategy.go`
+- Добавить `UVIndexMax float64` в `weather.Forecast`
+- Фетчить `uv_index_max` в `GetForecast()` из Open-Meteo daily API
+- `UVProbability(f Forecast, threshold float64) float64` — вероятность превышения UV порога (threshold=8 = "very high UV")
+- В `markets.go`: regex `(?i)\buv.?index\b|ultraviolet` → signal "uv"; парсинг UV threshold из вопроса (числа 1-12)
+- В `strategy.go ComputeOurP`: case "uv" → `weather.UVProbability(f, threshold)`
+- В `strategy.go ScoreMarket`: case "uv" → аналогично
+- Экспандирует рынки, которые бот может оценивать (пример: "Will UV index exceed 8 in Miami today?")
+
+### [ ] TASK-084: Apparent temperature — heat index / wind chill для heat/cold рынков
+**Файлы:** `internal/weather/apparent.go` (новый), `internal/collectors/aggregator.go` (обновить), `internal/collectors/nasa_power.go` (обновить)
+- `HeatIndexC(tempC, relHumidityPct float64) float64` — формула Steadman/Rothfusz (корректна при tempC>27, humidity>40%)
+- `WindChillC(tempC, windKMH float64) float64` — формула NOAA (корректна при tempC<10, wind>4.8 km/h)
+- `ApparentTempC(tempC, relHumidityPct, windKMH float64) float64` — выбор правильной формулы по условиям
+- NASA POWER уже возвращает RH2M (влажность); добавить `HumidityPct` в `weather.Forecast`
+- В aggregator: после fusion вычислять `ff.Forecast.ApparentMaxTempC` как отдельное поле
+- В `HeatProbability` / `ComputeOurP`: для сигнала "heat" использовать ApparentMaxTempC если humidity > 50%
+- Эффект: +5-10% точность для жаркихи/холодных рынков
+
+### [ ] TASK-085: Barometric pressure trend — физический сигнал для rain-рынков
+**Файлы:** `internal/collectors/openmeteo_hourly.go` (обновить), `internal/collectors/aggregator.go` (обновить)
+- Добавить `PressureHPa float64` в `HourlyPoint`
+- Фетчить `surface_pressure` в `FetchHourlyForecast()` из Open-Meteo hourly
+- `PressureTrendBoost(points []HourlyPoint) float64` — вычислить средний тренд давления за последние 6 точек (hPa/3h); если падение >2 hPa/3h → возвращать +0.08 буст дождя; если рост >2 → −0.05
+- В `RefineWithHourly()`: применять `PrecipP += PressureTrendBoost(points)` (clamped to 0.97)
+- Логировать "pressure trend: Δ=-3.2 hPa/3h → rain boost +0.08"
+- Физическое обоснование: падение давления = приближение фронта = дождь; рост = прояснение

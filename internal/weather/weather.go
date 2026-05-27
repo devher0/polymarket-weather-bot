@@ -18,6 +18,7 @@ type Forecast struct {
 	PrecipitationProbability float64 // 0–100
 	WindSpeedKMH            float64
 	WeatherCode             int
+	UVIndexMax              float64 // TASK-083: daily maximum UV index (0–12+); 0 if not available
 }
 
 type City struct {
@@ -46,6 +47,7 @@ type openMeteoResp struct {
 		PrecipitationProbabilityMax []float64 `json:"precipitation_probability_max"`
 		WindSpeed10MMax             []float64 `json:"wind_speed_10m_max"`
 		WeatherCode                 []int     `json:"weather_code"`
+		UVIndexMax                  []float64 `json:"uv_index_max"` // TASK-083
 	} `json:"daily"`
 }
 
@@ -61,7 +63,7 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 	url := fmt.Sprintf(
 		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"+
 			"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,"+
-			"precipitation_probability_max,wind_speed_10m_max,weather_code"+
+			"precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max"+
 			"&forecast_days=%d&timezone=UTC",
 		c.Lat, c.Lon, days,
 	)
@@ -80,6 +82,10 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 
 	out := make([]Forecast, 0, len(m.Daily.Time))
 	for i, date := range m.Daily.Time {
+		var uvMax float64
+		if i < len(m.Daily.UVIndexMax) {
+			uvMax = m.Daily.UVIndexMax[i]
+		}
 		out = append(out, Forecast{
 			City:                    city,
 			Date:                    date,
@@ -89,6 +95,7 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 			PrecipitationProbability: m.Daily.PrecipitationProbabilityMax[i],
 			WindSpeedKMH:            m.Daily.WindSpeed10MMax[i],
 			WeatherCode:             m.Daily.WeatherCode[i],
+			UVIndexMax:              uvMax,
 		})
 	}
 	return out, nil
@@ -144,6 +151,35 @@ func SunnyProbability(f Forecast) float64 {
 		return clamp(0.04-rainPenalty*0.5, 0.01, 0.08)
 	default:
 		return clamp(0.30-rainPenalty, 0.05, 0.50)
+	}
+}
+
+// UVProbability returns 0–1 probability that the daily maximum UV index will
+// meet or exceed `threshold`. UV index scale: 0-2 low, 3-5 moderate, 6-7 high,
+// 8-10 very high, 11+ extreme. Common thresholds: 6 (high), 8 (very high), 11 (extreme).
+//
+// Returns 0.10 when UVIndexMax == 0 (UV data not available — base rate for overcast days).
+// TASK-083.
+func UVProbability(f Forecast, threshold float64) float64 {
+	if f.UVIndexMax <= 0 {
+		// UV data unavailable — return base rate rather than 0 to avoid false confidence.
+		return 0.10
+	}
+	if threshold <= 0 {
+		threshold = 8 // default: "very high UV"
+	}
+	diff := f.UVIndexMax - threshold
+	switch {
+	case diff >= 2:
+		return 0.93
+	case diff >= 0:
+		// Smoothly transition 0.70 → 0.93 as diff goes 0 → 2
+		return clamp(0.70+diff*0.115, 0, 0.93)
+	case diff >= -3:
+		// Transition 0.30 → 0.70 as diff goes -3 → 0
+		return clamp(0.70+diff*0.133, 0.05, 0.70)
+	default:
+		return 0.05
 	}
 }
 

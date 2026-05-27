@@ -50,6 +50,27 @@ var signals = []signal{
 	{regexp.MustCompile(`(?i)\bfog\b|foggy|misty|mist`), "fog"},
 	{regexp.MustCompile(`(?i)humid(?:ity)?|dew point`), "humid"},
 	{regexp.MustCompile(`(?i)\bdry\b|drought|arid`), "dry"},
+	// TASK-083: UV index signal — must appear before general number regexes
+	{regexp.MustCompile(`(?i)\buv.?index\b|\buv\s+level\b|ultraviolet\s+index`), "uv"},
+}
+
+// uvThresholdRe extracts a UV index threshold from questions like
+// "UV index above 8", "UV index exceeds 10", "UV level of 6".
+// TASK-083: matches integer UV values 1-12 following UV keywords.
+var uvThresholdRe = regexp.MustCompile(`(?i)(?:uv.?index|uv\s+level|ultraviolet)[^\d]{0,20}(\d{1,2})`)
+
+// parseUVThreshold returns the numeric UV index threshold from a market question,
+// or 0 if none found. Valid UV index range is 1–12+.
+// TASK-083.
+func parseUVThreshold(question string) float64 {
+	m := uvThresholdRe.FindStringSubmatch(question)
+	if len(m) >= 2 {
+		val, err := strconv.ParseFloat(m[1], 64)
+		if err == nil && val >= 1 && val <= 20 {
+			return val
+		}
+	}
+	return 0
 }
 
 // tempThresholdRe extracts a numeric temperature and optional F/C unit from market questions.
@@ -144,6 +165,14 @@ func classify(question string) (city, sig string, thresholdC float64) {
 	// Parse temperature threshold for heat/cold signals
 	if sig == "heat" || sig == "cold" {
 		thresholdC = parseTempThresholdC(question)
+	}
+
+	// TASK-083: parse UV index threshold (stored in ThresholdC field, default 8 = "very high")
+	if sig == "uv" {
+		thresholdC = parseUVThreshold(question)
+		if thresholdC == 0 {
+			thresholdC = 8 // sensible default: "UV index above 8" = very high UV
+		}
 	}
 
 	return city, sig, thresholdC
