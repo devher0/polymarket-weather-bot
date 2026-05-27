@@ -1441,3 +1441,20 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 - `dashboard ab-test` субкоманда добавлена
 
 **Строк:** 320 (ab_strategy.go) + 16 изменений
+
+## 2026-05-28 00:47 — TASK-117: Live unrealized P&L
+
+**Файлы:** `internal/calibration/unrealized.go` (новый, 100 строк), `cmd/dashboard/main.go` (+30 строк), `internal/metrics/metrics.go` (+12 строк)
+
+**Что сделано:**
+- Новый файл `unrealized.go` — `UnrealizedPosition` struct, `FetchUnrealizedPnL()` и `TotalUnrealizedPnL()`
+- Для каждой открытой (unresolved) ставки: GET Gamma API `/markets/{conditionID}`, парсинг YES/NO цен из `tokens` поля
+- Расчёт: shares = SizeUSDC / entryPrice; unrealizedPnL = shares × (currentPrice − entryPrice)
+- Переиспользует `resolverClient` и `gammaMarketURL` из resolver.go (тот же пакет)
+- `dashboard positions`: теперь показывает колонки "Current P", "Unreal PnL"; внизу суммарный unrealized P&L
+- Цветовое выделение: зелёный для прибыли, красный для убытка
+- Prometheus `/metrics`: добавлена метрика `unrealized_pnl_usdc` (gauge)
+- Timeout 2s per position через `priceHTTPClient`; ошибки показываются как "N/A" без краша
+- `go build ./...` и `go test ./...` — OK
+
+**Строк:** ~142 (unrealized.go: 100, dashboard: +30, metrics: +12)

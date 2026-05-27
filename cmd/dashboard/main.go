@@ -86,25 +86,53 @@ func cmdPositions(dataRoot string) {
 		return
 	}
 
+	fmt.Println("  Fetching live prices...")
+	positions := calibration.FetchUnrealizedPnL(records)
+
+	// Build map conditionID -> position for quick lookup.
+	posMap := make(map[string]calibration.UnrealizedPosition, len(positions))
+	for _, p := range positions {
+		posMap[p.ConditionID] = p
+	}
+
 	t := newTable()
 	t.AppendHeader(table.Row{
-		"Condition ID", "Side", "Our P", "Mkt Price", "Size", "Opened",
+		"Condition ID", "Side", "Entry P", "Current P", "Size", "Unreal PnL", "Opened",
 	})
 
+	var totalUnreal float64
 	for _, r := range open {
 		age := time.Since(r.Timestamp).Round(time.Hour)
+
+		curStr := "N/A"
+		pnlStr := "N/A"
+		if pos, ok := posMap[r.ConditionID]; ok && pos.FetchError == "" {
+			curStr = fmt.Sprintf("%.3f", pos.CurrentPrice)
+			if pos.UnrealizedPnL >= 0 {
+				pnlStr = styleWin.Sprintf("+$%.2f", pos.UnrealizedPnL)
+			} else {
+				pnlStr = styleLoss.Sprintf("-$%.2f", -pos.UnrealizedPnL)
+			}
+			totalUnreal += pos.UnrealizedPnL
+		}
+
 		t.AppendRow(table.Row{
 			truncate(r.ConditionID, 16),
 			r.Side,
-			fmt.Sprintf("%.2f", r.OurProbability),
-			fmt.Sprintf("%.2f", r.MarketPrice),
+			fmt.Sprintf("%.3f", r.MarketPrice),
+			curStr,
 			fmt.Sprintf("$%.2f", r.SizeUSDC),
+			pnlStr,
 			fmt.Sprintf("%s ago", age),
 		})
 	}
 
 	t.Render()
-	fmt.Printf("\n  Total open: %d position(s)\n", len(open))
+	totalStr := fmt.Sprintf("+$%.2f", totalUnreal)
+	if totalUnreal < 0 {
+		totalStr = fmt.Sprintf("-$%.2f", -totalUnreal)
+	}
+	fmt.Printf("\n  Total open: %d position(s)  |  Unrealized PnL: %s\n", len(open), totalStr)
 }
 
 // ── PnL summary ────────────────────────────────────────────────────────────

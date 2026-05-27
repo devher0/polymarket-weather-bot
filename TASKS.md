@@ -1085,3 +1085,31 @@ Spread между источниками = мера неопределённос
 - City embeddings: one-hot по 15 городам
 - Signal embeddings: rain=0, heat=1, cold=2, snow=3, wind=4, sunny=5
 - Сохранять feature importance в data/feature_importance.json
+
+---
+
+## 🔴 ПРИОРИТЕТ 23 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-117: Live unrealized P&L — текущий нереализованный PnL по открытым позициям
+**Файлы:** `internal/calibration/unrealized.go` (новый), `cmd/dashboard/main.go` (обновить), `internal/metrics/metrics.go` (обновить)
+- `UnrealizedPosition` struct: BetRecord + CurrentPrice, UnrealizedPnL, PriceChange, FetchedAt, FetchError
+- `FetchUnrealizedPnL(records []BetRecord) []UnrealizedPosition` — для каждой открытой ставки GET Gamma API `/markets/{conditionID}`, парсит текущую YES/NO цену
+- Расчёт: shares = SizeUSDC / entryPrice; unrealizedPnL = shares × (currentPrice - entryPrice)
+- Обновить `cmdPositions()` в dashboard: добавить колонки "Current", "Δ Price", "Unreal PnL"
+- Добавить Prometheus metric `unrealized_pnl_usdc` в `/metrics`
+- Timeout 2s per position; при ошибке — показывать "N/A" без краша
+
+### [ ] TASK-118: Per-signal min_edge config — разные пороги edge для разных сигналов
+**Файлы:** `config/config.go` (обновить), `config/config.yaml` (обновить), `internal/strategy/strategy.go` (обновить)
+- Добавить `SignalMinEdge map[string]float64` в Config (yaml: `signal_min_edge:`, env не нужен)
+- `GetMinEdgeForSignal(cfg *Config, signal string) float64` — возвращает signal-specific или default MinEdge
+- В `EvaluateFused()`: использовать GetMinEdgeForSignal вместо фиксированного minEdge
+- Пример config: rain=0.06, heat=0.04, snow=0.08 (сложнее предсказать)
+- Логировать "using signal min_edge=0.06 for signal=rain"
+
+### [ ] TASK-119: API downtime alert — Telegram уведомление при сбое Polymarket API
+**Файлы:** `cmd/bot/main.go` (обновить), `internal/notifier/telegram.go` (обновить)
+- Трекать `consecutiveAPIFails int` при ошибке GetWeatherMarkets()
+- При consecutiveAPIFails >= 3 → отправить Telegram: "⚠️ Polymarket API down: N consecutive failures"
+- Сбрасывать счётчик при успехе; не спамить — слать уведомление только при переходе 2→3
+- Логировать "api_fail_streak=N" каждую итерацию при ошибках

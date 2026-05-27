@@ -65,12 +65,13 @@ func SetLoopSec(sec int) {
 // ── snapshot holds computed metric values for one scrape ─────────────────
 
 type snapshot struct {
-	BetsPlaced   int
-	BetsWon      int
+	BetsPlaced    int
+	BetsWon       int
 	OpenPositions int
-	BrierScore   float64
-	EdgeAvg      float64
-	Bankroll     float64
+	BrierScore    float64
+	EdgeAvg       float64
+	Bankroll      float64
+	UnrealizedPnL float64
 }
 
 // collect computes current metrics from the bets_history CSV.
@@ -106,6 +107,10 @@ func collect(dataRoot string) snapshot {
 		edgeAvg = edgeSum / float64(edgeCount)
 	}
 
+	// Fetch unrealized P&L for open positions (best-effort, non-blocking).
+	positions := calibration.FetchUnrealizedPnL(records)
+	unrealizedPnL := calibration.TotalUnrealizedPnL(positions)
+
 	return snapshot{
 		BetsPlaced:    placed,
 		BetsWon:       won,
@@ -113,6 +118,7 @@ func collect(dataRoot string) snapshot {
 		BrierScore:    score,
 		EdgeAvg:       edgeAvg,
 		Bankroll:      bankroll,
+		UnrealizedPnL: unrealizedPnL,
 	}
 }
 
@@ -146,6 +152,10 @@ func metricsHandler(dataRoot string) http.HandlerFunc {
 			"# HELP bankroll_usdc USDC currently at risk in unresolved bets",
 			"# TYPE bankroll_usdc gauge",
 			fmt.Sprintf("bankroll_usdc %g", s.Bankroll),
+
+			"# HELP unrealized_pnl_usdc Estimated unrealized profit/loss across all open positions (live prices)",
+			"# TYPE unrealized_pnl_usdc gauge",
+			fmt.Sprintf("unrealized_pnl_usdc %g", s.UnrealizedPnL),
 
 			"# HELP sharpe_ratio_30d Annualised Sharpe ratio over the last 30 days (-999 if insufficient data)",
 			"# TYPE sharpe_ratio_30d gauge",
