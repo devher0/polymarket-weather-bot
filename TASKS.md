@@ -166,6 +166,37 @@ type FusedForecast struct {
 
 ---
 
+## 🟣 ПРИОРИТЕТ 6 — Следующие улучшения
+
+### [x] 2026-05-27 — TASK-022: Сезонная калибровка (Bayesian priors по месяцам)
+**Файл:** `internal/weather/seasonal.go` (новый), `internal/strategy/strategy.go` (обновить)
+- Клима-таблица: 9 городов × 12 месяцев → AvgMaxTempC, RainProbability, SunProbability
+- `AdjustForSeason(city, forecastDate, rawP, signal)` — Байесовское смешивание прогноза с климат. приором
+- alpha зависит от горизонта прогноза: день 0-1→0.80, день 2-3→0.65, день 4-5→0.50, день 6→0.40
+- Интеграция в `evaluate()`: применять коррекцию после вычисления ourP
+- Тест в `seasonal_test.go`: проверить summer/winter смещения
+
+### [ ] TASK-023: Market liquidity depth filter
+**Файл:** `internal/markets/liquidity.go` (новый), `internal/markets/markets.go` (обновить)
+- GET /book?token_id=... из CLOB API → проверить top-of-book bid/ask spread
+- Если spread > 0.10 (10 cents) — помечать Market.ThinLiquidity = true
+- В strategy.go: пропускать рынки с ThinLiquidity и SizeUSDC < 50 USDC — нет смысла мувить цену
+- Логировать "skipped: thin liquidity, spread=X"
+
+### [ ] TASK-024: Graceful shutdown с итоговым отчётом
+**Файл:** `cmd/bot/main.go` (обновить)
+- Перехватывать SIGTERM/SIGINT через signal.NotifyContext
+- При завершении: вывести итог сессии (сколько рынков, ставок, dry-run P&L)
+- Отправить Telegram-уведомление "Bot stopped, session summary: ..."
+- Корректно завершать metrics server и resolver горутину
+
+### [ ] TASK-025: Аномальные погодные события → повышенный confidence
+**Файл:** `internal/weather/extremes.go` (новый), `internal/collectors/aggregator.go` (обновить)
+- `IsExtreme(f Forecast) (bool, string)` — выявлять экстремальные значения: MaxTemp>38°C, PrecipMM>50, Wind>90kmh
+- При экстремальном событии — автоматически повышать Confidence до max(confidence, 0.75)
+- Причина: при очевидных экстремумах все модели обычно соглашаются, даже если у нас только 1-2 источника
+- Добавить тег "extreme: heat_wave|heavy_rain|storm" в FusedForecast.Sources
+
 ## 🟣 ПРИОРИТЕТ 5 — Новые улучшения
 
 ### [x] 2026-05-27 — TASK-019: Rate limiting + retry для HTTP-клиентов

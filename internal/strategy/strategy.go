@@ -143,6 +143,15 @@ func evaluate(
 		return nil
 	}
 
+	// Apply seasonal Bayesian correction: blend raw model probability with
+	// monthly climatological prior. Improves calibration, especially for
+	// distant forecasts (day 4-6) where NWP skill degrades.
+	rawP := ourP
+	ourP = weather.AdjustForSeason(m.City, f.Date, rawP, m.Signal, m.ThresholdC)
+	if ourP != rawP {
+		sourceNote += fmt.Sprintf(" seasonal(raw=%.2f→%.2f)", rawP, ourP)
+	}
+
 	yesEdge := ourP - m.YesPrice
 	noEdge := (1 - ourP) - m.NoPrice
 

@@ -1,5 +1,26 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 15:57 — TASK-022: Seasonal Bayesian calibration
+
+**Задача:** TASK-022
+
+**Файлы созданы/изменены:**
+- `internal/weather/seasonal.go` — НОВЫЙ (~165 строк): полная клима-таблица 9 городов × 12 месяцев (AvgMaxTempC, RainProb, SunProb); `GetSeasonal(city, month)` → MonthlyClimate; `AdjustForSeason(city, forecastDate, rawP, signal, thresholdC)` — Байесовское смешивание с alpha-весами по горизонту прогноза (день 0-1→0.80, день 2-3→0.65, день 4-5→0.50, день 6→0.40); `priorForSignal()` — heat/cold через sigmoid; `SeasonalSummary()` для отладки
+- `internal/weather/seasonal_test.go` — НОВЫЙ (~130 строк): 11 тестов — знакомые города, все 9 городов × 12 месяцев в диапазоне, alpha decreases with horizon, unknown city passthrough, wind passthrough, clamp, heat threshold Chicago winter
+- `internal/strategy/strategy.go` — интеграция в `evaluate()`: после вычисления ourP применяется `weather.AdjustForSeason()`; seasonal note добавляется в Reason если произошла коррекция (+5 строк нетто)
+
+**Итого: 3 файла, ~300 строк**
+
+**Тесты:** 11 новых тестов в `seasonal_test.go` — все PASS; `go test ./internal/strategy/... ./internal/calibration/...` — PASS
+
+`go build ./...` — ✅ чистая компиляция
+
+**Ключевые улучшения:**
+- Miami июль RainProb=63%: модель 0.40 → скорректировано вверх (сезонный prior тянет к климат. норме)
+- LA лето SunProb=87%: если модель занижает — коррекция вверх
+- Чем дальше горизонт прогноза, тем больше вес клима. prior (меньший alpha)
+- Decision.Reason теперь показывает: `seasonal(raw=0.40→0.46)` для прозрачности
+
 ## 2026-05-27 15:37 — TASK-015..019: Dedup, Auto-resolve, Prometheus, Walk-Forward, HTTP retry
 
 **Задачи:** TASK-015, TASK-016, TASK-017, TASK-018, TASK-019
