@@ -268,7 +268,7 @@ type FusedForecast struct {
 - `AggregateAll()` тоже параллелизовать: все 9 городов одновременно (с `errgroup`)
 - Результат: цикл бота должен занимать ~3-5 сек вместо 30-60 сек
 
-### [ ] TASK-032: Per-source accuracy tracker — динамические веса по точности
+### [x] 2026-05-27 — TASK-032: Per-source accuracy tracker — динамические веса по точности
 **Файл:** `internal/collectors/source_accuracy.go` (новый), `internal/collectors/aggregator.go` (обновить)
 - После resolve рынка — сохранять какой источник был ближе к исходу в `data/source_accuracy.json`
 - `LoadSourceAccuracy(dataRoot)` → map[source]AccuracyStats{Count, BrierSum}
@@ -276,7 +276,7 @@ type FusedForecast struct {
 - Минимальный вес = 0.05 (не выключать источник полностью при недостатке данных < 10 бетов)
 - Обновлять веса раз в цикл, логировать "dynamic weights: openmeteo=0.38 nasa=0.31 ..."
 
-### [ ] TASK-033: PnL-адаптивный Kelly — масштабировать bankroll по Brier score
+### [x] 2026-05-27 — TASK-033: PnL-адаптивный Kelly — масштабировать bankroll по Brier score
 **Файл:** `internal/calibration/calibration.go` (обновить), `internal/strategy/strategy.go` (обновить)
 - `BankrollMultiplier(brierScore float64) float64` — если score < 0.10 → 1.5x, если > 0.22 → 0.5x, иначе линейно
 - Передавать скорректированный bankroll в EvaluateFused/Evaluate вместо фиксированного

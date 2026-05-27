@@ -169,6 +169,19 @@ func main() {
 			history = nil
 		}
 
+		// TASK-033: scale bankroll by Brier-score-based multiplier.
+		// Well-calibrated models get more capital; poor models less.
+		brierScore, _, _ := calibration.BrierScore(history)
+		bankrollMultiplier := calibration.BankrollMultiplier(brierScore)
+		effectiveBankroll := 100.0 * bankrollMultiplier
+		if bankrollMultiplier != 1.0 {
+			slog.Info("bankroll multiplier applied",
+				"brier_score", fmt.Sprintf("%.4f", brierScore),
+				"multiplier", fmt.Sprintf("%.2f", bankrollMultiplier),
+				"effective_bankroll", fmt.Sprintf("%.2f", effectiveBankroll),
+			)
+		}
+
 		// Risk summary at cycle start.
 		slog.Info(risk.Summary(history, risk.Config{
 			MaxDailyLossUSDC: cfg.MaxDailyLossUSDC,
@@ -339,10 +352,10 @@ func main() {
 
 			var d *strategy.Decision
 			if ff != nil {
-				d = strategy.EvaluateFused(m, ff, 100.0, cfg.MinEdge, cfg.MaxBet)
+				d = strategy.EvaluateFused(m, ff, effectiveBankroll, cfg.MinEdge, cfg.MaxBet, cfg.DataRoot)
 			}
 			if d == nil {
-				d = strategy.Evaluate(m, legacyForecasts, 100.0, cfg.MinEdge, cfg.MaxBet)
+				d = strategy.Evaluate(m, legacyForecasts, effectiveBankroll, cfg.MinEdge, cfg.MaxBet)
 			}
 			if d == nil {
 				continue

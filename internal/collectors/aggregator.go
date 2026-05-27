@@ -19,18 +19,34 @@ import (
 // FusedForecast combines forecasts from multiple sources with confidence score.
 type FusedForecast struct {
 	weather.Forecast
-	Confidence          float64   // 0-1: how much sources agree (1 = full agreement)
-	Sources             []string  // which sources contributed
-	EnsembleUncertainty float64   // stddev of temperature across ensemble members (°C); 0 if unavailable
-	FetchedAt           time.Time // when this forecast was assembled (for staleness checks)
+	Confidence          float64                    // 0-1: how much sources agree (1 = full agreement)
+	Sources             []string                   // which sources contributed
+	EnsembleUncertainty float64                    // stddev of temperature across ensemble members (°C); 0 if unavailable
+	FetchedAt           time.Time                  // when this forecast was assembled (for staleness checks)
+	PerSourceForecasts  map[string]weather.Forecast // raw per-source forecasts (for accuracy tracking)
 }
 
-// sourceWeights defines the base weight for each data source.
-var sourceWeights = map[string]float64{
+// staticSourceWeights defines the base weight for each data source.
+// At runtime these may be overridden by DynamicWeights() once enough
+// resolved bets have accumulated (TASK-032).
+var staticSourceWeights = map[string]float64{
 	"openmeteo": 0.35,
 	"nasa":      0.30,
 	"noaa":      0.25,
 	"goes":      0.10,
+}
+
+// currentWeights returns the active source weights: dynamic if enough data
+// exists, otherwise the static baseline.
+// dataRoot may be empty (uses ".").
+func currentWeights(dataRoot string) map[string]float64 {
+	accuracy := LoadSourceAccuracy(dataRoot)
+	if len(accuracy) == 0 {
+		return staticSourceWeights
+	}
+	w := DynamicWeights(accuracy)
+	LogDynamicWeights(w)
+	return w
 }
 
 // sourceResult holds a forecast from one source along with its weight.
@@ -51,7 +67,9 @@ const sourceFetchTimeout = 8 * time.Second
 //
 // dayOffset selects which forecast day index to use (0=today … 6).
 // includeGOES enables the GOES-19 satellite cloud-cover source (today only).
+// weights overrides staticSourceWeights when non-nil.
 func collectSources(ctx context.Context, city string, days int, dayOffset int, dataRoot string, includeGOES bool) []sourceResult {
+	weights := currentWeights(dataRoot)
 	type item struct {
 		r  sourceResult
 		ok bool
@@ -75,7 +93,7 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		if idx >= len(fc) {
 			idx = len(fc) - 1
 		}
-		ch <- item{r: sourceResult{name: "openmeteo", forecast: fc[idx], weight: sourceWeights["openmeteo"]}, ok: true}
+		ch <- item{r: sourceResult{name: "openmeteo", forecast: fc[idx], weight: weights["openmeteo"]}, ok: true}
 	}()
 
 	// --- NASA POWER ---
@@ -89,7 +107,7 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		if idx >= len(fc) {
 			idx = len(fc) - 1
 		}
-		ch <- item{r: sourceResult{name: "nasa", forecast: fc[idx], weight: sourceWeights["nasa"]}, ok: true}
+		ch <- item{r: sourceResult{name: "nasa", forecast: fc[idx], weight: weights["nasa"]}, ok: true}
 	}()
 
 	// --- NOAA NWS (US only) ---
@@ -103,7 +121,7 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		if idx >= len(fc) {
 			idx = len(fc) - 1
 		}
-		ch <- item{r: sourceResult{name: "noaa", forecast: fc[idx], weight: sourceWeights["noaa"]}, ok: true}
+		ch <- item{r: sourceResult{name: "noaa", forecast: fc[idx], weight: weights["noaa"]}, ok: true}
 	}()
 
 	// --- GOES-19 (cloud cover supplement, today only) ---
@@ -114,7 +132,7 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 				ch <- item{}
 				return
 			}
-			ch <- item{r: sourceResult{name: "goes", weight: sourceWeights["goes"], cloudCover: &cover}, ok: true}
+			ch <- item{r: sourceResult{name: "goes", weight: weights["goes"], cloudCover: &cover}, ok: true}
 		}()
 	}
 
@@ -232,6 +250,12 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		confidence = math.Max(0, 1-sd)
 	}
 
+	// Build per-source forecast map (excludes cloud-cover-only sources).
+	perSourceForecasts := make(map[string]weather.Forecast, len(forecastSources))
+	for _, r := range forecastSources {
+		perSourceForecasts[r.name] = r.forecast
+	}
+
 	fused := &FusedForecast{
 		Forecast: weather.Forecast{
 			City:                     city,
@@ -243,9 +267,10 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 			WindSpeedKMH:             wWind,
 			WeatherCode:              int(math.Round(wCode)),
 		},
-		Confidence: confidence,
-		Sources:    sourceNames,
-		FetchedAt:  time.Now(),
+		Confidence:         confidence,
+		Sources:            sourceNames,
+		FetchedAt:          time.Now(),
+		PerSourceForecasts: perSourceForecasts,
 	}
 
 	// Extreme-event confidence boost: when the fused forecast shows an obvious

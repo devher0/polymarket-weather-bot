@@ -107,12 +107,15 @@ const minConfidence = 0.4
 
 // EvaluateFused evaluates a market using a FusedForecast from the aggregator.
 // Returns nil when confidence is too low or there is no sufficient edge.
+// dataRoot is the project data directory (used to record per-source predictions
+// for accuracy tracking). Pass "" to skip recording.
 func EvaluateFused(
 	m markets.Market,
 	ff *collectors.FusedForecast,
 	bankroll float64,
 	minEdge float64,
 	maxBet float64,
+	dataRoot string,
 ) *Decision {
 	if ff == nil {
 		return nil
@@ -125,25 +128,42 @@ func EvaluateFused(
 
 	// Build per-source contribution note for the Decision reason.
 	// Weights are normalised to available sources; show each as percentage.
-	sourceWeights := map[string]float64{
+	staticWeights := map[string]float64{
 		"openmeteo": 0.35, "nasa": 0.30, "noaa": 0.25, "goes": 0.10,
 	}
 	totalW := 0.0
 	for _, s := range ff.Sources {
-		totalW += sourceWeights[s]
+		totalW += staticWeights[s]
 	}
 	if totalW == 0 {
 		totalW = 1
 	}
 	parts := make([]string, 0, len(ff.Sources))
 	for _, s := range ff.Sources {
-		pct := sourceWeights[s] / totalW * 100
+		pct := staticWeights[s] / totalW * 100
 		parts = append(parts, fmt.Sprintf("%s(%.0f%%)", s, pct))
 	}
 	sourceNote := fmt.Sprintf("ensemble=[%s] confidence=%.2f",
 		strings.Join(parts, "+"), ff.Confidence)
 
-	return evaluate(m, ff.Forecast, bankroll, minEdge, maxBet, sourceNote)
+	d := evaluate(m, ff.Forecast, bankroll, minEdge, maxBet, sourceNote)
+	if d == nil {
+		return nil
+	}
+
+	// TASK-032: record per-source probability predictions so accuracy can
+	// be computed after the market resolves. We compute each source's estimate
+	// of the market signal using the same logic as evaluate().
+	if len(ff.PerSourceForecasts) > 0 {
+		perSourceProbs := computePerSourceProbs(m, ff.PerSourceForecasts)
+		if len(perSourceProbs) > 0 {
+			if err := collectors.RecordSourcePredictions(m.ConditionID, perSourceProbs, dataRoot); err != nil {
+				slog.Warn("record source predictions failed", "err", err)
+			}
+		}
+	}
+
+	return d
 }
 
 // Evaluate compares our weather forecast to a Polymarket price.
@@ -267,4 +287,41 @@ func evaluate(
 		Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
 			m.City, m.Signal, ourP, best.marketPrice, best.edge, sourceNote),
 	}
+}
+
+// computePerSourceProbs computes each source's raw probability estimate for
+// the market signal. This is called after EvaluateFused decides to record a bet
+// so we can later compare against the actual outcome per source.
+func computePerSourceProbs(m markets.Market, perSource map[string]weather.Forecast) map[string]float64 {
+	if len(perSource) == 0 {
+		return nil
+	}
+
+	heatThreshold := 35.0
+	if m.ThresholdC != 0 {
+		heatThreshold = m.ThresholdC
+	}
+
+	result := make(map[string]float64, len(perSource))
+	for src, f := range perSource {
+		var p float64
+		switch m.Signal {
+		case "rain":
+			p = weather.RainProbability(f)
+		case "heat":
+			p = weather.HeatProbability(f, heatThreshold)
+		case "cold":
+			p = 1 - weather.HeatProbability(f, heatThreshold)
+		case "snow":
+			p = (1 - weather.HeatProbability(f, 2.0)) * weather.RainProbability(f) * 0.8
+		case "wind":
+			p = math.Min(0.95, f.WindSpeedKMH/80.0)
+		case "sunny":
+			p = weather.SunnyProbability(f)
+		default:
+			continue
+		}
+		result[src] = p
+	}
+	return result
 }

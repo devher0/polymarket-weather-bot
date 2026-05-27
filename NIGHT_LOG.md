@@ -1,5 +1,25 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 16:37 — TASK-032, TASK-033: Per-source accuracy tracker + PnL-adaptive Kelly
+
+**Задачи:** TASK-032 (per-source accuracy tracker), TASK-033 (PnL-adaptive Kelly)
+
+**Файлы созданы/изменены:**
+- `internal/collectors/source_accuracy.go` — новый файл (~210 строк): `AccuracyStats{Count, BrierSum}`, `LoadSourceAccuracy(dataRoot)` / `SaveSourceAccuracy()`, `RecordSourcePredictions(conditionID, probs, dataRoot)` → записывает per-source прогнозы в `data/source_predictions/{cid}.json`, `UpdateSourceAccuracyOnResolve(conditionID, outcome, dataRoot)` → читает прогнозы, обновляет `data/source_accuracy.json`, удаляет sidecar; `DynamicWeights(accuracy)` → пересчёт весов по Brier skill (1/score), min weight=0.05, clamped, renormalised; `LogDynamicWeights()` логирует текущие веса
+- `internal/collectors/aggregator.go` — рефакторинг: `sourceWeights` → `staticSourceWeights`, новая `currentWeights(dataRoot)` вызывает `DynamicWeights` при наличии данных; `collectSources` принимает динамические веса; `fuse()` теперь заполняет `PerSourceForecasts map[string]weather.Forecast` в `FusedForecast`; добавлено поле `PerSourceForecasts` в struct
+- `internal/strategy/strategy.go` — `EvaluateFused` получает `dataRoot string`; после успешного evaluate вызывает `computePerSourceProbs(m, ff.PerSourceForecasts)` + `collectors.RecordSourcePredictions()`; новая функция `computePerSourceProbs()` — идентичная switch-логика по signal для каждого источника
+- `internal/calibration/resolver.go` — импорт collectors; после `UpdateOutcome` вызывает `collectors.UpdateSourceAccuracyOnResolve()` (non-fatal если sidecar отсутствует — нормально для старых ставок)
+- `internal/calibration/calibration.go` — новая функция `BankrollMultiplier(brierScore)`: score<0.10→1.5x, score>0.22→0.5x, линейная интерполяция между ними, clamped [0.25, 2.0], returns 1.0 при score=0 (нет данных)
+- `cmd/bot/main.go` — вычисляет `brierScore + bankrollMultiplier + effectiveBankroll` в начале каждого цикла; передаёт `effectiveBankroll` вместо `100.0` в оба вызова Evaluate/EvaluateFused; добавлен slog.Info лог при ненейтральном multiplier
+- `cmd/dashboard/main.go` — EvaluateFused теперь с `dataRoot=""` (нет записи прогнозов в dashboard)
+- `internal/strategy/strategy_test.go` — обновлены все 5 вызовов EvaluateFused с новым параметром `""`
+
+**Тесты:** `go test ./internal/strategy/... ./internal/calibration/...` — ✅ все PASS
+
+**Итого: 8 файлов, ~270 строк нетто**
+
+`go build ./...` — ✅ чистая компиляция
+
 ## 2026-05-27 16:32 — TASK-031: Параллельный фетчинг источников данных
 
 **Задача:** TASK-031

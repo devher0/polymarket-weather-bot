@@ -172,7 +172,7 @@ func TestEvaluate_SizeCapAtMaxBet(t *testing.T) {
 
 func TestEvaluateFused_NilForecast(t *testing.T) {
 	m := rainMarket("new_york", 0.40, 0.60)
-	d := EvaluateFused(m, nil, 1000, 0.05, 50)
+	d := EvaluateFused(m, nil, 1000, 0.05, 50, "")
 	if d != nil {
 		t.Errorf("expected nil for nil FusedForecast, got %+v", d)
 	}
@@ -183,7 +183,7 @@ func TestEvaluateFused_LowConfidence(t *testing.T) {
 	fc := makeForecast("new_york", 20, 8, 90, 15, 80)
 	ff := makeFused(fc, 0.30) // below minConfidence
 	m := rainMarket("new_york", 0.40, 0.60)
-	d := EvaluateFused(m, ff, 1000, 0.05, 50)
+	d := EvaluateFused(m, ff, 1000, 0.05, 50, "")
 	if d != nil {
 		t.Errorf("expected nil when confidence < 0.4, got %+v", d)
 	}
@@ -193,7 +193,7 @@ func TestEvaluateFused_HighConfidence_WithEdge(t *testing.T) {
 	fc := makeForecast("new_york", 20, 8, 90, 15, 80)
 	ff := makeFused(fc, 0.85)
 	m := rainMarket("new_york", 0.40, 0.60)
-	d := EvaluateFused(m, ff, 1000, 0.05, 50)
+	d := EvaluateFused(m, ff, 1000, 0.05, 50, "")
 	if d == nil {
 		t.Fatal("expected decision with high confidence + edge, got nil")
 	}
@@ -207,7 +207,7 @@ func TestEvaluateFused_ConfidenceAtBoundary(t *testing.T) {
 	fc := makeForecast("new_york", 20, 8, 90, 15, 80)
 	ff := makeFused(fc, 0.4)
 	m := rainMarket("new_york", 0.40, 0.60)
-	d := EvaluateFused(m, ff, 1000, 0.05, 50)
+	d := EvaluateFused(m, ff, 1000, 0.05, 50, "")
 	// 0.4 >= minConfidence so it should proceed; result depends on edge.
 	// Just check it doesn't panic and respects the edge gate.
 	_ = d
@@ -218,7 +218,7 @@ func TestEvaluateFused_MultiSource(t *testing.T) {
 	fc := makeForecast("london", 18, 0.1, 5, 10, 1)
 	ff := makeFused(fc, 0.75, "openmeteo", "nasa", "noaa")
 	m := rainMarket("london", 0.80, 0.20)
-	d := EvaluateFused(m, ff, 1000, 0.05, 50)
+	d := EvaluateFused(m, ff, 1000, 0.05, 50, "")
 	if d == nil {
 		t.Fatal("expected NO decision, got nil")
 	}

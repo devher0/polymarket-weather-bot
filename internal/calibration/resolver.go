@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 )
 
 const gammaMarketURL = "https://gamma-api.polymarket.com/markets/%s"
@@ -130,6 +132,13 @@ func ResolveOpenBets(dataRoot string) (int, error) {
 		if err := UpdateOutcome(r.ConditionID, won, dataRoot); err != nil {
 			slog.Warn("resolver: update outcome failed", "conditionID", r.ConditionID, "err", err)
 			continue
+		}
+
+		// TASK-032: update per-source accuracy stats so dynamic weights adapt
+		// over time to reflect which source was most accurate.
+		if err := collectors.UpdateSourceAccuracyOnResolve(r.ConditionID, won, dataRoot); err != nil {
+			// Non-fatal: absence of a predictions file (pre-TASK-032 bets) is normal.
+			slog.Debug("resolver: source accuracy update skipped", "conditionID", r.ConditionID, "err", err)
 		}
 
 		slog.Info("resolver: bet resolved",

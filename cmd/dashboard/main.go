@@ -237,7 +237,7 @@ func cmdNext(dataRoot string) {
 		var d *strategy.Decision
 
 		if ff, ok := fusedForecasts[m.City]; ok {
-			d = strategy.EvaluateFused(m, ff, bankroll, minEdge, maxBet)
+			d = strategy.EvaluateFused(m, ff, bankroll, minEdge, maxBet, "")
 			if d != nil {
 				candidates = append(candidates, betCandidate{Decision: d, Source: "fused", City: m.City})
 				continue

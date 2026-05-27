@@ -356,6 +356,51 @@ func PrintBrierScore(dataRoot string) {
 	}
 }
 
+// BankrollMultiplier returns a multiplier for the effective bankroll based on
+// the current Brier score. Well-calibrated models get more capital; poor ones
+// are scaled back to limit losses during bad streaks.
+//
+// Mapping (TASK-033):
+//
+//	score < 0.10  → multiplier 1.5   (excellent — scale up)
+//	score > 0.22  → multiplier 0.5   (near-random — scale down)
+//	0.10–0.22     → linear interpolation from 1.5 → 0.5
+//
+// When score is 0 (no data yet) the neutral multiplier 1.0 is returned.
+// Result is clamped to [0.25, 2.0].
+func BankrollMultiplier(brierScore float64) float64 {
+	if brierScore <= 0 {
+		return 1.0 // no data — neutral
+	}
+	const (
+		excellentThresh = 0.10
+		randomThresh    = 0.22
+		highMult        = 1.5
+		lowMult         = 0.5
+		minMult         = 0.25
+		maxMult         = 2.0
+	)
+	var m float64
+	switch {
+	case brierScore <= excellentThresh:
+		m = highMult
+	case brierScore >= randomThresh:
+		m = lowMult
+	default:
+		// Linear interpolation between (excellentThresh, highMult) and (randomThresh, lowMult).
+		t := (brierScore - excellentThresh) / (randomThresh - excellentThresh)
+		m = highMult + t*(lowMult-highMult)
+	}
+	// Clamp.
+	if m < minMult {
+		m = minMult
+	}
+	if m > maxMult {
+		m = maxMult
+	}
+	return m
+}
+
 // brierQuality returns a human-readable quality label for a Brier score.
 func brierQuality(score float64) string {
 	switch {
