@@ -295,7 +295,7 @@ type FusedForecast struct {
 - Добавить в Decision.Reason: `ensemble_scale=0.65 (unc=2.1°C)`
 - Тест: TestEnsembleScaling в strategy_test.go
 
-### [ ] TASK-035: Per-city/signal Brier breakdown
+### [x] 2026-05-27 — TASK-035: Per-city/signal Brier breakdown
 **Файл:** `internal/calibration/calibration.go` (обновить), `cmd/dashboard/main.go` (обновить)
 - Добавить поля `City` и `Signal` в BetRecord (cols 8-9, backward-compat: пустые для старых записей)
 - Обновить `csvHeader`, `SaveBet`, `parseRow` — сохранять `d.Market.City`, `d.Market.Signal`

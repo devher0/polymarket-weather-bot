@@ -192,6 +192,68 @@ func cmdPnL(dataRoot string) {
 	if count > 0 {
 		fmt.Printf("  Brier score   : %.4f (%d bets)\n", score, count)
 	}
+
+	// Per-city breakdown table
+	cityMap := calibration.CityBreakdown(records)
+	if len(cityMap) > 0 {
+		header("🏙️  P&L BY CITY")
+		tc := newTable()
+		tc.AppendHeader(table.Row{"City", "Bets", "Wins", "Win %", "Brier"})
+
+		type cityRow struct {
+			name  string
+			stats calibration.BreakdownStats
+		}
+		var cityRows []cityRow
+		for k, v := range cityMap {
+			cityRows = append(cityRows, cityRow{k, v})
+		}
+		// Sort by Brier ascending (best first)
+		sort.Slice(cityRows, func(i, j int) bool {
+			return cityRows[i].stats.BrierAvg() < cityRows[j].stats.BrierAvg()
+		})
+		for _, cr := range cityRows {
+			brierStr := fmt.Sprintf("%.4f", cr.stats.BrierAvg())
+			tc.AppendRow(table.Row{
+				cr.name,
+				cr.stats.Count,
+				cr.stats.Wins,
+				fmt.Sprintf("%.1f%%", cr.stats.WinRate()),
+				brierStr,
+			})
+		}
+		tc.Render()
+	}
+
+	// Per-signal breakdown table
+	sigMap := calibration.SignalBreakdown(records)
+	if len(sigMap) > 0 {
+		header("📡 P&L BY SIGNAL")
+		ts2 := newTable()
+		ts2.AppendHeader(table.Row{"Signal", "Bets", "Wins", "Win %", "Brier"})
+
+		type sigRow struct {
+			name  string
+			stats calibration.BreakdownStats
+		}
+		var sigRows []sigRow
+		for k, v := range sigMap {
+			sigRows = append(sigRows, sigRow{k, v})
+		}
+		sort.Slice(sigRows, func(i, j int) bool {
+			return sigRows[i].stats.BrierAvg() < sigRows[j].stats.BrierAvg()
+		})
+		for _, sr := range sigRows {
+			ts2.AppendRow(table.Row{
+				sr.name,
+				sr.stats.Count,
+				sr.stats.Wins,
+				fmt.Sprintf("%.1f%%", sr.stats.WinRate()),
+				fmt.Sprintf("%.4f", sr.stats.BrierAvg()),
+			})
+		}
+		ts2.Render()
+	}
 }
 
 // ── next bets ──────────────────────────────────────────────────────────────

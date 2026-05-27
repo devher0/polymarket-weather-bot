@@ -36,13 +36,40 @@ type BetRecord struct {
 	SizeUSDC       float64
 	Outcome        *bool  // nil = unresolved; true = won; false = lost
 	ResolvedAt     time.Time
+	City           string // e.g. "new_york" (cols 8; empty for legacy records)
+	Signal         string // e.g. "rain", "heat" (col 9; empty for legacy records)
+}
+
+// BreakdownStats holds per-city or per-signal performance stats.
+type BreakdownStats struct {
+	Count    int
+	BrierSum float64
+	Wins     int
+}
+
+// BrierAvg returns the mean Brier score for this breakdown bucket, or 0 if Count==0.
+func (b BreakdownStats) BrierAvg() float64 {
+	if b.Count == 0 {
+		return 0
+	}
+	return b.BrierSum / float64(b.Count)
+}
+
+// WinRate returns win percentage (0–100) for this bucket.
+func (b BreakdownStats) WinRate() float64 {
+	if b.Count == 0 {
+		return 0
+	}
+	return float64(b.Wins) / float64(b.Count) * 100
 }
 
 // csvHeader defines the CSV column order.
+// Columns 8-9 (city, signal) were added in TASK-035; legacy rows may be absent.
 var csvHeader = []string{
 	"condition_id", "timestamp", "side",
 	"our_probability", "market_price", "size_usdc",
 	"outcome", "resolved_at",
+	"city", "signal",
 }
 
 // initPath resolves the CSV file path relative to dataRoot.
@@ -108,8 +135,10 @@ func SaveBet(d *strategy.Decision, dataRoot string) error {
 		strconv.FormatFloat(d.OurProbability, 'f', 6, 64),
 		strconv.FormatFloat(d.MarketPrice, 'f', 6, 64),
 		strconv.FormatFloat(d.SizeUSDC, 'f', 2, 64),
-		"",  // outcome: unresolved
-		"",  // resolved_at: empty
+		"",             // outcome: unresolved
+		"",             // resolved_at: empty
+		d.Market.City,  // col 8: city (TASK-035)
+		d.Market.Signal, // col 9: signal (TASK-035)
 	}
 	if err := w.Write(row); err != nil {
 		return fmt.Errorf("calibration: write row: %w", err)
@@ -207,6 +236,14 @@ func parseRow(row []string) (BetRecord, error) {
 		if err == nil {
 			rec.ResolvedAt = t
 		}
+	}
+
+	// cols 8-9: city, signal — added in TASK-035; absent in legacy rows
+	if len(row) >= 9 {
+		rec.City = row[8]
+	}
+	if len(row) >= 10 {
+		rec.Signal = row[9]
 	}
 
 	return rec, nil
@@ -354,6 +391,58 @@ func PrintBrierScore(dataRoot string) {
 	if edgeCount > 0 {
 		fmt.Printf("[calibration] Avg edge on wins: %+.4f\n", edgeSum/float64(edgeCount))
 	}
+
+	// Per-city breakdown (top-5 by count, then by Brier asc)
+	cityMap := CityBreakdown(records)
+	if len(cityMap) > 0 {
+		fmt.Println("[calibration] Top cities by Brier score:")
+		printBreakdownTop(cityMap, 5)
+	}
+
+	// Per-signal breakdown
+	sigMap := SignalBreakdown(records)
+	if len(sigMap) > 0 {
+		fmt.Println("[calibration] Signals by Brier score:")
+		printBreakdownTop(sigMap, 6)
+	}
+}
+
+// breakdownEntry is a key-value pair used for sorting breakdown maps.
+type breakdownEntry struct {
+	Key   string
+	Stats BreakdownStats
+}
+
+// printBreakdownTop prints at most n breakdown entries sorted by Brier score ascending
+// (lower = better calibration). Filters out buckets with 0 resolved bets.
+func printBreakdownTop(m map[string]BreakdownStats, n int) {
+	var items []breakdownEntry
+	for k, v := range m {
+		if v.Count > 0 {
+			items = append(items, breakdownEntry{k, v})
+		}
+	}
+	// Insertion sort: Brier ascending (best first), tie-break by count descending.
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0; j-- {
+			ai := items[j-1].Stats.BrierAvg()
+			aj := items[j].Stats.BrierAvg()
+			if ai > aj || (ai == aj && items[j-1].Stats.Count < items[j].Stats.Count) {
+				items[j-1], items[j] = items[j], items[j-1]
+			}
+		}
+	}
+	if len(items) > n {
+		items = items[:n]
+	}
+	for _, item := range items {
+		fmt.Printf("  %-20s  brier=%.4f  wr=%.0f%%  n=%d\n",
+			item.Key,
+			item.Stats.BrierAvg(),
+			item.Stats.WinRate(),
+			item.Stats.Count,
+		)
+	}
 }
 
 // BankrollMultiplier returns a multiplier for the effective bankroll based on
@@ -397,6 +486,62 @@ func BankrollMultiplier(brierScore float64) float64 {
 	}
 	if m > maxMult {
 		m = maxMult
+	}
+	return m
+}
+
+// CityBreakdown returns per-city Brier stats over all resolved bets.
+// Records with an empty City field are bucketed under "(unknown)".
+func CityBreakdown(records []BetRecord) map[string]BreakdownStats {
+	m := make(map[string]BreakdownStats)
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue
+		}
+		key := r.City
+		if key == "" {
+			key = "(unknown)"
+		}
+		o := 0.0
+		if *r.Outcome {
+			o = 1.0
+		}
+		diff := r.OurProbability - o
+		s := m[key]
+		s.Count++
+		s.BrierSum += diff * diff
+		if *r.Outcome {
+			s.Wins++
+		}
+		m[key] = s
+	}
+	return m
+}
+
+// SignalBreakdown returns per-signal Brier stats over all resolved bets.
+// Records with an empty Signal field are bucketed under "(unknown)".
+func SignalBreakdown(records []BetRecord) map[string]BreakdownStats {
+	m := make(map[string]BreakdownStats)
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue
+		}
+		key := r.Signal
+		if key == "" {
+			key = "(unknown)"
+		}
+		o := 0.0
+		if *r.Outcome {
+			o = 1.0
+		}
+		diff := r.OurProbability - o
+		s := m[key]
+		s.Count++
+		s.BrierSum += diff * diff
+		if *r.Outcome {
+			s.Wins++
+		}
+		m[key] = s
 	}
 	return m
 }

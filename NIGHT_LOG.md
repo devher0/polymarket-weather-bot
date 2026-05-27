@@ -283,3 +283,23 @@
 **Итого: 5 файлов, ~535 строк**
 
 `go build ./...` — ✅ чистая компиляция
+
+## 2026-05-27 16:54 UTC — TASK-035: Per-city/signal Brier breakdown
+
+**Что сделано:**
+- `BetRecord` расширен полями `City` и `Signal` (cols 8-9); backward-compat с легаси-строками (len < 10)
+- `csvHeader` / `SaveBet` / `parseRow` обновлены — сохраняем `d.Market.City` и `d.Market.Signal`
+- Новый тип `BreakdownStats{Count, BrierSum, Wins}` с методами `BrierAvg()` и `WinRate()`
+- `CityBreakdown(records)` → `map[string]BreakdownStats` — per-city статистика
+- `SignalBreakdown(records)` → `map[string]BreakdownStats` — per-signal статистика
+- `PrintBrierScore()` расширен: показывает топ-5 городов и сигналов по Brier score
+- `cmd/dashboard pnl` — добавлены таблицы "P&L BY CITY" и "P&L BY SIGNAL"
+- 9 новых unit-тестов (итого 23 теста в пакете calibration)
+
+**Файлы:**
+- `internal/calibration/calibration.go` (+130 строк)
+- `internal/calibration/calibration_test.go` (+110 строк)
+- `cmd/dashboard/main.go` (+55 строк)
+- `TASKS.md` — TASK-035 отмечена [x]
+
+**Строк добавлено:** ~295

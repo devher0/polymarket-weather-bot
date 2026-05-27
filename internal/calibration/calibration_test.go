@@ -344,3 +344,141 @@ func TestSaveBet_TimestampOrder(t *testing.T) {
 		t.Error("second timestamp should not be before first")
 	}
 }
+
+// ─── CityBreakdown / SignalBreakdown ─────────────────────────────────────────
+
+func resolved(outcome bool) *bool { return &outcome }
+
+func makeRecord(city, signal string, ourP float64, outcome *bool) BetRecord {
+	return BetRecord{
+		ConditionID:    "cid",
+		Timestamp:      time.Now(),
+		Side:           "YES",
+		OurProbability: ourP,
+		MarketPrice:    0.50,
+		SizeUSDC:       5,
+		Outcome:        outcome,
+		City:           city,
+		Signal:         signal,
+	}
+}
+
+func TestCityBreakdown_Empty(t *testing.T) {
+	m := CityBreakdown(nil)
+	if len(m) != 0 {
+		t.Errorf("expected empty map, got %v", m)
+	}
+}
+
+func TestCityBreakdown_SkipsUnresolved(t *testing.T) {
+	recs := []BetRecord{
+		makeRecord("new_york", "rain", 0.8, nil), // unresolved
+		makeRecord("new_york", "rain", 0.9, resolved(true)),
+	}
+	m := CityBreakdown(recs)
+	if m["new_york"].Count != 1 {
+		t.Errorf("expected count 1, got %d", m["new_york"].Count)
+	}
+}
+
+func TestCityBreakdown_MultiCity(t *testing.T) {
+	recs := []BetRecord{
+		makeRecord("new_york", "rain", 1.0, resolved(true)),
+		makeRecord("new_york", "rain", 0.8, resolved(true)),
+		makeRecord("miami", "heat", 0.6, resolved(false)),
+	}
+	m := CityBreakdown(recs)
+	if m["new_york"].Count != 2 {
+		t.Errorf("new_york count: want 2, got %d", m["new_york"].Count)
+	}
+	if m["new_york"].Wins != 2 {
+		t.Errorf("new_york wins: want 2, got %d", m["new_york"].Wins)
+	}
+	if m["miami"].Count != 1 {
+		t.Errorf("miami count: want 1, got %d", m["miami"].Count)
+	}
+	if m["miami"].Wins != 0 {
+		t.Errorf("miami wins: want 0, got %d", m["miami"].Wins)
+	}
+}
+
+func TestCityBreakdown_UnknownFallback(t *testing.T) {
+	recs := []BetRecord{
+		makeRecord("", "", 0.5, resolved(false)),
+	}
+	m := CityBreakdown(recs)
+	if _, ok := m["(unknown)"]; !ok {
+		t.Error("expected (unknown) bucket for record with empty city")
+	}
+}
+
+func TestSignalBreakdown_MultiSignal(t *testing.T) {
+	recs := []BetRecord{
+		makeRecord("new_york", "rain", 0.9, resolved(true)),
+		makeRecord("miami", "rain", 0.7, resolved(false)),
+		makeRecord("london", "heat", 0.8, resolved(true)),
+	}
+	m := SignalBreakdown(recs)
+	if m["rain"].Count != 2 {
+		t.Errorf("rain count: want 2, got %d", m["rain"].Count)
+	}
+	if m["heat"].Count != 1 {
+		t.Errorf("heat count: want 1, got %d", m["heat"].Count)
+	}
+}
+
+func TestBreakdownStats_BrierAvg(t *testing.T) {
+	s := BreakdownStats{Count: 2, BrierSum: 0.10}
+	want := 0.05
+	if got := s.BrierAvg(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("BrierAvg: want %.4f, got %.4f", want, got)
+	}
+}
+
+func TestBreakdownStats_BrierAvg_ZeroCount(t *testing.T) {
+	s := BreakdownStats{}
+	if got := s.BrierAvg(); got != 0 {
+		t.Errorf("BrierAvg with 0 count: want 0, got %v", got)
+	}
+}
+
+func TestBreakdownStats_WinRate(t *testing.T) {
+	s := BreakdownStats{Count: 4, Wins: 3}
+	want := 75.0
+	if got := s.WinRate(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("WinRate: want %.1f, got %.1f", want, got)
+	}
+}
+
+func TestSaveBet_PersistsCity(t *testing.T) {
+	dir, cleanup := tempDir(t)
+	defer cleanup()
+
+	d := &strategy.Decision{
+		Market: markets.Market{
+			ConditionID: "cond-city",
+			City:        "berlin",
+			Signal:      "heat",
+		},
+		Side:           "YES",
+		OurProbability: 0.75,
+		MarketPrice:    0.55,
+		SizeUSDC:       10,
+	}
+	if err := SaveBet(d, dir); err != nil {
+		t.Fatalf("SaveBet: %v", err)
+	}
+	recs, err := LoadHistory(dir)
+	if err != nil {
+		t.Fatalf("LoadHistory: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(recs))
+	}
+	if recs[0].City != "berlin" {
+		t.Errorf("City: want berlin, got %q", recs[0].City)
+	}
+	if recs[0].Signal != "heat" {
+		t.Errorf("Signal: want heat, got %q", recs[0].Signal)
+	}
+}
