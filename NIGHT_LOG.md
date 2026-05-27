@@ -1,5 +1,30 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 15:37 — TASK-015..019: Dedup, Auto-resolve, Prometheus, Walk-Forward, HTTP retry
+
+**Задачи:** TASK-015, TASK-016, TASK-017, TASK-018, TASK-019
+
+**Файлы созданы/изменены:**
+- `internal/calibration/calibration.go` — добавлен `LoadOpenPositions(dataRoot)` → `map[string]bool` unresolved conditionIDs; ~15 строк
+- `internal/calibration/resolver.go` — НОВЫЙ (~140 строк): `queryGammaMarket()` для Gamma API, `ResolveOpenBets()` — проверяет все open bets, вызывает `UpdateOutcome()` для resolved; `StartResolver()` — запускает горутину каждый час
+- `internal/metrics/metrics.go` — НОВЫЙ (~110 строк): stdlib Prometheus exposition format; метрики: bets_placed_total, bets_won_total, brier_score, edge_avg, bankroll_usdc; `/health` endpoint; `Start(addr, dataRoot)` запускает HTTP server
+- `internal/httpclient/httpclient.go` — НОВЫЙ (~140 строк): token-bucket rate limiter (10 req/s), exponential backoff retry (3 попытки), Retry-After header support, `New(opts)` + `Default` + `Get(url)` + `Do(req)`
+- `cmd/backtest/main.go` — добавлен `--walk-forward` флаг; `runWalkForward()` — 2 IS→OOS пары из 30-дневных окон; sweep minEdge 0.03-0.15; `printWalkForwardReport()` — overfitting ratio, IS/OOS PnL; ~120 строк
+- `cmd/bot/main.go` — добавлен `--metrics-port` флаг (default 9090), `calibration.StartResolver()` в loop режиме, `openPositions` dedup проверка перед каждой ставкой, импорт `metrics` пакета
+
+**Итого: 6 файлов, ~625 строк**
+
+`go build ./...` — ✅ чистая компиляция
+
+**Ключевые улучшения:**
+- Anti-double-bet: каждый цикл загружает unresolved conditionIDs, пропускает дубли
+- Auto-resolve: фоновая горутина каждый час обновляет исходы завершённых рынков через Gamma API
+- `/metrics` endpoint: мониторинг через Prometheus/Grafana без зависимостей
+- Walk-forward validation: `go run ./cmd/backtest --walk-forward` показывает overfitting ratio
+- HTTP retry: все collectors могут использовать `httpclient.Default.Get()` вместо bare http.Client
+
+---
+
 ## 2026-05-27 15:32 — TASK-014: Multi-day forecast selection + SunnyProbability
 
 **Задачи:** TASK-014 (новая, разработана в этой итерации)

@@ -34,12 +34,13 @@ import (
 // ── Flags ──────────────────────────────────────────────────────────────────
 
 var (
-	flagDays     = flag.Int("days", 90, "backtest window in days")
-	flagMinEdge  = flag.Float64("min-edge", 0.05, "minimum edge to place bet")
-	flagBankroll = flag.Float64("bankroll", 1000.0, "starting bankroll (USDC)")
-	flagMaxBet   = flag.Float64("max-bet", 25.0, "maximum bet size per market (USDC)")
-	flagVerbose  = flag.Bool("verbose", false, "print each simulated bet")
-	flagDataRoot = flag.String("data", ".", "project root for historical data cache")
+	flagDays        = flag.Int("days", 90, "backtest window in days")
+	flagMinEdge     = flag.Float64("min-edge", 0.05, "minimum edge to place bet")
+	flagBankroll    = flag.Float64("bankroll", 1000.0, "starting bankroll (USDC)")
+	flagMaxBet      = flag.Float64("max-bet", 25.0, "maximum bet size per market (USDC)")
+	flagVerbose     = flag.Bool("verbose", false, "print each simulated bet")
+	flagDataRoot    = flag.String("data", ".", "project root for historical data cache")
+	flagWalkForward = flag.Bool("walk-forward", false, "run walk-forward validation (3×30-day windows)")
 )
 
 // ── Gamma API types ────────────────────────────────────────────────────────
@@ -549,6 +550,14 @@ func main() {
 	// 4. Compute and print stats
 	stats := computeStats(results)
 	printReport(stats, results, *flagBankroll)
+
+	// 5. Optional walk-forward validation
+	if *flagWalkForward {
+		fmt.Println()
+		fmt.Println("⚙️  Running walk-forward validation…")
+		windows := runWalkForward(historicalData, gammaMarkets, *flagBankroll, *flagMaxBet)
+		printWalkForwardReport(windows)
+	}
 }
 
 // loadHistoricalData reads all cities' historical JSON files into a nested map.
@@ -705,4 +714,186 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ── Walk-Forward Validation ────────────────────────────────────────────────
+
+// filterByDateRange returns only results that fall within [from, to].
+func filterByDateRange(results []SimResult, from, to time.Time) []SimResult {
+	var out []SimResult
+	for _, r := range results {
+		d, err := time.Parse("2006-01-02", r.Date)
+		if err != nil {
+			continue
+		}
+		if !d.Before(from) && !d.After(to) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filterMarketsByDateRange returns Gamma markets whose end date is in [from, to].
+func filterMarketsByDateRange(markets []gammaMarket, from, to time.Time) []gammaMarket {
+	var out []gammaMarket
+	for _, m := range markets {
+		if m.EndDate == "" {
+			continue
+		}
+		d, err := parseDate(m.EndDate)
+		if err != nil {
+			continue
+		}
+		if !d.Before(from) && !d.After(to) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// WalkForwardWindow holds per-window results.
+type WalkForwardWindow struct {
+	Name         string
+	TrainFrom    time.Time
+	TrainTo      time.Time
+	ValidFrom    time.Time
+	ValidTo      time.Time
+	BestMinEdge  float64
+	InSamplePnL  float64 // best minEdge applied to training window
+	OoSPnL       float64 // best minEdge applied to validation window
+	InSampleBets int
+	OoSBets      int
+}
+
+// runWalkForward runs 3-fold walk-forward validation over the full dataset.
+//
+//   Window 1: train=days 60-90 ago → validate=days 30-60 ago
+//   Window 2: train=days 30-60 ago → validate=days 0-30 ago
+//   Window 3: train=days 0-90 ago  → validate=days 0-30 ago (combined train)
+//
+// We use a simpler split: divide the 90-day window into 3 equal 30-day chunks
+// and for each chunk i use it as training to find bestEdge, then apply to chunk i+1.
+func runWalkForward(
+	historicalData map[string]map[string]weather.Forecast,
+	gammaMarkets []gammaMarket,
+	bankroll, maxBet float64,
+) []WalkForwardWindow {
+	now := time.Now().UTC()
+	// Define 3 equal 30-day chunks going backwards from now.
+	// Chunk 0 = most recent (0-30 days ago), Chunk 1 = 30-60, Chunk 2 = 60-90.
+	// We use chunk 2 to train → test on chunk 1; chunk 1 to train → test on chunk 0.
+	type chunk struct{ from, to time.Time }
+	chunks := [3]chunk{
+		{from: now.AddDate(0, 0, -30), to: now},
+		{from: now.AddDate(0, 0, -60), to: now.AddDate(0, 0, -30)},
+		{from: now.AddDate(0, 0, -90), to: now.AddDate(0, 0, -60)},
+	}
+
+	edgeCandidates := make([]float64, 0, 13)
+	for e := 0.03; e <= 0.15+1e-9; e += 0.01 {
+		edgeCandidates = append(edgeCandidates, math.Round(e*100)/100)
+	}
+
+	var windows []WalkForwardWindow
+
+	// Walk-forward pairs: (train=chunk[i+1], validate=chunk[i])
+	for i := 0; i < 2; i++ {
+		validateChunk := chunks[i]
+		trainChunk := chunks[i+1]
+
+		trainMarkets := filterMarketsByDateRange(gammaMarkets, trainChunk.from, trainChunk.to)
+		valMarkets := filterMarketsByDateRange(gammaMarkets, validateChunk.from, validateChunk.to)
+
+		// Optimise: find minEdge that maximises total PnL on train set.
+		bestEdge := 0.05
+		bestPnL := math.Inf(-1)
+		for _, e := range edgeCandidates {
+			r := runBacktest(historicalData, trainMarkets, e, bankroll, maxBet, false)
+			s := computeStats(r)
+			if float64(s.TotalBets) == 0 {
+				continue
+			}
+			if s.TotalPnL > bestPnL {
+				bestPnL = s.TotalPnL
+				bestEdge = e
+			}
+		}
+
+		// In-sample stats with bestEdge.
+		isResults := runBacktest(historicalData, trainMarkets, bestEdge, bankroll, maxBet, false)
+		isStats := computeStats(isResults)
+
+		// Out-of-sample stats with bestEdge.
+		oosResults := runBacktest(historicalData, valMarkets, bestEdge, bankroll, maxBet, false)
+		oosStats := computeStats(oosResults)
+
+		name := fmt.Sprintf("W%d (train=%s…%s, val=%s…%s)",
+			i+1,
+			trainChunk.from.Format("01-02"), trainChunk.to.Format("01-02"),
+			validateChunk.from.Format("01-02"), validateChunk.to.Format("01-02"),
+		)
+
+		windows = append(windows, WalkForwardWindow{
+			Name:         name,
+			TrainFrom:    trainChunk.from,
+			TrainTo:      trainChunk.to,
+			ValidFrom:    validateChunk.from,
+			ValidTo:      validateChunk.to,
+			BestMinEdge:  bestEdge,
+			InSamplePnL:  isStats.TotalPnL,
+			OoSPnL:       oosStats.TotalPnL,
+			InSampleBets: isStats.TotalBets,
+			OoSBets:      oosStats.TotalBets,
+		})
+	}
+
+	return windows
+}
+
+// printWalkForwardReport prints a walk-forward validation summary.
+func printWalkForwardReport(windows []WalkForwardWindow) {
+	sep := strings.Repeat("─", 72)
+	fmt.Println(sep)
+	fmt.Println("📊 WALK-FORWARD VALIDATION (3 × 30-day windows, 2 IS→OOS pairs)")
+	fmt.Println(sep)
+
+	totalOoSPnL := 0.0
+	for _, w := range windows {
+		fmt.Printf("\n  %s\n", w.Name)
+		fmt.Printf("    Best minEdge   : %.0f%%\n", w.BestMinEdge*100)
+		fmt.Printf("    In-sample P&L  : %+.2f USDC  (%d bets)\n", w.InSamplePnL, w.InSampleBets)
+		fmt.Printf("    Out-of-sample  : %+.2f USDC  (%d bets)\n", w.OoSPnL, w.OoSBets)
+
+		// Overfitting ratio: IS_pnl_per_bet vs OOS_pnl_per_bet.
+		// Ratio close to 1.0 = no overfitting; >> 1 = overfitting.
+		if w.InSampleBets > 0 && w.OoSBets > 0 {
+			isPerBet := w.InSamplePnL / float64(w.InSampleBets)
+			oosPerBet := w.OoSPnL / float64(w.OoSBets)
+			ratio := 0.0
+			if oosPerBet != 0 {
+				ratio = isPerBet / oosPerBet
+			}
+			fmt.Printf("    Overfitting ratio: %.2f  (IS=%.3f, OOS=%.3f $/bet)\n",
+				ratio, isPerBet, oosPerBet)
+			if ratio > 2.0 {
+				fmt.Println("    ⚠️  Possible overfitting (IS >> OOS)")
+			} else if ratio < 0 {
+				fmt.Println("    ❌ Negative OOS — strategy doesn't generalise")
+			} else {
+				fmt.Println("    ✅ Acceptable overfitting ratio")
+			}
+		}
+
+		totalOoSPnL += w.OoSPnL
+	}
+
+	fmt.Println()
+	fmt.Println(sep)
+	fmt.Printf("  Combined out-of-sample P&L: %+.2f USDC\n", totalOoSPnL)
+	if totalOoSPnL > 0 {
+		fmt.Println("  ✅ Strategy shows positive OOS performance")
+	} else {
+		fmt.Println("  ❌ Negative total OOS — review strategy parameters")
+	}
+	fmt.Println(sep)
 }

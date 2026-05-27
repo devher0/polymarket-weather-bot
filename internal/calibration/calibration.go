@@ -267,6 +267,23 @@ func UpdateOutcome(conditionID string, outcome bool, dataRoot string) error {
 	return w.Error()
 }
 
+// LoadOpenPositions returns a set of conditionIDs that currently have at least
+// one unresolved bet in the history CSV. Used by the bot to skip markets where
+// a position already exists (anti-double-bet).
+func LoadOpenPositions(dataRoot string) (map[string]bool, error) {
+	records, err := LoadHistory(dataRoot)
+	if err != nil {
+		return nil, err
+	}
+	open := make(map[string]bool)
+	for _, r := range records {
+		if r.Outcome == nil { // unresolved = still open
+			open[r.ConditionID] = true
+		}
+	}
+	return open, nil
+}
+
 // BrierScore computes the mean Brier score over all resolved records.
 //
 // Brier score = (1/N) * Σ (forecast_probability - outcome)²

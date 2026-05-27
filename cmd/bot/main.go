@@ -19,6 +19,7 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
+	"github.com/devher0/polymarket-weather-bot/internal/metrics"
 	"github.com/devher0/polymarket-weather-bot/internal/notifier"
 	"github.com/devher0/polymarket-weather-bot/internal/polymarket"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
@@ -30,7 +31,13 @@ func main() {
 	loop           := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once)")
 	collectHistory := flag.Bool("collect-history", false, "Download 90-day historical data and exit")
 	testTelegram   := flag.Bool("test-telegram", false, "Send a test Telegram message and exit")
+	metricsPort    := flag.Int("metrics-port", 9090, "Prometheus /metrics port (0 = disabled)")
 	flag.Parse()
+
+	// Start the Prometheus metrics server unless disabled.
+	if *metricsPort > 0 {
+		metrics.Start(fmt.Sprintf(":%d", *metricsPort), ".")
+	}
 
 	_ = godotenv.Load()
 
@@ -70,6 +77,14 @@ func main() {
 
 	run := func() {
 		slog.Info("=== cycle start", "time", time.Now().Format(time.RFC3339))
+
+		// 0. Load open positions to avoid double-betting the same conditionID.
+		openPositions, err := calibration.LoadOpenPositions(".")
+		if err != nil {
+			slog.Warn("failed to load open positions, proceeding without dedup", "err", err)
+			openPositions = make(map[string]bool)
+		}
+		slog.Info("open positions loaded", "count", len(openPositions))
 
 		// 1. Fetch fused forecasts from all sources (aggregator)
 		fusedForecasts, err := collectors.AggregateAll(".")
@@ -118,6 +133,13 @@ func main() {
 		// 4. Evaluate and place bets
 		placed := 0
 		for _, m := range mkt {
+			// Skip markets where we already have an open position.
+			if openPositions[m.ConditionID] {
+				slog.Info("skipped: already have position on", "conditionID", m.ConditionID,
+					"question", truncate(m.Question, 60))
+				continue
+			}
+
 			var d *strategy.Decision
 
 			// Select forecast for the day the market expires.
@@ -192,6 +214,9 @@ func main() {
 	if *loop > 0 {
 		t := time.Duration(*loop) * time.Second
 		slog.Info("loop mode", "interval", t)
+
+		// Start the auto-resolver goroutine: checks resolved markets every hour.
+		calibration.StartResolver(".")
 
 		lastDigest := time.Time{}
 		for range time.Tick(t) {
