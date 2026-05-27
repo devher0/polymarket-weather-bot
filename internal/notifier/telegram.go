@@ -16,11 +16,78 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
+	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 )
+
+// usCitiesForAlerts is the list of US cities we check for active NWS alerts in
+// the daily digest.  Matches the list in collectors/noaa_alerts.go.
+var usCitiesForAlerts = []string{
+	"new_york",
+	"miami",
+	"chicago",
+	"los_angeles",
+	"san_francisco",
+}
+
+// cityDisplayName maps snake_case city keys to human-readable names for Telegram
+// messages.
+var cityDisplayName = map[string]string{
+	"new_york":      "New York",
+	"miami":         "Miami",
+	"chicago":       "Chicago",
+	"los_angeles":   "Los Angeles",
+	"san_francisco": "San Francisco",
+}
+
+// alertEmoji returns the appropriate emoji for an NWS alert level.
+func alertEmoji(level int) string {
+	switch level {
+	case collectors.AlertLevelWarning:
+		return "🔴"
+	case collectors.AlertLevelWatch:
+		return "🟡"
+	case collectors.AlertLevelAdvisory:
+		return "🔵"
+	default:
+		return "ℹ️"
+	}
+}
+
+// buildAlertDigest fetches active NWS alerts for all US cities and returns a
+// formatted HTML string for the Telegram message.  Returns "" if no alerts are
+// active.
+func buildAlertDigest() string {
+	var lines []string
+	for _, city := range usCitiesForAlerts {
+		summary, err := collectors.FetchAlerts(city)
+		if err != nil || summary.Level == collectors.AlertLevelNone {
+			continue
+		}
+		name := cityDisplayName[city]
+		if name == "" {
+			name = city
+		}
+		events := strings.Join(summary.Events, ", ")
+		if events == "" {
+			events = "active alert"
+		}
+		lines = append(lines, fmt.Sprintf(
+			"%s <b>%s:</b> %s",
+			alertEmoji(summary.Level),
+			name,
+			events,
+		))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n\n<b>⚠️ Active Weather Alerts</b>\n" + strings.Join(lines, "\n")
+}
 
 const telegramAPI = "https://api.telegram.org/bot%s/sendMessage"
 
@@ -195,6 +262,10 @@ func DailyDigest(dataRoot string) error {
 		winRateStr = fmt.Sprintf("%.1f%%", float64(allWins)/float64(allResolved)*100)
 	}
 
+	// Fetch active weather alerts for US cities (best-effort; errors are ignored
+	// so that an NWS outage never blocks the digest).
+	alertSection := buildAlertDigest()
+
 	msg := fmt.Sprintf(
 		"<b>🌦️ Weather Bot — Daily Digest</b>\n"+
 			"<i>%s UTC</i>\n\n"+
@@ -202,7 +273,7 @@ func DailyDigest(dataRoot string) error {
 			"Win rate: %s (%d/%d resolved)\n"+
 			"Open positions: %d\n"+
 			"Bets last 24h: %d\n"+
-			"Brier score: %s\n\n"+
+			"Brier score: %s%s\n\n"+
 			"<i>Next cycle: automatic</i>",
 		now.Format("2006-01-02 15:04"),
 		pnlEmoji, allPnL,
@@ -210,6 +281,7 @@ func DailyDigest(dataRoot string) error {
 		openCount,
 		recentBets,
 		brierStr,
+		alertSection,
 	)
 
 	return cfg.send(msg)

@@ -626,3 +626,32 @@
 - TASK-056: каждый цикл сохраняет снапшоты цен открытых позиций; обнаруживает adverse move >0.15 за 3 точки и блокирует ставку если edge недостаточен
 
 **Тесты:** все пакеты OK (`go test ./...`), `go build ./...` проходит без ошибок
+
+---
+
+## 2026-05-27 18:45 UTC — TASK-058 + TASK-059
+
+### TASK-058: Weather alert digest в Telegram DailyDigest
+**Файлы:** `internal/notifier/telegram.go` (+80 строк), `internal/collectors/noaa_alerts.go` (без изменений)
+
+Добавлена секция "⚠️ Active Weather Alerts" в `DailyDigest()`:
+- Новые helpers: `alertEmoji()`, `cityDisplayName`, `usCitiesForAlerts`, `buildAlertDigest()`
+- `buildAlertDigest()` вызывает `collectors.FetchAlerts()` для 5 US городов (new_york, miami, chicago, los_angeles, san_francisco)
+- Emoji по уровню: 🔴 Warning, 🟡 Watch, 🔵 Advisory
+- Секция не показывается если нет активных алертов (graceful: ошибки API игнорируются)
+- Добавлены импорты: `strings`, `collectors`
+- Нет circular dependency: collectors не импортирует notifier
+
+### TASK-059: Prediction log CSV export
+**Файлы:** `internal/strategy/prediction_log.go` (+55 строк), `cmd/dashboard/main.go` (+35 строк)
+
+Добавлен sub-command `dashboard export-predictions`:
+- Функция `ExportPredictionsCSV(date, dataRoot, outputPath string) error` в prediction_log.go
+- Конвертирует JSONL → CSV, заголовки: timestamp, condition_id, city, signal, our_p, yes_edge, no_edge, confidence, ensemble_unc, decision, size_usdc
+- Флаги: `--date=2026-05-27` (default: today UTC), `--output=predictions.csv` (default: stdout)
+- Обработчик `cmdExportPredictions()` в dashboard/main.go
+- Обновлены printUsage() и switch в main()
+- Добавлены импорты: `encoding/csv`, `strconv`
+
+**Итог:** `go build ./...` — OK, все тесты прошли (8 пакетов).
+**Строк добавлено:** ~170

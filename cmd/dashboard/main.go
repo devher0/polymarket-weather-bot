@@ -2,13 +2,15 @@
 //
 // Usage:
 //
-//	go run ./cmd/dashboard positions            — show open positions (from bets_history.csv)
-//	go run ./cmd/dashboard pnl                  — P&L summary from data/bets_history.csv
-//	go run ./cmd/dashboard next                 — top-5 bet candidates right now
-//	go run ./cmd/dashboard explain              — full decision audit table for all current markets
-//	go run ./cmd/dashboard report               — export market evaluation snapshot to JSON (stdout)
-//	go run ./cmd/dashboard report --output=r.json — write to file instead of stdout
-//	go run ./cmd/dashboard all                  — run all sub-commands
+//	go run ./cmd/dashboard positions                          — show open positions (from bets_history.csv)
+//	go run ./cmd/dashboard pnl                               — P&L summary from data/bets_history.csv
+//	go run ./cmd/dashboard next                              — top-5 bet candidates right now
+//	go run ./cmd/dashboard explain                           — full decision audit table for all current markets
+//	go run ./cmd/dashboard report                            — export market evaluation snapshot to JSON (stdout)
+//	go run ./cmd/dashboard report --output=r.json            — write to file instead of stdout
+//	go run ./cmd/dashboard export-predictions                — export today's prediction log to CSV (stdout)
+//	go run ./cmd/dashboard export-predictions --date=2026-05-27 --output=predictions.csv — specific date, to file
+//	go run ./cmd/dashboard all                               — run all sub-commands
 package main
 
 import (
@@ -488,6 +490,13 @@ func main() {
 		outputFile := rFlags.String("output", "", "Write JSON report to this file (default: stdout)")
 		_ = rFlags.Parse(os.Args[2:])
 		cmdReport(dataRoot, *outputFile)
+	case "export-predictions":
+		// Parse --date and --output flags.
+		epFlags := flag.NewFlagSet("export-predictions", flag.ExitOnError)
+		epDate := epFlags.String("date", "", "Date to export (default: today, format: 2006-01-02)")
+		epOutput := epFlags.String("output", "", "Write CSV to this file (default: stdout)")
+		_ = epFlags.Parse(os.Args[2:])
+		cmdExportPredictions(dataRoot, *epDate, *epOutput)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -505,15 +514,39 @@ func printUsage() {
 	fmt.Println("Usage: go run ./cmd/dashboard <command>")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  positions              Show open (unresolved) positions")
-	fmt.Println("  pnl                   P&L history from data/bets_history.csv")
-	fmt.Println("  next                  Top-5 bet candidates right now")
-	fmt.Println("  forecast              Fused weather forecast table for all cities")
-	fmt.Println("  cache                 Show forecast cache status (age of cached data)")
-	fmt.Println("  explain               Full decision audit: why each market is BET or SKIP")
-	fmt.Println("  analysis              Per-city/signal breakdown of today's prediction log")
-	fmt.Println("  report [--output=f]   Export market evaluation snapshot to JSON")
-	fmt.Println("  all                   Run all sub-commands")
+	fmt.Println("  positions                          Show open (unresolved) positions")
+	fmt.Println("  pnl                               P&L history from data/bets_history.csv")
+	fmt.Println("  next                              Top-5 bet candidates right now")
+	fmt.Println("  forecast                          Fused weather forecast table for all cities")
+	fmt.Println("  cache                             Show forecast cache status (age of cached data)")
+	fmt.Println("  explain                           Full decision audit: why each market is BET or SKIP")
+	fmt.Println("  analysis                          Per-city/signal breakdown of today's prediction log")
+	fmt.Println("  report [--output=f]               Export market evaluation snapshot to JSON")
+	fmt.Println("  export-predictions [--date=D]     Export prediction log to CSV (stdout or --output=f)")
+	fmt.Println("  all                               Run all sub-commands")
+}
+
+// ── export-predictions (TASK-059) ─────────────────────────────────────────────
+
+// cmdExportPredictions converts the JSONL prediction log for date (or today) to
+// CSV and writes it to outputPath (or stdout when outputPath is "").
+func cmdExportPredictions(dataRoot, date, outputPath string) {
+	if date == "" {
+		date = time.Now().UTC().Format("2006-01-02")
+	}
+
+	if outputPath != "" {
+		fmt.Printf("Exporting predictions for %s → %s\n", date, outputPath)
+	}
+
+	if err := strategy.ExportPredictionsCSV(date, dataRoot, outputPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if outputPath != "" {
+		fmt.Printf("Done. Headers: timestamp, condition_id, city, signal, our_p, yes_edge, no_edge, confidence, ensemble_unc, decision, size_usdc\n")
+	}
 }
 
 // cmdExplain fetches all active markets and runs ExplainEvaluate on each,

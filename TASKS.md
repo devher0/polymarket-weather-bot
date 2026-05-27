@@ -452,7 +452,7 @@ type FusedForecast struct {
 - Новый sub-command `dashboard analysis` — таблица: City/Signal | Evaluated | Bets | Skip% | AvgEdge | AvgConf | TotalSize
 - Используется для пост-анализа: "почему бот не ставил на NYC/rain сегодня?"
 
-### [ ] TASK-058: Weather alert digest в Telegram DailyDigest
+### [x] 2026-05-27 — TASK-058: Weather alert digest в Telegram DailyDigest
 **Файлы:** `internal/collectors/noaa_alerts.go` (обновить), `internal/notifier/telegram.go` (обновить)
 - В `DailyDigest()` добавить секцию "⚠️ Active Weather Alerts"
 - Для каждого US города с AlertLevel > 0 добавлять строку: "🔴 New York: Excessive Heat Warning"
@@ -460,7 +460,7 @@ type FusedForecast struct {
 - Вызывать `FetchAlerts()` для каждого US города (new_york, miami, chicago, los_angeles, san_francisco)
 - Если нет алертов — секция не показывается
 
-### [ ] TASK-059: Prediction log CSV export
+### [x] 2026-05-27 — TASK-059: Prediction log CSV export
 **Файлы:** `internal/strategy/prediction_log.go` (обновить), `cmd/dashboard/main.go` (обновить)
 - Новый sub-command `dashboard export-predictions --date=2026-05-27 --output=predictions.csv`
 - Конвертирует JSONL → CSV формат совместимый с Excel/pandas

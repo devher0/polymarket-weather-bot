@@ -12,12 +12,14 @@
 package strategy
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -205,4 +207,80 @@ func PredictionSummary(records []PredictionRecord) string {
 		}
 	}
 	return fmt.Sprintf("evaluated=%d bets=%d skip=%d", total, bets, total-bets)
+}
+
+// csvHeader defines the column order for prediction CSV exports.
+// Compatible with Excel and pandas (pd.read_csv).
+var csvHeader = []string{
+	"timestamp",
+	"condition_id",
+	"city",
+	"signal",
+	"our_p",
+	"yes_edge",
+	"no_edge",
+	"confidence",
+	"ensemble_unc",
+	"decision",
+	"size_usdc",
+}
+
+// ExportPredictionsCSV converts the JSONL prediction log for the given date to
+// a CSV file at outputPath.  If outputPath is "", output is written to stdout.
+//
+// Columns: timestamp, condition_id, city, signal, our_p, yes_edge, no_edge,
+// confidence, ensemble_unc, decision, size_usdc.
+//
+// The date parameter must be in "2006-01-02" format.  An empty date defaults to
+// today (UTC).
+func ExportPredictionsCSV(date, dataRoot, outputPath string) error {
+	if date == "" {
+		date = time.Now().UTC().Format("2006-01-02")
+	}
+
+	records, err := LoadPredictions(date, dataRoot)
+	if err != nil {
+		return fmt.Errorf("export predictions: load %s: %w", date, err)
+	}
+
+	var w *csv.Writer
+	if outputPath == "" {
+		w = csv.NewWriter(os.Stdout)
+	} else {
+		f, err := os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("export predictions: create %s: %w", outputPath, err)
+		}
+		defer f.Close()
+		w = csv.NewWriter(f)
+	}
+
+	if err := w.Write(csvHeader); err != nil {
+		return fmt.Errorf("export predictions: write header: %w", err)
+	}
+
+	for _, r := range records {
+		row := []string{
+			r.Timestamp,
+			r.ConditionID,
+			r.City,
+			r.Signal,
+			strconv.FormatFloat(r.OurP, 'f', 6, 64),
+			strconv.FormatFloat(r.YesEdge, 'f', 6, 64),
+			strconv.FormatFloat(r.NoEdge, 'f', 6, 64),
+			strconv.FormatFloat(r.Confidence, 'f', 6, 64),
+			strconv.FormatFloat(r.EnsembleUncertainty, 'f', 6, 64),
+			r.Decision,
+			strconv.FormatFloat(r.SizeUSDC, 'f', 4, 64),
+		}
+		if err := w.Write(row); err != nil {
+			return fmt.Errorf("export predictions: write row: %w", err)
+		}
+	}
+
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("export predictions: flush: %w", err)
+	}
+	return nil
 }
