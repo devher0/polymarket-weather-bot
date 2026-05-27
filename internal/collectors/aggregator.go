@@ -425,6 +425,79 @@ func AggregateAll(dataRoot string) (map[string]*FusedForecast, error) {
 	return out, nil
 }
 
+// AggregateForCities fetches fresh forecasts only for cities that appear in
+// activeCities (i.e. have at least one active Polymarket weather market).
+//
+// Cities not in activeCities are served from the on-disk cache when available;
+// if no cache exists for an inactive city it is simply omitted from the result
+// and a log line is emitted. This reduces unnecessary API calls on quiet days
+// when only 3–4 cities have live markets (TASK-043).
+func AggregateForCities(activeCities []string, dataRoot string) (map[string]*FusedForecast, error) {
+	activeSet := make(map[string]bool, len(activeCities))
+	for _, c := range activeCities {
+		activeSet[c] = true
+	}
+
+	type cityResult struct {
+		city string
+		ff   *FusedForecast
+		err  error
+	}
+
+	allCities := make([]string, 0, len(weather.Cities))
+	for city := range weather.Cities {
+		allCities = append(allCities, city)
+	}
+
+	ch := make(chan cityResult, len(allCities))
+	var wg sync.WaitGroup
+
+	for _, city := range allCities {
+		city := city // capture
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if activeSet[city] {
+				// Active city: fetch fresh data (Aggregate checks cache internally first).
+				ff, err := Aggregate(city, dataRoot)
+				ch <- cityResult{city: city, ff: ff, err: err}
+				return
+			}
+			// Inactive city: only serve from cache; skip expensive API calls.
+			if cached, ok := LoadForecastCache(city, 0, dataRoot, 0); ok {
+				ch <- cityResult{city: city, ff: cached}
+			} else {
+				slog.Info("skipping forecast: no active markets", "city", city)
+				ch <- cityResult{city: city} // no data, no error
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	out := make(map[string]*FusedForecast, len(allCities))
+	var errs []string
+
+	for res := range ch {
+		if res.err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", res.city, res.err))
+			continue
+		}
+		if res.ff != nil {
+			out[res.city] = res.ff
+		}
+	}
+
+	// Only error when ALL active cities failed; inactive-city cache misses are non-fatal.
+	if len(errs) > 0 && len(out) == 0 {
+		return nil, fmt.Errorf("aggregator: all cities failed: %v", errs)
+	}
+	return out, nil
+}
+
 // stddev computes population standard deviation of a slice.
 func stddev(vals []float64) float64 {
 	if len(vals) == 0 {

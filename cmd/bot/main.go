@@ -170,18 +170,19 @@ func main() {
 			history = nil
 		}
 
-		// TASK-033: scale bankroll by Brier-score-based multiplier.
-		// Well-calibrated models get more capital; poor models less.
+		// TASK-044: load persisted bankroll (updated across sessions via bankroll.json).
+		// Apply the Brier-score multiplier on top of the persisted amount so that
+		// a well-calibrated bot naturally bets larger as it proves itself.
+		baseBankroll := calibration.LoadBankroll(cfg.DataRoot)
 		brierScore, _, _ := calibration.BrierScore(history)
 		bankrollMultiplier := calibration.BankrollMultiplier(brierScore)
-		effectiveBankroll := 100.0 * bankrollMultiplier
-		if bankrollMultiplier != 1.0 {
-			slog.Info("bankroll multiplier applied",
-				"brier_score", fmt.Sprintf("%.4f", brierScore),
-				"multiplier", fmt.Sprintf("%.2f", bankrollMultiplier),
-				"effective_bankroll", fmt.Sprintf("%.2f", effectiveBankroll),
-			)
-		}
+		effectiveBankroll := baseBankroll * bankrollMultiplier
+		slog.Info("bankroll loaded",
+			"base", fmt.Sprintf("%.2f USDC", baseBankroll),
+			"brier_score", fmt.Sprintf("%.4f", brierScore),
+			"multiplier", fmt.Sprintf("%.2f", bankrollMultiplier),
+			"effective", fmt.Sprintf("%.2f USDC", effectiveBankroll),
+		)
 
 		// Risk summary at cycle start.
 		slog.Info(risk.Summary(history, risk.Config{
@@ -205,25 +206,57 @@ func main() {
 		}
 		slog.Info("open positions loaded", "count", len(openPositions))
 
-		// 1. Fetch fused forecasts from all sources (aggregator).
+		// 1. Discover weather markets FIRST so we know which cities are active.
+		// TASK-043: only fetch fresh forecasts for cities that have live markets.
+		mkt, err := markets.GetWeatherMarkets()
+		if err != nil {
+			slog.Error("markets fetch failed", "err", err)
+			return
+		}
+		slog.Info("weather markets found", "count", len(mkt))
+
+		if len(mkt) == 0 {
+			slog.Warn("no weather markets found on Polymarket right now")
+			return
+		}
+		sess.marketsFound.Add(int64(len(mkt)))
+
+		// Collect unique city slugs from active markets, intersected with configured cities.
+		configuredCities := make(map[string]bool, len(cfg.Cities))
+		for _, c := range cfg.Cities {
+			configuredCities[c] = true
+		}
+		activeCitySet := make(map[string]bool)
+		for _, m := range mkt {
+			if m.City != "" && configuredCities[m.City] {
+				activeCitySet[m.City] = true
+			}
+		}
+		activeCitiesSlice := make([]string, 0, len(activeCitySet))
+		for c := range activeCitySet {
+			activeCitiesSlice = append(activeCitiesSlice, c)
+		}
+		slog.Info("active cities with markets", "count", len(activeCitiesSlice), "cities", activeCitiesSlice)
+
+		// 2. Fetch fused forecasts — fresh only for cities with active markets.
 		// TASK-042: detect significant forecast shifts (e.g. incoming storms)
-		// and notify via Telegram so the operator can review open positions.
-		// DetectForecastShift must be called BEFORE AggregateAll overwrites cache.
-		for _, city := range cfg.Cities {
+		// DetectForecastShift must be called BEFORE AggregateForCities overwrites cache.
+		for _, city := range activeCitiesSlice {
 			if shift := collectors.DetectForecastShift(city, 0, nil, cfg.DataRoot); shift != nil && shift.Significant {
-				// We'll re-check after aggregate to get actual new values.
-				// Pre-pass: just flag that a shift may be coming.
-				_ = shift
+				_ = shift // will re-check after fetching new data below
 			}
 		}
 
-		fusedForecasts, err := collectors.AggregateAll(cfg.DataRoot)
+		fusedForecasts, err := collectors.AggregateForCities(activeCitiesSlice, cfg.DataRoot)
 		if err != nil {
 			slog.Warn("aggregator failed, falling back to OpenMeteo only", "err", err)
 		}
 
-		// TASK-042: now check shifts against freshly-fetched forecasts and notify.
+		// TASK-042: notify on significant forecast shifts for active cities.
 		for city, ff := range fusedForecasts {
+			if !activeCitySet[city] {
+				continue // only alert on cities with live markets
+			}
 			shift := collectors.DetectForecastShift(city, 0, ff, cfg.DataRoot)
 			if shift != nil && shift.Significant {
 				oldMaxTemp := ff.Forecast.MaxTempC - shift.DeltaMaxTempC
@@ -235,18 +268,9 @@ func main() {
 			}
 		}
 
-		// 2. Build active-city set from config.
-		activeCity := make(map[string]bool, len(cfg.Cities))
-		for _, c := range cfg.Cities {
-			activeCity[c] = true
-		}
-
-		// 3. Fetch plain OpenMeteo forecasts for fallback Evaluate().
+		// 3. Fetch plain OpenMeteo forecasts for fallback Evaluate() (active cities only).
 		legacyForecasts := make(map[string][]weather.Forecast)
-		for city := range weather.Cities {
-			if !activeCity[city] {
-				continue
-			}
+		for city := range activeCitySet {
 			fc, err := weather.GetForecast(city, 3)
 			if err != nil {
 				slog.Warn("forecast failed", "city", city, "err", err)
@@ -269,24 +293,10 @@ func main() {
 			)
 		}
 
-		// 4. Discover weather markets
-		mkt, err := markets.GetWeatherMarkets()
-		if err != nil {
-			slog.Error("markets fetch failed", "err", err)
-			return
-		}
-		slog.Info("weather markets found", "count", len(mkt))
-
-		if len(mkt) == 0 {
-			slog.Warn("no weather markets found on Polymarket right now")
-			return
-		}
-		sess.marketsFound.Add(int64(len(mkt)))
-
-		// 4b. Enrich markets with liquidity data (order book depth).
+		// 4. Enrich markets with liquidity data (order book depth).
 		markets.EnrichWithLiquidity(mkt)
 
-		// 4c. TASK-030: score and sort markets before evaluation.
+		// 4b. TASK-030: score and sort markets before evaluation.
 		// This ensures the highest-value opportunities are evaluated first,
 		// preventing the daily cap from being consumed by marginal markets.
 		type scored struct {
@@ -299,7 +309,7 @@ func main() {
 		staleThreshold := maxForecastAge(cfg)
 
 		for _, m := range mkt {
-			if m.City != "" && !activeCity[m.City] {
+			if m.City != "" && !configuredCities[m.City] {
 				continue
 			}
 
@@ -437,6 +447,13 @@ func main() {
 					}
 					if err := notifier.NotifyBet(d); err != nil {
 						slog.Warn("telegram notify failed", "err", err)
+					}
+					// TASK-044: deduct bet size from persisted bankroll.
+					newBankroll, err := calibration.AdjustBankrollOnBet(d.SizeUSDC, cfg.DataRoot)
+					if err != nil {
+						slog.Warn("bankroll update failed", "err", err)
+					} else {
+						effectiveBankroll = newBankroll * calibration.BankrollMultiplier(brierScore)
 					}
 					placed++
 					sess.betsPlaced.Add(1)

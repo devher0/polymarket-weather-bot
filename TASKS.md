@@ -370,7 +370,7 @@ type FusedForecast struct {
 - Отправлять Telegram-уведомление `NotifyForecastShift(city, old, new FusedForecast)` при значимом изменении
 - Помогает оператору заметить внезапные погодные события (фронты, шторма) которые могут открыть новые ставки
 
-### [ ] TASK-043: Active-city filter — фетчить прогнозы только для городов с активными рынками
+### [x] 2026-05-27 — TASK-043: Active-city filter — фетчить прогнозы только для городов с активными рынками
 **Файл:** `cmd/bot/main.go` (обновить), `internal/collectors/aggregator.go` (обновить)
 - Перед AggregateAll(): сделать быстрый запрос рынков, собрать уникальные города из активных маркетов
 - Передавать `activeCities []string` в новую функцию `AggregateForCities(cities, dataRoot)`
@@ -378,7 +378,7 @@ type FusedForecast struct {
 - Логировать "skipping forecast for {city}: no active markets"
 - Экономия CPU/API: в тихие дни может быть 3-4 активных города вместо 9
 
-### [ ] TASK-044: Bankroll history — сохранение состояния bankroll между сессиями
+### [x] 2026-05-27 — TASK-044: Bankroll history — сохранение состояния bankroll между сессиями
 **Файл:** `internal/calibration/bankroll.go` (новый), `cmd/bot/main.go` (обновить)
 - Сохранять текущий bankroll в `data/bankroll.json` после каждого цикла: {bankroll_usdc, updated_at}
 - При старте: загружать сохранённый bankroll вместо фиксированных 100.0 USDC

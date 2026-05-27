@@ -1,5 +1,25 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 17:27 UTC — TASK-043 + TASK-044: Active-city filter + Bankroll persistence
+
+**Задачи:** TASK-043, TASK-044
+
+**Файлы созданы/изменены:**
+- `internal/calibration/bankroll.go` — НОВЫЙ (~105 строк): `LoadBankroll(dataRoot)` → читает `data/bankroll.json`, возвращает 100.0 по умолчанию; `SaveBankroll(bankroll, dataRoot)` → сохраняет JSON с `bankroll_usdc` + `updated_at`; `AdjustBankrollOnBet(size, dataRoot)` → вычитает размер ставки и сохраняет, логирует "before→after"; `AdjustBankrollOnResolve(size, marketPrice, won, dataRoot)` → добавляет payout (size/marketPrice) при выигрыше или ноль при проигрыше; thread-safe через `bankrollMu sync.Mutex`
+- `internal/collectors/aggregator.go` — новая функция `AggregateForCities(activeCities, dataRoot)` (~65 строк): принимает список активных городов; для активных городов — вызывает `Aggregate()` (свежий фетч с cache-fallback внутри); для остальных городов — только cache без сетевых вызовов; логирует "skipping forecast: no active markets" при cache miss на неактивных городах; конкурентно через goroutines + channel
+- `cmd/bot/main.go` — реструктурирован `run()`: (1) маркеты фетчатся ПЕРВЫМИ чтобы определить активные города; (2) `AggregateForCities(activeCitiesSlice, dataRoot)` вместо `AggregateAll` — только активные города получают свежие данные; (3) `calibration.LoadBankroll()` вместо hardcoded 100.0; (4) `calibration.AdjustBankrollOnBet()` после каждой реальной ставки; переменная `activeCity` → `configuredCities` (более точное имя); ~40 строк нетто (+/-)
+- `internal/calibration/resolver.go` — после resolve победившей ставки вызывает `AdjustBankrollOnResolve(r.SizeUSDC, r.MarketPrice, won, dataRoot)` → банкролл растёт на payout при выигрыше; ~5 строк
+
+**Ключевые эффекты:**
+- TASK-043: если активных рынков только 3-4 города — экономия ~55-67% API вызовов на прогнозы за цикл; остальные города обслуживаются из disk cache (если есть) или пропускаются
+- TASK-044: банкролл сохраняется между перезапусками бота в `data/bankroll.json`; Kelly-sizing теперь работает с реальным накопленным балансом вместо hardcoded 100 USDC; Brier multiplier применяется поверх сохранённого значения
+
+**Строк кода:** ~215 (+105 новый файл, +65 aggregator, +40 bot, +5 resolver)
+
+`go build ./...` — ✅  `go test ./...` — ✅ все PASS
+
+---
+
 ## 2026-05-27 17:17 UTC — TASK-041 + TASK-042: Forecast cache persistence + change detector
 
 **Задачи:** TASK-041, TASK-042

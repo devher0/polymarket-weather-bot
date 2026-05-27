@@ -141,6 +141,12 @@ func ResolveOpenBets(dataRoot string) (int, error) {
 			slog.Debug("resolver: source accuracy update skipped", "conditionID", r.ConditionID, "err", err)
 		}
 
+		// TASK-044: update persisted bankroll based on bet outcome.
+		// Payout formula: SizeUSDC / MarketPrice for a win (binary prediction market).
+		if _, err := AdjustBankrollOnResolve(r.SizeUSDC, r.MarketPrice, won, dataRoot); err != nil {
+			slog.Warn("resolver: bankroll update failed", "conditionID", r.ConditionID, "err", err)
+		}
+
 		slog.Info("resolver: bet resolved",
 			"conditionID", r.ConditionID,
 			"side", r.Side,
