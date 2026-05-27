@@ -404,7 +404,7 @@ type FusedForecast struct {
   - Итог: "Evaluated: N | Bets: K | Skipped: N-K"
 - Полезно для дебаггинга: понять почему бот не ставит на конкретный рынок
 
-### [ ] — TASK-046: Webhook уведомления при ставках
+### [x] 2026-05-27 — TASK-046: Webhook уведомления при ставках
 **Файл:** `internal/notifier/webhook.go` (новый), `config/config.go` (обновить), `config/config.yaml` (обновить), `cmd/bot/main.go` (обновить)
 - `PostWebhook(url string, payload any) error` — POST JSON с таймаутом 3s, retry 1 раз
 - Payload: `{event, conditionID, side, size, edge, ourP, marketP, city, signal, timestamp}`
@@ -413,7 +413,7 @@ type FusedForecast struct {
 - В bot/main.go: вызывать PostWebhook после каждой ставки и в конце цикла
 - Позволяет интегрировать бота с внешними системами (алерты, trading journal, Zapier)
 
-### [ ] — TASK-047: Adaptive loop interval — динамический интервал цикла
+### [x] 2026-05-27 — TASK-047: Adaptive loop interval — динамический интервал цикла
 **Файл:** `cmd/bot/main.go` (обновить)
 - После каждого цикла вычислять следующий интервал на основе результатов:
   - Нашли ≥1 ставку с edge > 0.15 → следующий цикл через 5 мин (проверить остались ли открытые рынки)
@@ -423,7 +423,7 @@ type FusedForecast struct {
 - Логировать "next cycle in Xs (adaptive: found N bets)"
 - Экономия API вызовов и compute в тихие периоды
 
-### [ ] — TASK-048: Расширенные regex для парсинга рынков
+### [x] 2026-05-27 — TASK-048: Расширенные regex для парсинга рынков
 **Файл:** `internal/markets/markets.go` (обновить)
 - Добавить температурный regex без явного C/F: `(\d+)\s*degrees?` → попытаться угадать единицу по контексту (если >50 → скорее F)
 - Добавить сигналы: "fog" (туман), "humid" (влажность), "dry" (засуха)
@@ -431,7 +431,7 @@ type FusedForecast struct {
 - Добавить парсинг диапазона температур: "between 20°C and 30°C" → для heat сигнала ThresholdC = верхняя граница
 - Тест: `markets_test.go` с 10 новыми тест-кейсами
 
-### [ ] — TASK-049: `--dry-run-file` — экспорт результатов цикла в JSON
+### [x] 2026-05-27 — TASK-049: `--dry-run-file` — экспорт результатов цикла в JSON
 **Файл:** `cmd/bot/main.go` (обновить)
 - Флаг `--dry-run-file=output.json` — после каждого цикла записывать результаты в JSON файл
 - Структура: `{timestamp, cycle, markets_evaluated, bets_recommended, decisions: [{market, side, ourP, edge, size, reason}]}`

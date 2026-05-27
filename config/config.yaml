@@ -88,3 +88,8 @@ poly_api_passphrase: ""
 # Env overrides: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 telegram_bot_token: ""
 telegram_chat_id: ""
+
+# ── Webhook notifications (TASK-046) ─────────────────────────────────────────
+# POST JSON to this URL on bet_placed / bet_skipped_risk / cycle_complete / error.
+# Leave empty to disable. Env override: WEBHOOK_URL
+webhook_url: ""

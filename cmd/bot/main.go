@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -68,6 +69,25 @@ func (s *sessionStats) summary(dryRun bool) string {
 	return strings.Join(lines, "\n")
 }
 
+// dryRunRecord is one market decision written to the --dry-run-file JSON output.
+type dryRunRecord struct {
+	Market string  `json:"market"`
+	Side   string  `json:"side"`
+	OurP   float64 `json:"ourP"`
+	Edge   float64 `json:"edge"`
+	Size   float64 `json:"size"`
+	Reason string  `json:"reason"`
+}
+
+// dryRunOutput is the full JSON file written after each cycle.
+type dryRunOutput struct {
+	Timestamp          string         `json:"timestamp"`
+	Cycle              int64          `json:"cycle"`
+	MarketsEvaluated   int            `json:"markets_evaluated"`
+	BetsRecommended    int            `json:"bets_recommended"`
+	Decisions          []dryRunRecord `json:"decisions"`
+}
+
 func main() {
 	live            := flag.Bool("live", false, "Disable dry-run (real money)")
 	loopFlag        := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once; overrides config)")
@@ -75,6 +95,7 @@ func main() {
 	testTelegram    := flag.Bool("test-telegram", false, "Send a test Telegram message and exit")
 	metricsPortFlag := flag.Int("metrics-port", -1, "Prometheus /metrics port (0=disabled; overrides config)")
 	configFile      := flag.String("config", "", "Path to config.yaml (default: config/config.yaml)")
+	dryRunFile      := flag.String("dry-run-file", "", "Write cycle results to this JSON file (TASK-049)")
 	flag.Parse()
 
 	// Set up graceful shutdown context — cancelled on SIGTERM or SIGINT.
@@ -159,7 +180,18 @@ func main() {
 
 	sess := &sessionStats{startTime: time.Now()}
 
-	run := func() {
+	// cycleResult holds summary data from one run() call used for adaptive
+	// loop scheduling (TASK-047) and dry-run-file output (TASK-049).
+	type cycleResult struct {
+		placed            int
+		marketsFound      int
+		highEdgeBet       bool           // at least one bet with edge > 0.15
+		thinLiquidityOnly bool           // all candidate markets had thin liquidity
+		decisions         []dryRunRecord // populated for dry-run-file (TASK-049)
+	}
+
+	run := func() cycleResult {
+		var res cycleResult
 		sess.cycleCount.Add(1)
 		slog.Info("=== cycle start", "time", time.Now().Format(time.RFC3339))
 
@@ -195,7 +227,7 @@ func main() {
 		// Pre-check: if already over a session-level limit, skip entire cycle.
 		if err := riskMgr.AllowBet(history); err != nil {
 			slog.Warn("risk gate blocked entire cycle", "reason", err.Error())
-			return
+			return res
 		}
 
 		openPositions := make(map[string]bool, len(history))
@@ -211,13 +243,13 @@ func main() {
 		mkt, err := markets.GetWeatherMarkets()
 		if err != nil {
 			slog.Error("markets fetch failed", "err", err)
-			return
+			return res
 		}
 		slog.Info("weather markets found", "count", len(mkt))
 
 		if len(mkt) == 0 {
 			slog.Warn("no weather markets found on Polymarket right now")
-			return
+			return res
 		}
 		sess.marketsFound.Add(int64(len(mkt)))
 
@@ -344,6 +376,19 @@ func main() {
 			scoredList = append(scoredList, scored{m, ff, sc})
 		}
 
+		// TASK-047: detect if all candidates have thin liquidity.
+		if len(scoredList) > 0 {
+			allThin := true
+			for _, sc := range scoredList {
+				if !sc.m.ThinLiquidity {
+					allThin = false
+					break
+				}
+			}
+			res.thinLiquidityOnly = allThin
+		}
+		res.marketsFound = len(scoredList)
+
 		// Sort descending by score.
 		sort.Slice(scoredList, func(i, j int) bool {
 			return scoredList[i].score > scoredList[j].score
@@ -412,6 +457,10 @@ func main() {
 			// Per-bet risk gate: re-evaluate after each bet (history may grow).
 			if err := riskMgr.AllowBet(history); err != nil {
 				slog.Warn("risk gate blocked bet", "reason", err.Error())
+				// TASK-046: webhook notification for risk-blocked bets.
+				if wErr := notifier.WebhookBetSkippedRisk(m.ConditionID, err.Error()); wErr != nil {
+					slog.Warn("webhook notify failed", "event", "bet_skipped_risk", "err", wErr)
+				}
 				break // stop placing more bets this cycle
 			}
 
@@ -441,12 +490,20 @@ func main() {
 				if err := placeBet(d); err != nil {
 					slog.Error("order failed", "err", err)
 					_ = notifier.NotifyError("placeBet", err)
+					_ = notifier.WebhookError("placeBet", err) // TASK-046
 				} else {
 					if err := calibration.SaveBet(d, cfg.DataRoot); err != nil {
 						slog.Warn("calibration save failed", "err", err)
 					}
 					if err := notifier.NotifyBet(d); err != nil {
 						slog.Warn("telegram notify failed", "err", err)
+					}
+					// TASK-046: webhook notification for placed bets.
+					if wErr := notifier.WebhookBetPlaced(
+						d.Market.ConditionID, d.Side, d.Market.City, d.Market.Signal, d.Reason,
+						d.SizeUSDC, d.Edge, d.OurProbability, d.MarketPrice,
+					); wErr != nil {
+						slog.Warn("webhook notify failed", "event", "bet_placed", "err", wErr)
 					}
 					// TASK-044: deduct bet size from persisted bankroll.
 					newBankroll, err := calibration.AdjustBankrollOnBet(d.SizeUSDC, cfg.DataRoot)
@@ -458,11 +515,35 @@ func main() {
 					placed++
 					sess.betsPlaced.Add(1)
 					placedThisCycle = append(placedThisCycle, m)
+					if d.Edge > 0.15 {
+						res.highEdgeBet = true // TASK-047
+					}
+					// TASK-049: record decision for dry-run-file (live mode too).
+					res.decisions = append(res.decisions, dryRunRecord{
+						Market: truncate(d.Market.Question, 80),
+						Side:   d.Side,
+						OurP:   d.OurProbability,
+						Edge:   d.Edge,
+						Size:   d.SizeUSDC,
+						Reason: d.Reason,
+					})
 				}
 			} else {
 				placed++
 				sess.betsPlaced.Add(1)
 				placedThisCycle = append(placedThisCycle, m)
+				if d.Edge > 0.15 {
+					res.highEdgeBet = true // TASK-047
+				}
+				// TASK-049: record decision for dry-run-file.
+				res.decisions = append(res.decisions, dryRunRecord{
+					Market: truncate(d.Market.Question, 80),
+					Side:   d.Side,
+					OurP:   d.OurProbability,
+					Edge:   d.Edge,
+					Size:   d.SizeUSDC,
+					Reason: d.Reason,
+				})
 				// Accumulate estimated dry-run P&L (edge × size, in cents).
 				pnlCents := int64(d.Edge * d.SizeUSDC * 100)
 				sess.dryRunPnL.Add(pnlCents)
@@ -474,20 +555,87 @@ func main() {
 		} else {
 			slog.Info("cycle done", "bets_placed", placed)
 		}
+
+		// TASK-046: webhook cycle_complete event.
+		if wErr := notifier.WebhookCycleComplete(placed, len(scoredList)); wErr != nil {
+			slog.Warn("webhook notify failed", "event", "cycle_complete", "err", wErr)
+		}
+
+		res.placed = placed
+		return res
 	}
 
-	run()
+	// TASK-049: writeDryRunFile persists cycle results to a JSON file after each
+	// run (in both dry-run and live modes). It overwrites the file each cycle.
+	writeDryRunFile := func(result cycleResult) {
+		if *dryRunFile == "" {
+			return
+		}
+		out := dryRunOutput{
+			Timestamp:        time.Now().UTC().Format(time.RFC3339),
+			Cycle:            sess.cycleCount.Load(),
+			MarketsEvaluated: result.marketsFound,
+			BetsRecommended:  result.placed,
+			Decisions:        result.decisions,
+		}
+		if out.Decisions == nil {
+			out.Decisions = []dryRunRecord{} // always emit array, not null
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			slog.Warn("dry-run-file: marshal failed", "err", err)
+			return
+		}
+		if err := os.WriteFile(*dryRunFile, data, 0o644); err != nil {
+			slog.Warn("dry-run-file: write failed", "path", *dryRunFile, "err", err)
+			return
+		}
+		slog.Info("dry-run-file written", "path", *dryRunFile, "bets", result.placed)
+	}
+
+	result := run()
+	writeDryRunFile(result)
 
 	if cfg.LoopSec > 0 {
-		t := time.Duration(cfg.LoopSec) * time.Second
-		slog.Info("loop mode", "interval", t)
+		baseInterval := time.Duration(cfg.LoopSec) * time.Second
+		slog.Info("loop mode (adaptive)", "base_interval", baseInterval)
 
 		// Start the auto-resolver goroutine: checks resolved markets every hour.
 		calibration.StartResolver(cfg.DataRoot, ctx)
 
+		// TASK-047: adaptive loop interval.
+		// nextInterval computes the delay before the next cycle based on results.
+		adaptiveInterval := func(res cycleResult) time.Duration {
+			const (
+				highEdgeInterval  = 5 * time.Minute    // found hot market — check again soon
+				thinLiqInterval   = 30 * time.Minute   // all markets illiquid — no rush
+				maxBackoff        = 60 * time.Minute   // backoff ceiling
+			)
+			switch {
+			case res.highEdgeBet:
+				slog.Info("adaptive loop: high-edge bet found, next cycle in 5 min")
+				return highEdgeInterval
+			case res.thinLiquidityOnly && res.marketsFound > 0:
+				slog.Info("adaptive loop: thin liquidity only, waiting 30 min")
+				return thinLiqInterval
+			case res.placed == 0 && res.marketsFound > 0:
+				// No bets found — apply exponential backoff, capped.
+				next := time.Duration(float64(baseInterval) * 1.5)
+				if next > maxBackoff {
+					next = maxBackoff
+				}
+				slog.Info("adaptive loop: nothing found, backing off", "next", next)
+				return next
+			default:
+				// Found markets and placed bets — reset to base interval.
+				slog.Info("adaptive loop: normal cycle, base interval", "next", baseInterval)
+				return baseInterval
+			}
+		}
+
 		lastDigest := time.Time{}
-		ticker := time.NewTicker(t)
-		defer ticker.Stop()
+		timer := time.NewTimer(baseInterval)
+		defer timer.Stop()
 
 	loop:
 		for {
@@ -496,8 +644,9 @@ func main() {
 				slog.Info("shutdown signal received — stopping loop")
 				break loop
 
-			case <-ticker.C:
-				run()
+			case <-timer.C:
+				loopResult := run()
+				writeDryRunFile(loopResult) // TASK-049
 
 				// Send daily digest at ~09:00 UTC
 				now := time.Now().UTC()
@@ -508,6 +657,10 @@ func main() {
 						lastDigest = now
 					}
 				}
+
+				// Schedule next cycle with adaptive interval.
+				next := adaptiveInterval(loopResult)
+				timer.Reset(next)
 			}
 		}
 	}

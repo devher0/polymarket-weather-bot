@@ -57,6 +57,9 @@ type Config struct {
 	// Telegram notifications
 	TelegramBotToken string `yaml:"telegram_bot_token"`
 	TelegramChatID   string `yaml:"telegram_chat_id"`
+
+	// Webhook notifications (TASK-046)
+	WebhookURL string `yaml:"webhook_url"` // POST JSON events to this URL (empty = disabled)
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -204,6 +207,11 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("TELEGRAM_CHAT_ID"); v != "" {
 		cfg.TelegramChatID = v
+	}
+
+	// Webhook (TASK-046)
+	if v := os.Getenv("WEBHOOK_URL"); v != "" {
+		cfg.WebhookURL = v
 	}
 }
 

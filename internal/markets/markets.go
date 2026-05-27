@@ -37,45 +37,87 @@ type signal struct {
 
 var signals = []signal{
 	{regexp.MustCompile(`(?i)rain|precipitation|rainfall|rainy`), "rain"},
-	{regexp.MustCompile(`(?i)temperature.{0,20}above|above.{0,10}\d+.{0,10}degree|heat.?wave|heatwave|hot day`), "heat"},
+	// TASK-048: added "exceed" and temperature range as heat indicator.
+	{regexp.MustCompile(`(?i)temperature.{0,20}above|above.{0,10}\d+.{0,10}degree|exceed.{0,10}\d+.{0,10}degree|heat.?wave|heatwave|hot day|between\s+\d+.*and\s+\d+.*°[CF]`), "heat"},
 	{regexp.MustCompile(`(?i)temperature.{0,20}below|below.{0,10}\d+.{0,10}degree|cold snap|freeze`), "cold"},
 	{regexp.MustCompile(`(?i)snow|snowfall|blizzard`), "snow"},
 	{regexp.MustCompile(`(?i)wind|hurricane|typhoon|storm`), "wind"},
 	{regexp.MustCompile(`(?i)sunny|sunshine|clear sky`), "sunny"},
+	// TASK-048: additional signals
+	{regexp.MustCompile(`(?i)\bfog\b|foggy|misty|mist`), "fog"},
+	{regexp.MustCompile(`(?i)humid(?:ity)?|dew point`), "humid"},
+	{regexp.MustCompile(`(?i)\bdry\b|drought|arid`), "dry"},
 }
 
 // tempThresholdRe extracts a numeric temperature and optional F/C unit from market questions.
 // Examples: "above 95°F", "above 35°C", "exceed 40 degrees", "above 100F"
 var tempThresholdRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*°?\s*([FC])\b`)
 
+// tempDegreesOnlyRe matches temperatures without explicit unit: "30 degrees", "42degrees"
+// TASK-048: if value > 50 it is interpreted as Fahrenheit, otherwise Celsius.
+var tempDegreesOnlyRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*degrees?\b`)
+
+// tempRangeRe matches "between X°C and Y°C" or "between X°F and Y°F".
+// TASK-048: ThresholdC is set to the upper bound.
+var tempRangeRe = regexp.MustCompile(`(?i)between\s+(\d+(?:\.\d+)?)\s*°?\s*([CF])\s+and\s+(\d+(?:\.\d+)?)\s*°?\s*([CF])`)
+
 // parseTempThresholdC extracts a temperature threshold from a market question
 // and returns it in Celsius. Returns 0 if none found.
+// Parsing priority:
+//  1. Temperature range: "between 20°C and 30°C" → upper bound (checked first
+//     to avoid the single-value regex picking up the lower bound)
+//  2. Explicit unit with °: "35°C", "95°F"
+//  3. Unitless "degrees": value > 50 → assume °F, else °C
 func parseTempThresholdC(question string) float64 {
+	// 1. Temperature range — use upper bound.
+	rm := tempRangeRe.FindStringSubmatch(question)
+	if len(rm) >= 5 {
+		upper, err := strconv.ParseFloat(rm[3], 64)
+		if err == nil {
+			if strings.ToUpper(rm[4]) == "F" {
+				upper = (upper - 32) * 5 / 9
+			}
+			return upper
+		}
+	}
+
+	// 2. Explicit unit.
 	m := tempThresholdRe.FindStringSubmatch(question)
-	if len(m) < 3 {
-		return 0
+	if len(m) >= 3 {
+		val, err := strconv.ParseFloat(m[1], 64)
+		if err == nil {
+			if strings.ToUpper(m[2]) == "F" {
+				val = (val - 32) * 5 / 9
+			}
+			return val
+		}
 	}
-	val, err := strconv.ParseFloat(m[1], 64)
-	if err != nil {
-		return 0
+
+	// 3. Unitless "degrees" — guess by magnitude.
+	dm := tempDegreesOnlyRe.FindStringSubmatch(question)
+	if len(dm) >= 2 {
+		val, err := strconv.ParseFloat(dm[1], 64)
+		if err == nil {
+			if val > 50 { // almost certainly Fahrenheit
+				val = (val - 32) * 5 / 9
+			}
+			return val
+		}
 	}
-	unit := strings.ToUpper(m[2])
-	if unit == "F" {
-		// Convert Fahrenheit → Celsius
-		val = (val - 32) * 5 / 9
-	}
-	return val
+
+	return 0
 }
 
 var cityPatterns = map[string]*regexp.Regexp{
-	"new_york":      regexp.MustCompile(`(?i)new york|nyc|manhattan|NYC|Chi-town`),
+	// TASK-048: added city nicknames alongside existing patterns.
+	"new_york":      regexp.MustCompile(`(?i)new york|nyc|manhattan|\bbig apple\b`),
 	"london":        regexp.MustCompile(`(?i)\blondon\b|uk weather`),
 	"tokyo":         regexp.MustCompile(`(?i)\btokyo\b|japan weather`),
 	"miami":         regexp.MustCompile(`(?i)\bmiami\b|florida weather`),
-	"paris":         regexp.MustCompile(`(?i)\bparis\b|france weather`),
-	"chicago":       regexp.MustCompile(`(?i)\bchicago\b|chi-town`),
+	"paris":         regexp.MustCompile(`(?i)\bparis\b|france weather|city of light`),
+	"chicago":       regexp.MustCompile(`(?i)\bchicago\b|chi-town|windy city`),
 	"los_angeles":   regexp.MustCompile(`(?i)los angeles|\bLA\b|l\.a\.|southern california`),
-	"san_francisco": regexp.MustCompile(`(?i)san francisco|\bSF\b|bay area|s\.f\.|frisco`),
+	"san_francisco": regexp.MustCompile(`(?i)san francisco|\bSF\b|bay area|s\.f\.|frisco|silicon valley`),
 	"berlin":        regexp.MustCompile(`(?i)\bberlin\b|germany weather`),
 }
 

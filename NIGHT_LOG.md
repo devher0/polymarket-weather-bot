@@ -440,3 +440,55 @@
 **Строк добавлено:** ~280
 
 **Тесты:** `go test ./...` — все PASS; `go build ./...` — ✅
+
+## 2026-05-27 17:55 UTC — TASK-046..049: Webhook, Adaptive Loop, Extended Regex, Dry-Run File
+
+### TASK-046: Webhook уведомления при ставках
+
+**Что сделано:**
+- `internal/notifier/webhook.go` (новый, 138 строк) — `WebhookPayload` struct; `PostWebhook(url, payload)` с таймаутом 3s и 1 retry; 4 convenience-обёртки: `WebhookBetPlaced`, `WebhookBetSkippedRisk`, `WebhookCycleComplete`, `WebhookError`
+- `config/config.go` — новое поле `WebhookURL string` + ENV `WEBHOOK_URL`
+- `config/config.yaml` — секция `webhook_url: ""`
+- `.env.example` — `WEBHOOK_URL=`
+- `cmd/bot/main.go` — вызовы вебхука: `bet_placed` после успешной ставки, `bet_skipped_risk` при блокировке риска, `cycle_complete` в конце каждого цикла, `error` при ошибке `placeBet`
+
+### TASK-047: Adaptive loop interval
+
+**Что сделано:**
+- `cmd/bot/main.go` — `cycleResult` struct с полями `placed`, `marketsFound`, `highEdgeBet`, `thinLiquidityOnly`, `decisions`
+- `run()` теперь возвращает `cycleResult`; отслеживает: high-edge bets (edge > 0.15), thin-liquidity-only циклы
+- `adaptiveInterval(res)` — логика: high edge → 5 мин; thin liquidity → 30 мин; nothing found → backoff ×1.5 (cap 60 мин); normal → base interval
+- Цикл переписан с `time.Ticker` на `time.Timer` для переменных интервалов
+- Логирует причину адаптации каждый цикл
+
+### TASK-048: Расширенные regex для парсинга рынков
+
+**Что сделано:**
+- `internal/markets/markets.go` — 3 новых сигнала: `fog`, `humid`, `dry`
+- Расширены cityPatterns: "Big Apple" → new_york, "Windy City" → chicago, "City of Light" → paris, "Silicon Valley" → san_francisco
+- `tempDegreesOnlyRe` — парсинг без C/F: value > 50 → Fahrenheit, иначе Celsius
+- `tempRangeRe` — "between X°C and Y°C" → ThresholdC = верхняя граница
+- `parseTempThresholdC` — приоритет: range > explicit > unitless
+- `internal/markets/markets_test.go` (новый, 89 строк) — 11 тест-кейсов, все PASS
+
+### TASK-049: --dry-run-file
+
+**Что сделано:**
+- `cmd/bot/main.go` — флаг `--dry-run-file=output.json`
+- `dryRunRecord` / `dryRunOutput` structs с полями timestamp, cycle, markets_evaluated, bets_recommended, decisions
+- `writeDryRunFile(result)` — вызывается после каждого `run()` (в одиночном и loop режимах)
+- Всегда перезаписывает файл (не append); `decisions` всегда [] вместо null
+
+**Файлы:**
+- `internal/notifier/webhook.go` (новый, 138 строк)
+- `internal/markets/markets.go` (+65 строк)
+- `internal/markets/markets_test.go` (новый, 89 строк)
+- `cmd/bot/main.go` (+115 строк)
+- `config/config.go` (+8 строк)
+- `config/config.yaml` (+6 строк)
+- `.env.example` (+4 строки)
+- `TASKS.md` (отмечены [x] 046-049)
+
+**Итого строк добавлено:** ~425
+
+**Тесты:** `go test ./...` — все PASS; `go build ./...` — ✅
