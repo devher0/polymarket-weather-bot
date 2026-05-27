@@ -16,16 +16,18 @@ const polyHost = "https://clob.polymarket.com"
 
 // Market represents a single Polymarket weather prediction market.
 type Market struct {
-	ConditionID string
-	Question    string
-	YesTokenID  string
-	NoTokenID   string
-	YesPrice    float64
-	NoPrice     float64
-	City        string  // may be empty if no city matched
-	Signal      string  // rain|heat|cold|snow|wind|sunny
-	EndDate     string
-	ThresholdC  float64 // parsed temperature threshold in Celsius (0 = not set)
+	ConditionID   string
+	Question      string
+	YesTokenID    string
+	NoTokenID     string
+	YesPrice      float64
+	NoPrice       float64
+	City          string  // may be empty if no city matched
+	Signal        string  // rain|heat|cold|snow|wind|sunny
+	EndDate       string
+	ThresholdC    float64 // parsed temperature threshold in Celsius (0 = not set)
+	ThinLiquidity bool    // true when top-of-book bid-ask spread > 0.10 (set by EnrichWithLiquidity)
+	Spread        float64 // top-of-book bid-ask spread (set by EnrichWithLiquidity)
 }
 
 type signal struct {

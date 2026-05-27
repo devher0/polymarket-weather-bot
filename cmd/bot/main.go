@@ -8,10 +8,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -27,14 +33,42 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
 
+// sessionStats tracks cumulative statistics for the current process run.
+type sessionStats struct {
+	startTime    time.Time
+	cycleCount   atomic.Int64
+	marketsFound atomic.Int64
+	betsPlaced   atomic.Int64
+	dryRunPnL    atomic.Int64 // cents (integer to avoid atomic float issues)
+}
+
+func (s *sessionStats) summary(dryRun bool) string {
+	dur := time.Since(s.startTime).Round(time.Second)
+	pnl := float64(s.dryRunPnL.Load()) / 100.0
+	lines := []string{
+		fmt.Sprintf("Uptime:        %s", dur),
+		fmt.Sprintf("Cycles:        %d", s.cycleCount.Load()),
+		fmt.Sprintf("Markets seen:  %d", s.marketsFound.Load()),
+		fmt.Sprintf("Bets placed:   %d", s.betsPlaced.Load()),
+	}
+	if dryRun {
+		lines = append(lines, fmt.Sprintf("Dry-run P&L:   %+.2f USDC (estimated)", pnl))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func main() {
-	live           := flag.Bool("live", false, "Disable dry-run (real money)")
-	loopFlag       := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once; overrides config)")
-	collectHistory := flag.Bool("collect-history", false, "Download 90-day historical data and exit")
-	testTelegram   := flag.Bool("test-telegram", false, "Send a test Telegram message and exit")
+	live            := flag.Bool("live", false, "Disable dry-run (real money)")
+	loopFlag        := flag.Int("loop", 0, "Repeat interval in seconds (0 = run once; overrides config)")
+	collectHistory  := flag.Bool("collect-history", false, "Download 90-day historical data and exit")
+	testTelegram    := flag.Bool("test-telegram", false, "Send a test Telegram message and exit")
 	metricsPortFlag := flag.Int("metrics-port", -1, "Prometheus /metrics port (0=disabled; overrides config)")
-	configFile     := flag.String("config", "", "Path to config.yaml (default: config/config.yaml)")
+	configFile      := flag.String("config", "", "Path to config.yaml (default: config/config.yaml)")
 	flag.Parse()
+
+	// Set up graceful shutdown context — cancelled on SIGTERM or SIGINT.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Load .env first so ENV vars are available for config overlay.
 	_ = godotenv.Load()
@@ -59,8 +93,9 @@ func main() {
 	}
 
 	// Start the Prometheus metrics server unless disabled.
+	var metricsSrv *http.Server
 	if cfg.MetricsPort > 0 {
-		metrics.Start(fmt.Sprintf(":%d", cfg.MetricsPort), cfg.DataRoot)
+		metricsSrv = metrics.Start(fmt.Sprintf(":%d", cfg.MetricsPort), cfg.DataRoot)
 	}
 
 	slog.Info("config loaded",
@@ -103,7 +138,10 @@ func main() {
 	// Print Brier score from past bets at startup
 	calibration.PrintBrierScore(cfg.DataRoot)
 
+	sess := &sessionStats{startTime: time.Now()}
+
 	run := func() {
+		sess.cycleCount.Add(1)
 		slog.Info("=== cycle start", "time", time.Now().Format(time.RFC3339))
 
 		// 0. Load open positions to avoid double-betting the same conditionID.
@@ -166,6 +204,10 @@ func main() {
 			slog.Warn("no weather markets found on Polymarket right now")
 			return
 		}
+		sess.marketsFound.Add(int64(len(mkt)))
+
+		// 4b. Enrich markets with liquidity data (order book depth).
+		markets.EnrichWithLiquidity(mkt)
 
 		// 5. Evaluate and place bets
 		placed := 0
@@ -233,9 +275,14 @@ func main() {
 						slog.Warn("telegram notify failed", "err", err)
 					}
 					placed++
+					sess.betsPlaced.Add(1)
 				}
 			} else {
 				placed++
+				sess.betsPlaced.Add(1)
+				// Accumulate estimated dry-run P&L (edge × size, in cents).
+				pnlCents := int64(d.Edge * d.SizeUSDC * 100)
+				sess.dryRunPnL.Add(pnlCents)
 			}
 		}
 
@@ -253,22 +300,54 @@ func main() {
 		slog.Info("loop mode", "interval", t)
 
 		// Start the auto-resolver goroutine: checks resolved markets every hour.
-		calibration.StartResolver(cfg.DataRoot)
+		calibration.StartResolver(cfg.DataRoot, ctx)
 
 		lastDigest := time.Time{}
-		for range time.Tick(t) {
-			run()
+		ticker := time.NewTicker(t)
+		defer ticker.Stop()
 
-			// Send daily digest at ~09:00 UTC
-			now := time.Now().UTC()
-			if now.Hour() == 9 && now.Sub(lastDigest) > 23*time.Hour {
-				if err := notifier.DailyDigest(cfg.DataRoot); err != nil {
-					slog.Warn("daily digest failed", "err", err)
-				} else {
-					lastDigest = now
+	loop:
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Info("shutdown signal received — stopping loop")
+				break loop
+
+			case <-ticker.C:
+				run()
+
+				// Send daily digest at ~09:00 UTC
+				now := time.Now().UTC()
+				if now.Hour() == 9 && now.Sub(lastDigest) > 23*time.Hour {
+					if err := notifier.DailyDigest(cfg.DataRoot); err != nil {
+						slog.Warn("daily digest failed", "err", err)
+					} else {
+						lastDigest = now
+					}
 				}
 			}
 		}
+	}
+
+	// ── Graceful shutdown ──────────────────────────────────────────────────
+
+	summary := sess.summary(dryRun)
+	slog.Info("session summary", "summary", summary)
+
+	// Shut down the metrics HTTP server.
+	if metricsSrv != nil {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := metricsSrv.Shutdown(shutCtx); err != nil {
+			slog.Warn("metrics server shutdown error", "err", err)
+		} else {
+			slog.Info("metrics server stopped")
+		}
+	}
+
+	// Notify Telegram about the shutdown.
+	if err := notifier.NotifyStop(summary); err != nil {
+		slog.Warn("telegram stop notification failed", "err", err)
 	}
 }
 

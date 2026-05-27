@@ -3,6 +3,7 @@ package strategy
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -155,45 +156,50 @@ func evaluate(
 	yesEdge := ourP - m.YesPrice
 	noEdge := (1 - ourP) - m.NoPrice
 
-	baseReason := fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
-		m.City, m.Signal, ourP, 0.0, 0.0, sourceNote)
-
+	// Determine winning side and compute half-Kelly size.
+	type candidate struct {
+		side        string
+		tokenID     string
+		marketPrice float64
+		edge        float64
+		odds        float64
+	}
+	var best candidate
 	if yesEdge >= noEdge && math.Abs(yesEdge) >= minEdge {
-		size := halfKelly(yesEdge, 1/m.YesPrice, bankroll, 0.05)
-		size = math.Min(size, maxBet)
-		if size < 0.5 {
-			return nil
-		}
-		return &Decision{
-			Market:         m,
-			Side:           "YES",
-			TokenID:        m.YesTokenID,
-			OurProbability: ourP,
-			MarketPrice:    m.YesPrice,
-			Edge:           yesEdge,
-			SizeUSDC:       size,
-			Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
-				m.City, m.Signal, ourP, m.YesPrice, yesEdge, sourceNote),
-		}
+		best = candidate{"YES", m.YesTokenID, m.YesPrice, yesEdge, 1 / m.YesPrice}
 	} else if noEdge > yesEdge && math.Abs(noEdge) >= minEdge {
-		_ = baseReason
-		size := halfKelly(noEdge, 1/m.NoPrice, bankroll, 0.05)
-		size = math.Min(size, maxBet)
-		if size < 0.5 {
-			return nil
-		}
-		return &Decision{
-			Market:         m,
-			Side:           "NO",
-			TokenID:        m.NoTokenID,
-			OurProbability: ourP,
-			MarketPrice:    m.NoPrice,
-			Edge:           noEdge,
-			SizeUSDC:       size,
-			Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
-				m.City, m.Signal, ourP, m.NoPrice, noEdge, sourceNote),
-		}
+		best = candidate{"NO", m.NoTokenID, m.NoPrice, noEdge, 1 / m.NoPrice}
+	} else {
+		return nil
 	}
 
-	return nil
+	size := halfKelly(best.edge, best.odds, bankroll, 0.05)
+	size = math.Min(size, maxBet)
+
+	// Liquidity gate: skip thin markets when expected position size < $50 USDC
+	// to avoid moving the price on illiquid books.
+	if m.ThinLiquidity && size < 50 {
+		slog.Info("skipped: thin liquidity",
+			"conditionID", m.ConditionID,
+			"spread", fmt.Sprintf("%.3f", m.Spread),
+			"est_size", fmt.Sprintf("%.2f", size),
+		)
+		return nil
+	}
+
+	if size < 0.5 {
+		return nil
+	}
+
+	return &Decision{
+		Market:         m,
+		Side:           best.side,
+		TokenID:        best.tokenID,
+		OurProbability: ourP,
+		MarketPrice:    best.marketPrice,
+		Edge:           best.edge,
+		SizeUSDC:       size,
+		Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
+			m.City, m.Signal, ourP, best.marketPrice, best.edge, sourceNote),
+	}
 }

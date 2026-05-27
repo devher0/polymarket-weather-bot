@@ -176,21 +176,21 @@ type FusedForecast struct {
 - Интеграция в `evaluate()`: применять коррекцию после вычисления ourP
 - Тест в `seasonal_test.go`: проверить summer/winter смещения
 
-### [ ] TASK-023: Market liquidity depth filter
+### [x] 2026-05-27 — TASK-023: Market liquidity depth filter
 **Файл:** `internal/markets/liquidity.go` (новый), `internal/markets/markets.go` (обновить)
 - GET /book?token_id=... из CLOB API → проверить top-of-book bid/ask spread
 - Если spread > 0.10 (10 cents) — помечать Market.ThinLiquidity = true
 - В strategy.go: пропускать рынки с ThinLiquidity и SizeUSDC < 50 USDC — нет смысла мувить цену
 - Логировать "skipped: thin liquidity, spread=X"
 
-### [ ] TASK-024: Graceful shutdown с итоговым отчётом
+### [x] 2026-05-27 — TASK-024: Graceful shutdown с итоговым отчётом
 **Файл:** `cmd/bot/main.go` (обновить)
 - Перехватывать SIGTERM/SIGINT через signal.NotifyContext
 - При завершении: вывести итог сессии (сколько рынков, ставок, dry-run P&L)
 - Отправить Telegram-уведомление "Bot stopped, session summary: ..."
 - Корректно завершать metrics server и resolver горутину
 
-### [ ] TASK-025: Аномальные погодные события → повышенный confidence
+### [x] 2026-05-27 — TASK-025: Аномальные погодные события → повышенный confidence
 **Файл:** `internal/weather/extremes.go` (новый), `internal/collectors/aggregator.go` (обновить)
 - `IsExtreme(f Forecast) (bool, string)` — выявлять экстремальные значения: MaxTemp>38°C, PrecipMM>50, Wind>90kmh
 - При экстремальном событии — автоматически повышать Confidence до max(confidence, 0.75)

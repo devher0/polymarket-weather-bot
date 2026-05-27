@@ -111,7 +111,8 @@ func handler(dataRoot string) http.HandlerFunc {
 
 // Start launches the /metrics HTTP server on addr (e.g. ":9090") in a
 // background goroutine.  dataRoot is the repo root ("." when running normally).
-func Start(addr, dataRoot string) {
+// The returned *http.Server can be shut down gracefully via srv.Shutdown(ctx).
+func Start(addr, dataRoot string) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", handler(dataRoot))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -132,4 +133,6 @@ func Start(addr, dataRoot string) {
 			slog.Warn("metrics server error", "err", err)
 		}
 	}()
+
+	return srv
 }

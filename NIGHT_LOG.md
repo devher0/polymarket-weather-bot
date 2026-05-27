@@ -1,5 +1,31 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 16:10 — TASK-023, 024, 025: Liquidity filter, Graceful shutdown, Extreme weather confidence
+
+**Задачи:** TASK-023, TASK-024, TASK-025
+
+**Файлы созданы/изменены:**
+- `internal/markets/liquidity.go` — НОВЫЙ (~80 строк): `checkSpread(tokenID)` → GET /book CLOB API → bid-ask spread; `EnrichWithLiquidity([]Market)` — batch-обогащение маркетов данными о ликвидности; threshold 10 центов
+- `internal/markets/markets.go` — добавлены поля `ThinLiquidity bool` и `Spread float64` в `Market` struct
+- `internal/strategy/strategy.go` — рефактор `evaluate()`: единый путь вычисления size + gate `ThinLiquidity && size < 50 → skip` с логом; добавлен `log/slog`
+- `internal/weather/extremes.go` — НОВЫЙ (~30 строк): `IsExtreme(Forecast)` → (bool, tag); пороги: heat>38°C, rain>50mm, wind>90km/h; `ExtremeConfidenceFloor = 0.75`
+- `internal/collectors/aggregator.go` — в `fuse()`: после построения FusedForecast вызывается `weather.IsExtreme()`, если экстремум — confidence поднимается до max(confidence, 0.75), тег добавляется в Sources
+- `internal/metrics/metrics.go` — `Start()` теперь возвращает `*http.Server` для graceful shutdown
+- `internal/calibration/resolver.go` — `StartResolver()` принимает `context.Context`; горутина завершается при `ctx.Done()`
+- `internal/notifier/telegram.go` — добавлена `NotifyStop(summary)` — отправляет итог сессии при завершении
+- `cmd/bot/main.go` — полный рефактор: `signal.NotifyContext(ctx, SIGTERM, SIGINT)`; `sessionStats` с atomic счётчиками (cycles, markets, bets, dry-run P&L); ticker loop с select вместо range; при выходе: печать summary, shutdown metrics server, Telegram уведомление
+
+**Итого: 9 файлов, ~200 строк изменений**
+
+`go build ./...` — ✅ чистая компиляция
+`go test ./...` — ✅ все тесты PASS (calibration, strategy, weather, polymarket)
+
+**Ключевые улучшения:**
+- Тонкие рынки (spread > 10¢) теперь пропускаются если ставка < $50 — нет price impact
+- Экстремальные события (жара >38°C, осадки >50мм, ветер >90км/ч) поднимают confidence до 0.75 — модели сходятся на очевидных сигналах
+- SIGTERM/SIGINT корректно останавливают loop, metrics server и resolver горутину
+- Telegram уведомление "Bot Stopped" с итогом сессии при каждом завершении
+
 ## 2026-05-27 15:57 — TASK-022: Seasonal Bayesian calibration
 
 **Задача:** TASK-022

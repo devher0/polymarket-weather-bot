@@ -170,6 +170,16 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		Sources:    sourceNames,
 	}
 
+	// Extreme-event confidence boost: when the fused forecast shows an obvious
+	// extreme (heat wave / heavy rain / storm), all NWP models tend to agree
+	// even with limited sources — raise confidence to at least the floor.
+	if extreme, tag := weather.IsExtreme(fused.Forecast); extreme {
+		if fused.Confidence < weather.ExtremeConfidenceFloor {
+			fused.Confidence = weather.ExtremeConfidenceFloor
+		}
+		fused.Sources = append(fused.Sources, tag)
+	}
+
 	return fused
 }
 

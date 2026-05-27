@@ -6,6 +6,7 @@
 package calibration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -145,8 +146,10 @@ func ResolveOpenBets(dataRoot string) (int, error) {
 
 // StartResolver runs ResolveOpenBets in a background goroutine every hour.
 // It logs but does not propagate errors.  dataRoot is typically ".".
-func StartResolver(dataRoot string) {
+// The goroutine exits cleanly when ctx is cancelled (e.g. on SIGTERM/SIGINT).
+func StartResolver(dataRoot string, ctx context.Context) {
 	go func() {
+		slog.Info("resolver: started background goroutine (runs every hour)")
 		// Run immediately at startup, then every hour.
 		for {
 			n, err := ResolveOpenBets(dataRoot)
@@ -155,8 +158,12 @@ func StartResolver(dataRoot string) {
 			} else if n > 0 {
 				slog.Info("resolver: resolved bets in this cycle", "count", n)
 			}
-			time.Sleep(1 * time.Hour)
+			select {
+			case <-ctx.Done():
+				slog.Info("resolver: stopping gracefully")
+				return
+			case <-time.After(1 * time.Hour):
+			}
 		}
 	}()
-	slog.Info("resolver: started background goroutine (runs every hour)")
 }

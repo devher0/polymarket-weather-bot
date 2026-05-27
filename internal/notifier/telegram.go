@@ -236,6 +236,24 @@ func NotifyError(context string, err error) error {
 	return cfg.send(msg)
 }
 
+// NotifyStop sends a Telegram session-summary message when the bot is
+// shutting down.  summary is a pre-formatted plain-text string.
+// No-op if Telegram is not configured.
+func NotifyStop(summary string) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+	msg := fmt.Sprintf(
+		"🛑 <b>Bot Stopped</b>\n\n"+
+			"<i>Session summary:</i>\n<pre>%s</pre>\n\n"+
+			"<i>%s UTC</i>",
+		summary,
+		time.Now().UTC().Format("2006-01-02 15:04:05"),
+	)
+	return cfg.send(msg)
+}
+
 // SendTestMessage sends a simple ping to verify Telegram config is working.
 func SendTestMessage() error {
 	cfg := config()
