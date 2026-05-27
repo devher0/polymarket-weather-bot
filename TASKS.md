@@ -897,7 +897,7 @@ MTG-Sounder запущен SpaceX в июле 2025 — даёт 3D карты а
 - Добавить в wind/storm signal как модификатор вероятности
 - Критично для: "Will wind speed exceed X in Chicago?" (город у озера, сильный shear)
 
-### TASK-097: Speedwell Climate HDD/CDD settlement data
+### [x] 2026-05-27 — TASK-097: Speedwell Climate HDD/CDD settlement data
 **Файл:** `internal/collectors/speedwell.go`
 Speedwell Climate — институциональный провайдер для weather derivatives трейдеров:
 - Публичные исторические HDD/CDD индексы: https://portal.speedwellclimate.com

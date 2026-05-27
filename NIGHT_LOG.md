@@ -1,5 +1,19 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-27 — TASK-097: Speedwell Climate HDD/CDD settlement data
+
+**Файлы:** `internal/collectors/speedwell.go` (130 строк), `internal/collectors/speedwell_test.go` (90 строк)
+
+**Что сделано:**
+- `SpeedwellIndex` — дневной HDD/CDD индекс по методологии Speedwell Climate (= CME, 65°F baseline)
+- `SpeedwellSummary` — агрегат периода (week/month) для бэктеста temperature-based рынков
+- `FetchSpeedwellIndices(city, lat, lon, start, end)` — загружает исторические данные через Open-Meteo archive API, конвертирует в HDD/CDD
+- `SummariseSpeedwell(indices)` — суммирует HDD/CDD за период, считает средний avg_temp
+- `CalibrationError(settlement, computed)` — MAE между Speedwell ground truth и нашей моделью; MAE < 1.0 = хорошая калибровка
+- 7 unit-тестов: все прошли
+
+---
+
 ## 2026-05-27 — TASK-095: ESA MTG-S1 — атмосферные профили для европейских городов
 
 **Файл:** `internal/collectors/esa_mtg.go` (245 строк)
