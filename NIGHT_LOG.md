@@ -1174,3 +1174,35 @@
 **Реализовано:** `NLDNSummary` (Lightning30m, Lightning1h, LightningTrend, StormProbability), кеш 5 мин, браккеты storm probability по NWS aviation thresholds (>100 уд/ч → 0.90, >50 → 0.70, >10 → 0.40).
 
 **Строк добавлено:** ~120 (тесты)
+
+---
+
+## 2026-05-27 — TASK-094: NLDN lightning statistics (extended tracking)
+
+**Файл:** `internal/collectors/lightning_nldn.go` (131 строк, новый)
+
+**Что сделано:**
+- `NLDNSummary` struct: Lightning30m, Lightning1h, LightningTrend, StormProbability
+- `GetNLDNSummary(city)` — 1h/30m counts + trend из Blitzortung buffer, 5min кэш
+- `nldnStormProbability(strikes1h)` — NWS aviation thresholds (0.03→0.95)
+- Radius 300km (NWS convention vs 200km для Blitzortung)
+
+**Сборка:** `go build ./...` — OK, тесты — OK
+
+**Строк добавлено:** 131
+
+---
+
+## 2026-05-27 — TASK-102+105: Consensus index + spread scaling
+
+**Файл:** `internal/aggregation/consensus_index.go` (105 строк, новый)
+
+**Что сделано:**
+- `ConsensusIndex(models, threshold)` → ConsensusResult{Consensus, Direction, StdDev, Count}
+- `SpreadScale(probs)` → Kelly multiplier: tight spread×1.3, wide spread×0.5 (TASK-105)
+- `SkipOnLowConsensus(cr, minConsensus)` — skip gate при consensus < 0.30 (TASK-102)
+- `HighConsensusKellyBoost(cr)` — x1.20 boost при consensus > 0.80 (TASK-102)
+- Интегрировано в `EvaluateFused()`: skip при low consensus, spread scaling, Kelly boost
+- 7 unit-тестов в consensus_index_test.go
+
+**Строк добавлено:** 105 + 70 (strategy.go) + 65 (test)

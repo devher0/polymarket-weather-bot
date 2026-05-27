@@ -956,7 +956,7 @@ type SuperForecast struct {
 - Хранить модель в data/model.json (веса деревьев)
 - После 50+ resolved ставок — точность +10-15% vs взвешенного среднего
 
-### TASK-102: Метео-консенсус индекс (как рынки используют Reuters Eikon)
+### [x] 2026-05-27 — TASK-102: Метео-консенсус индекс (как рынки используют Reuters Eikon)
 **Файл:** `internal/aggregation/consensus_index.go`
 Профессиональные трейдеры смотрят на консенсус между моделями:
 - Если ECMWF, GFS, HRRR, OpenMeteo все говорят "дождь" → консенсус = 1.0, ставим уверенно
@@ -986,7 +986,7 @@ NOAA      / miami    / heat → Brier: 0.08, N=20 (отличный)
 - Логировать: "NOAA outlier detected (0.82 vs mean 0.45), weight reduced to 0.05"
 - История outlier'ов влияет на долгосрочный Brier score источника
 
-### TASK-105: Ensemble spread → автоматический размер ставки
+### [x] 2026-05-27 — TASK-105: Ensemble spread → автоматический размер ставки
 **Файл:** `internal/strategy/strategy.go` (обновить)
 Spread между источниками = мера неопределённости = должна влиять на Kelly:
 - Малый spread (все согласны) → bet_size × 1.3 (высокая уверенность)

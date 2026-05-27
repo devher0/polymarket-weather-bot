@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devher0/polymarket-weather-bot/internal/aggregation"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
 	"github.com/devher0/polymarket-weather-bot/internal/ratelimit"
@@ -505,6 +506,57 @@ func EvaluateFused(
 				slog.Info("skipped: size below minimum after ensemble scaling",
 					"conditionID", m.ConditionID)
 				logPrediction("SKIP:min_size", 0, fmt.Sprintf("size_after_scale=%.2f unc=%.1f°C", d.SizeUSDC, ff.EnsembleUncertainty))
+				return nil
+			}
+		}
+	}
+
+	// TASK-102 & TASK-105: consensus index and spread-based bet scaling.
+	// Compute per-source probability estimates and derive a consensus score.
+	// High consensus → larger bets; low consensus → skip or reduce.
+	if len(ff.PerSourceForecasts) > 0 {
+		perProbs := computePerSourceProbs(m, ff.PerSourceForecasts)
+		if len(perProbs) >= 2 {
+			probSlice := make([]float64, 0, len(perProbs))
+			for _, p := range perProbs {
+				probSlice = append(probSlice, p)
+			}
+			cr := aggregation.ConsensusIndex(probSlice, m.YesPrice) // threshold = market yes price
+			// TASK-102: skip when consensus is too low (models disagree strongly).
+			if aggregation.SkipOnLowConsensus(cr, 0.30) {
+				slog.Info("skipped: low model consensus",
+					"city", m.City, "signal", m.Signal,
+					"consensus", fmt.Sprintf("%.2f", cr.Consensus),
+					"spread_sd", fmt.Sprintf("%.2f", cr.StdDev),
+				)
+				logPrediction("SKIP:low_consensus", 0,
+					fmt.Sprintf("consensus=%.2f sd=%.2f models=%d", cr.Consensus, cr.StdDev, cr.Count))
+				return nil
+			}
+			// TASK-105: scale bet size by source spread (tight spread → more confident).
+			spreadMult := aggregation.SpreadScale(probSlice)
+			if spreadMult != 1.0 {
+				d.SizeUSDC = math.Round(d.SizeUSDC*spreadMult*100) / 100
+			}
+			// TASK-102: boost Kelly for very high consensus.
+			kellyBoost := aggregation.HighConsensusKellyBoost(cr)
+			if kellyBoost > 1.0 {
+				d.SizeUSDC = math.Round(d.SizeUSDC*kellyBoost*100) / 100
+				d.SizeUSDC = math.Min(d.SizeUSDC, maxBet)
+			}
+			if spreadMult != 1.0 || kellyBoost > 1.0 {
+				d.Reason += fmt.Sprintf(" consensus=%.2f spread_scale=%.2fx kelly_boost=%.2fx",
+					cr.Consensus, spreadMult, kellyBoost)
+				slog.Info("consensus scaling applied",
+					"city", m.City, "signal", m.Signal,
+					"consensus", fmt.Sprintf("%.2f", cr.Consensus),
+					"spread_mult", fmt.Sprintf("%.2f", spreadMult),
+					"kelly_boost", fmt.Sprintf("%.2f", kellyBoost),
+				)
+			}
+			// Re-check minimum size.
+			if d.SizeUSDC < 0.5 {
+				logPrediction("SKIP:min_size_consensus", 0, fmt.Sprintf("size_after_spread=%.2f", d.SizeUSDC))
 				return nil
 			}
 		}
