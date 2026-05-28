@@ -4,6 +4,7 @@
 //   /status   — Brier score, open positions, P&L for today
 //   /positions — list of open (unresolved) bets
 //   /next     — top-3 best bets right now (dry-run, from cached forecasts)
+//   /forecast [city] — current weather forecast from cache (or live fetch)
 //   /pause    — suspend all trading
 //   /resume   — resume trading
 //
@@ -164,6 +165,14 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handlePositions(bcfg))
 				case "/next":
 					sendReply(cfg, chatID, handleNext(bcfg))
+				case "/forecast":
+					// TASK-138: extract optional city arg from the full message text.
+					arg := ""
+					parts := strings.SplitN(text, " ", 2)
+					if len(parts) == 2 {
+						arg = strings.TrimSpace(parts[1])
+					}
+					sendReply(cfg, chatID, handleForecast(bcfg, arg))
 				case "/pause":
 					paused.Store(1)
 					sendReply(cfg, chatID, "⏸ Trading <b>paused</b>. Send /resume to restart.")
@@ -407,4 +416,146 @@ func handleNext(bcfg BotConfig) string {
 		return "🔍 No actionable opportunities right now."
 	}
 	return "<b>🔮 Top Opportunities (dry-run)</b>\n" + strings.Join(lines, "\n")
+}
+
+// ── TASK-138: /forecast command ───────────────────────────────────────────
+
+// forecastSummaryCities is the default set shown when /forecast has no arg.
+var forecastSummaryCities = []string{
+	"new_york", "london", "paris", "miami", "berlin",
+}
+
+// handleForecast returns a formatted weather summary.
+// city="" → summary table for forecastSummaryCities.
+// city="X" → detailed one-city block.
+func handleForecast(bcfg BotConfig, city string) string {
+	if city == "" {
+		return handleForecastAll(bcfg)
+	}
+	// Validate city.
+	if _, ok := weather.Cities[city]; !ok {
+		return fmt.Sprintf("❌ Unknown city <code>%s</code>.\nKnown: new_york, london, paris, miami, berlin, chicago, los_angeles, san_francisco, tokyo", city)
+	}
+	return handleForecastOne(bcfg, city)
+}
+
+// handleForecastOne returns a detailed forecast block for a single city.
+func handleForecastOne(bcfg BotConfig, city string) string {
+	ff, age := loadForecastForDisplay(bcfg, city)
+	if ff == nil {
+		return fmt.Sprintf("❌ Could not fetch forecast for <code>%s</code>.", city)
+	}
+	return formatForecastBlock(city, ff, age)
+}
+
+// handleForecastAll returns a compact multi-city summary table.
+func handleForecastAll(bcfg BotConfig) string {
+	var sb strings.Builder
+	sb.WriteString("<b>🌍 Forecast Summary</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("%-15s %6s %6s %6s %5s %5s\n",
+		"City", "MaxT°C", "Rain%", "Wnd", "Conf", "Age"))
+	sb.WriteString(strings.Repeat("─", 50) + "\n")
+	any := false
+	for _, c := range forecastSummaryCities {
+		ff, age := loadForecastForDisplay(bcfg, c)
+		if ff == nil {
+			sb.WriteString(fmt.Sprintf("%-15s  n/a\n", c))
+			continue
+		}
+		ageStr := formatAge(age)
+		sb.WriteString(fmt.Sprintf("%-15s %6.1f %5.0f%% %5.0f %4.0f%% %5s\n",
+			c,
+			ff.MaxTempC,
+			ff.PrecipitationProbability,
+			ff.WindSpeedKMH,
+			ff.Confidence*100,
+			ageStr,
+		))
+		any = true
+	}
+	if !any {
+		return "❌ No forecast data available. Bot may not have run yet."
+	}
+	sb.WriteString("</pre>\n<i>Send /forecast [city] for details.</i>")
+	return sb.String()
+}
+
+// loadForecastForDisplay tries the disk cache first; falls back to a live
+// OpenMeteo fetch (day-0).  Returns nil if both fail.
+func loadForecastForDisplay(bcfg BotConfig, city string) (*collectors.FusedForecast, time.Duration) {
+	// Try disk cache (up to 3h stale is fine for display purposes).
+	ff, ok := collectors.LoadForecastCache(city, 0, bcfg.DataRoot, 3*time.Hour)
+	if ok && ff != nil {
+		return ff, time.Since(ff.FetchedAt)
+	}
+	// Fallback: live fetch from OpenMeteo only.
+	forecasts, err := weather.GetForecast(city, 1)
+	if err != nil || len(forecasts) == 0 {
+		return nil, 0
+	}
+	return &collectors.FusedForecast{
+		Forecast:   forecasts[0],
+		Confidence: 0,
+		Sources:    []string{"openmeteo(live)"},
+		FetchedAt:  time.Now(),
+	}, 0
+}
+
+// formatForecastBlock formats a single-city forecast for Telegram HTML output.
+func formatForecastBlock(city string, ff *collectors.FusedForecast, age time.Duration) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>🌤 %s</b>\n", city))
+	sb.WriteString(fmt.Sprintf("Temp: <b>%.1f°C</b> / %.1f°C\n", ff.MaxTempC, ff.MinTempC))
+	if ff.ApparentMaxTempC != 0 && abs64(ff.ApparentMaxTempC-ff.MaxTempC) > 1 {
+		sb.WriteString(fmt.Sprintf("Feels like: %.1f°C\n", ff.ApparentMaxTempC))
+	}
+	sb.WriteString(fmt.Sprintf("Precip: %.1f mm (%.0f%%)\n", ff.PrecipitationMM, ff.PrecipitationProbability))
+	sb.WriteString(fmt.Sprintf("Wind: %.0f km/h\n", ff.WindSpeedKMH))
+	if ff.CapeJkg > 500 {
+		sb.WriteString(fmt.Sprintf("CAPE: %.0f J/kg ⚡\n", ff.CapeJkg))
+	}
+	if ff.UVIndexMax > 0 {
+		sb.WriteString(fmt.Sprintf("UV: %.0f\n", ff.UVIndexMax))
+	}
+	if ff.Confidence > 0 {
+		sb.WriteString(fmt.Sprintf("Confidence: %.0f%%\n", ff.Confidence*100))
+	}
+	if len(ff.Sources) > 0 {
+		sb.WriteString(fmt.Sprintf("Sources: <code>%s</code>\n", strings.Join(ff.Sources, ", ")))
+	}
+	// NWS alert for US cities.
+	if ff.AlertLevel > 0 && len(ff.AlertEvents) > 0 {
+		emoji := forecastAlertEmoji(ff.AlertLevel)
+		sb.WriteString(fmt.Sprintf("%s NWS: %s\n", emoji, strings.Join(ff.AlertEvents, "; ")))
+	}
+	sb.WriteString(fmt.Sprintf("<i>Updated %s ago</i>", formatAge(age)))
+	return sb.String()
+}
+
+func abs64(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func formatAge(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%.1fh", d.Hours())
+}
+
+func forecastAlertEmoji(level int) string {
+	switch level {
+	case 3:
+		return "🔴"
+	case 2:
+		return "🟡"
+	default:
+		return "🔵"
+	}
 }
