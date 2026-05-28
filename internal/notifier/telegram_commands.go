@@ -34,6 +34,7 @@
 //   /streak          — current win/loss streak + historical best/worst (TASK-213)
 //   /weekly          — 4-week P&L table with best/worst week (TASK-214)
 //   /roi             — cumulative ROI% from starting bankroll with weekly sparkline (TASK-215)
+//   /compare-signals — compare per-signal win rate: last 30d vs previous 30d (TASK-220)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -306,6 +307,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleWeekly(bcfg))
 				case "/roi":
 					sendReply(cfg, chatID, handleROI(bcfg))
+				case "/compare-signals":
+					sendReply(cfg, chatID, handleCompareSignals(bcfg))
 				}
 			}
 		}
@@ -1861,7 +1864,8 @@ func handleHelp() string {
 /drawdown        Current drawdown from bankroll peak
 /streak          Current win/loss streak + historical best/worst
 /weekly          4-week P&L table with best/worst week
-/roi             Cumulative ROI% from start with weekly sparkline</pre>
+/roi             Cumulative ROI% from start with weekly sparkline
+/compare-signals Compare per-signal win rate: last 30d vs prev 30d</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -3118,6 +3122,121 @@ func handleROI(bcfg BotConfig) string {
 	if spark != "" {
 		sb.WriteString(fmt.Sprintf("\n8-wk P&L  : %s\n", spark))
 	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// handleCompareSignals compares per-signal win rate for the last 30 days vs
+// the previous 30 days, showing trend arrows and Δ. (TASK-220)
+func handleCompareSignals(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	recent := calibration.SignalBreakdownForPeriod(records, 30)
+	prev := calibration.SignalBreakdownForPeriod(records, 60)
+
+	// prev[sig] contains bets from last 60 days; subtract recent to get days 31-60.
+	prevOnly := make(map[string]calibration.BreakdownStats)
+	for sig, p := range prev {
+		r := recent[sig]
+		prevOnly[sig] = calibration.BreakdownStats{
+			Count:    p.Count - r.Count,
+			BrierSum: p.BrierSum - r.BrierSum,
+			Wins:     p.Wins - r.Wins,
+		}
+	}
+
+	// Collect all known signals.
+	sigSet := make(map[string]struct{})
+	for s := range recent {
+		sigSet[s] = struct{}{}
+	}
+	for s := range prevOnly {
+		sigSet[s] = struct{}{}
+	}
+	if len(sigSet) == 0 {
+		return "📈 No resolved bets yet — signal comparison unavailable."
+	}
+
+	type row struct {
+		sig   string
+		recentWR float64
+		prevWR   float64
+		delta    float64
+		recentN  int
+		prevN    int
+	}
+	rows := make([]row, 0, len(sigSet))
+	for sig := range sigSet {
+		r := recent[sig]
+		p := prevOnly[sig]
+
+		rWR := -1.0
+		if r.Count >= 3 {
+			rWR = r.WinRate()
+		}
+		pWR := -1.0
+		if p.Count >= 3 {
+			pWR = p.WinRate()
+		}
+		delta := 0.0
+		if rWR >= 0 && pWR >= 0 {
+			delta = rWR - pWR
+		}
+		rows = append(rows, row{sig, rWR, pWR, delta, r.Count, p.Count})
+	}
+	// Sort by recent win rate desc (signals with data first).
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].recentWR < 0 && rows[j].recentWR >= 0 {
+			return false
+		}
+		if rows[j].recentWR < 0 && rows[i].recentWR >= 0 {
+			return true
+		}
+		return rows[i].recentWR > rows[j].recentWR
+	})
+
+	var sb strings.Builder
+	sb.WriteString("📊 <b>Signal Comparison — Recent vs Previous 30d</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-8s %7s %7s %5s %5s\n", "Signal", "Rcnt%", "Prev%", "Δ", "Trend"))
+	sb.WriteString(strings.Repeat("─", 38) + "\n")
+
+	for _, r := range rows {
+		name := r.sig
+		if len(name) > 8 {
+			name = name[:7] + "…"
+		}
+
+		rcntStr := "N/A"
+		if r.recentWR >= 0 {
+			rcntStr = fmt.Sprintf("%.0f%%(%d)", r.recentWR, r.recentN)
+		}
+		prevStr := "N/A"
+		if r.prevWR >= 0 {
+			prevStr = fmt.Sprintf("%.0f%%(%d)", r.prevWR, r.prevN)
+		}
+
+		trend := "➡️"
+		deltaStr := "n/a"
+		if r.recentWR >= 0 && r.prevWR >= 0 {
+			deltaStr = fmt.Sprintf("%+.0f%%", r.delta)
+			if r.delta > 5 {
+				trend = "📈"
+			} else if r.delta < -5 {
+				trend = "📉"
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("%-8s %7s %7s %5s %s\n",
+			name, rcntStr, prevStr, deltaStr, trend))
+	}
+
+	sb.WriteString(strings.Repeat("─", 38) + "\n")
+	sb.WriteString("(N/A = fewer than 3 resolved bets)\n")
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()
