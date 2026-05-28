@@ -200,7 +200,7 @@ func TestParseTempThresholdFromOutcome(t *testing.T) {
 		{"27°C", 27.0},
 		{"20°C or below", 20.0},
 		{"30°C or higher", 30.0},
-		{"75°F", (75 - 32) * 5 / 9}, // ≈23.89
+		{"75°F", 23.89}, // (75-32)*5/9 ≈23.89°C
 		{"No threshold here", 0},
 		{"", 0},
 	}
