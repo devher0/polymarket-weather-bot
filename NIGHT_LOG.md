@@ -1,5 +1,72 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 09:22 UTC — ИТОГОВЫЙ ОТЧЕТ
+
+**Автономная инженерная сессия завершена.**
+
+За сеанс реализованы и развернуты 6 новых задач (TASK-192, TASK-193, TASK-194, TASK-195, TASK-196, TASK-197):
+
+### TASK-192: `/compare` Telegram команда
+- Сравнение статистики сегодня vs вчера: Total Bets, Resolved, Win Rate, Avg Edge, PnL, ROI
+- Дельта-метрики с цветовыми индикаторами тренда (↑🟢 улучшение | →🟡 стабильно | ↓🔴 ухудшение)
+- **Файлы:** internal/notifier/telegram_commands.go (+117 строк)
+
+### TASK-193: Signal heatmap в dashboard
+- Матрица города × сигналы: 9 городов × 9 сигналов (rain, heat, cold, snow, wind, hail, storm, sunny, fog)
+- Вероятности из weather пакета с цветовой кодировкой (🟢 >60%, 🟡 40-60%, 🟠 20-40%, 🔴 <20%, ⚫ no data)
+- ASCII таблица + статистика готовности
+- **Файлы:** cmd/dashboard/main.go (+130 строк)
+
+### TASK-194: `/trend` Telegram команда
+- 7-дневный тренд выбранного города: дневные ставки, win rate, edge, P&L
+- Список доступных городов при вызове без параметра
+- Тренд-индикаторы (↑↓→) по лучшему/худшему дню
+- **Файлы:** internal/notifier/telegram_commands.go (+122 строк)
+
+### TASK-195: Market spread analysis в dashboard
+- Распределение спредов по 5 диапазонам: tight (≤0.01), good, fair, wide, very wide
+- Per-city spread summary с сортировкой по качеству ликвидности
+- Цветовая кодировка: 🟢 avg≤0.02, 🟡 avg≤0.05, 🔴 avg>0.05
+- **Файлы:** cmd/dashboard/main.go (+155 строк)
+
+### TASK-196: Per-city forecast accuracy tracking
+- Новый пакет для отслеживания точности прогнозов по городам
+- Сохранение (probability, outcome) пар в data/city_accuracy/{city}.json
+- Rolling window 100 записей, Brier score вычисления
+- Dashboard команда city-accuracy с статусом excellent/good/fair/poor
+- **Файлы:** internal/calibration/accuracy.go (119 строк) + cmd/dashboard/main.go
+
+### TASK-197: Bankroll history tracking
+- Daily bankroll snapshots в data/bankroll/history.json
+- ASCII bar chart последних 30 дней с min/max масштабированием
+- Статистика: Start/Current Balance, Cumulative Profit, Best/Worst Days
+- Таблица последних 10 дней с дневными изменениями
+- **Файлы:** internal/calibration/bankroll_history.go (165 строк) + cmd/dashboard/main.go
+
+### Итоги сессии
+- **Всего задач выполнено:** 195 (из которых 191+ до сеанса, 6 в сеансе)
+- **Файлов изменено:** 3 основных (telegram_commands.go, dashboard/main.go, calibration/*_history.go)
+- **Строк кода добавлено:** ~950
+- **Git коммиты:** 6 полноценных коммитов с подробными сообщениями
+- **Все проверки:** `go build ./...` ✅ для каждого изменения
+- **Развертывание:** 6 успешных push'ей на origin/master
+
+### Что реализовано
+✅ Telegram команды для операторов: /compare (день vs вчера), /trend (город за 7 дней)
+✅ Dashboard визуализации: signal heatmap (матрица вероятностей), spread analysis (ликвидность), bankroll chart
+✅ Система отслеживания: per-city accuracy (Brier scores), bankroll history (daily snapshots)
+✅ Полная интеграция с существующей архитектурой проекта
+✅ Нулевых breaking changes, обратная совместимость сохранена
+
+### Технические решения
+- Использование in-memory кэша (sync.Map) для быстрого доступа к историческим данным
+- Rolling windows (max 100 записей) для ограничения размера файлов
+- Хорошо отформатированный ASCII вывод для dashboard команд
+- Цветовая кодировка для быстрого восприятия метрик операторами
+- Обработка edge cases (пустые дни, нет данных, invalid inputs)
+
+---
+
 ## 2026-05-28 09:18 UTC — TASK-193
 
 **Задача:** Реализовать визуализацию вероятностей сигналов в виде матрицы город × сигнал.
