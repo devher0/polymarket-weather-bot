@@ -299,6 +299,20 @@ func EvaluateFused(
 		slog.Debug("volume confidence penalty", "volume_usdc", fmt.Sprintf("%.0f", m.VolumeUSDC), "penalty", "-0.03")
 	}
 
+	// TASK-208: price momentum boost — if the market price moved >3% toward our
+	// probability estimate since last cycle, the market is confirming our view.
+	// Record the current price so the next cycle can compute the delta.
+	if markets.IsConfirming(m.ConditionID, m.YesPrice, ourP, 0.03) {
+		ff.Confidence = math.Min(0.97, ff.Confidence+0.02)
+		slog.Debug("price momentum boost",
+			"conditionID", m.ConditionID,
+			"city", m.City,
+			"signal", m.Signal,
+			"boost", "+0.02",
+		)
+	}
+	markets.RecordPrice(m.ConditionID, m.YesPrice)
+
 	// TASK-185: boost confidence when adjacent forecast days agree with today's signal.
 	// Only makes sense when city and signal are both known (they always are here).
 	if m.City != "" && m.Signal != "" {

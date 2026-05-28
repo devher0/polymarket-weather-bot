@@ -2044,3 +2044,35 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Сортировка: tripped → down → degraded → ok (проблемные первыми)
 - Итог строка: "X/7 sources healthy"
 - Добавить case "/sources" в switch поллера в cmd/bot/main.go и в /help раздел "Data"
+
+---
+
+## 🔴 ПРИОРИТЕТ 600 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-207: `/breakdown` Telegram команда — city×signal матрица P&L
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает топ комбинации city+signal по ROI% — помогает понять где бот зарабатывает лучше всего.
+- `handleBreakdown(bcfg BotConfig) string` — группирует историю ставок по паре (city, signal)
+- Таблица: City | Signal | N | Win% | P&L | ROI% — сортировка по ROI% descending
+- Мин. 2 ставки для отображения строки; максимум 15 строк
+- Итог: "Total X resolved bets across Y combinations"
+- Добавить case "/breakdown" в switch поллера и в /help раздел "Analytics"
+
+### [x] 2026-05-28 — TASK-208: Market price momentum detector — буст уверенности при подтверждении цены
+**Файлы:** `internal/markets/momentum.go` (новый), `internal/strategy/strategy.go` (обновить)
+Если рыночная цена движется навстречу нашей оценке — значит рынок соглашается с прогнозом.
+- `internal/markets/momentum.go`: in-memory кэш `sync.Map[conditionID → float64]`
+- `RecordPrice(id, price string/float64)` — сохраняет цену из текущего цикла
+- `PriceDelta(id string, currentPrice float64) (delta float64, ok bool)` — возвращает изменение
+- В `strategy.go` `EvaluateFused`: после расчёта confidence — если цена сдвинулась на >3% в сторону ourP → +0.02 confidence (cap 0.97); логировать `slog.Debug("price momentum boost")`
+- Кэш только in-memory (сбрасывается при рестарте)
+
+### [x] 2026-05-28 — TASK-209: `/missed` Telegram команда — рынки оценённые но пропущенные
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает рынки которые были оценены сегодня но пропущены (SKIP:*) — помогает калибровать пороги.
+- `handleMissed(bcfg BotConfig) string` — загружает prediction log текущего дня
+- Фильтр: только SKIP:* записи (confidence/no_edge/min_size/stale)
+- Сортировка по max(yesEdge, noEdge) descending — "ближайшие к ставке" первыми
+- Топ-10 строк: city/signal | skip_reason | max_edge | confidence | our_p→price
+- Если нет SKIP записей: "✅ All evaluated markets were bet on today"
+- Добавить case "/missed" в switch поллера и в /help раздел "Analytics"

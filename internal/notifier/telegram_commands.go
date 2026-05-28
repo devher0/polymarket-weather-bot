@@ -23,6 +23,8 @@
 //   /top-edge        — top markets ranked by edge×confidence score
 //   /ev              — EV capture ratio: expected vs realized P&L last 50 bets
 //   /countdown       — active markets sorted by time-to-close with urgency badges (TASK-201)
+//   /breakdown       — city×signal P&L matrix sorted by ROI% (TASK-207)
+//   /missed          — today's evaluated-but-skipped markets sorted by edge (TASK-209)
 //   /pause           — suspend all trading
 //   /resume          — resume trading
 //   /watchdog        — last successful cycle time + overdue status (TASK-200)
@@ -282,6 +284,10 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleCountdown(bcfg))
 				case "/sources":
 					sendReply(cfg, chatID, handleSources(bcfg))
+				case "/breakdown":
+					sendReply(cfg, chatID, handleBreakdown(bcfg))
+				case "/missed":
+					sendReply(cfg, chatID, handleMissed(bcfg))
 				}
 			}
 		}
@@ -1823,7 +1829,9 @@ func handleHelp() string {
 /signals         Per-signal win rate + Brier breakdown
 /winrate         Rolling win rate per signal (last 20)
 /pnl-city        P&L breakdown by city
+/breakdown       City×signal matrix sorted by ROI%
 /ev              EV capture ratio (last 50 bets)
+/missed          Today's skipped markets sorted by edge
 /daily           Today's bets timeline + running P&L</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
@@ -2513,5 +2521,162 @@ func handleSources(bcfg BotConfig) string {
 		sb.WriteString("\n<i>No health data yet — starts accumulating on first cycle.</i>")
 	}
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", now.Format("15:04")))
+	return sb.String()
+}
+
+// ── TASK-207: /breakdown command ─────────────────────────────────────────────
+
+// handleBreakdown returns a city×signal performance matrix sorted by ROI%.
+// Only combinations with ≥2 resolved bets are shown (max 15 rows).
+func handleBreakdown(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	type key struct{ city, signal string }
+	type stats struct {
+		bets        int
+		wins        int
+		pnl         float64
+		totalRisked float64
+	}
+
+	m := make(map[key]*stats)
+	for _, r := range records {
+		if r.Outcome == nil || r.City == "" || r.Signal == "" {
+			continue
+		}
+		k := key{r.City, r.Signal}
+		s, ok := m[k]
+		if !ok {
+			s = &stats{}
+			m[k] = s
+		}
+		s.bets++
+		s.totalRisked += r.SizeUSDC
+		if *r.Outcome {
+			s.wins++
+			if r.MarketPrice > 0 {
+				s.pnl += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+			}
+		} else {
+			s.pnl -= r.SizeUSDC
+		}
+	}
+
+	type row struct {
+		city, signal string
+		bets, wins   int
+		pnl, roi     float64
+		totalRisked  float64
+	}
+	var rows []row
+	for k, s := range m {
+		if s.bets < 2 {
+			continue
+		}
+		roi := 0.0
+		if s.totalRisked > 0 {
+			roi = s.pnl / s.totalRisked * 100
+		}
+		rows = append(rows, row{k.city, k.signal, s.bets, s.wins, s.pnl, roi, s.totalRisked})
+	}
+	if len(rows) == 0 {
+		return "📭 Not enough resolved bets yet (need ≥2 per city+signal combo)."
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].roi > rows[j].roi })
+	if len(rows) > 15 {
+		rows = rows[:15]
+	}
+
+	totalBets := 0
+	combos := len(m)
+	for _, s := range m {
+		if s.bets >= 2 {
+			totalBets += s.bets
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("🗺 <b>City×Signal Breakdown</b> (≥2 bets, by ROI%)\n<pre>")
+	sb.WriteString(fmt.Sprintf("%-10s %-7s %4s %5s %7s %6s\n", "City", "Signal", "N", "Win%", "P&L", "ROI%"))
+	sb.WriteString(strings.Repeat("─", 48) + "\n")
+	for _, r := range rows {
+		city := r.city
+		if len(city) > 9 {
+			city = city[:8] + "…"
+		}
+		wr := 0.0
+		if r.bets > 0 {
+			wr = float64(r.wins) / float64(r.bets) * 100
+		}
+		sign := "+"
+		if r.pnl < 0 {
+			sign = ""
+		}
+		sb.WriteString(fmt.Sprintf("%-10s %-7s %4d %4.0f%% %s%6.2f %+5.1f%%\n",
+			city, r.signal, r.bets, wr, sign, r.pnl, r.roi))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%d resolved bets across %d combinations</i>\n", totalBets, combos))
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-209: /missed command ─────────────────────────────────────────────────
+
+// handleMissed shows today's evaluated markets that were skipped, sorted by
+// how close they were to the betting threshold (highest edge first).
+func handleMissed(bcfg BotConfig) string {
+	today := time.Now().UTC().Format("2006-01-02")
+	preds, err := strategy.LoadPredictions(today, bcfg.DataRoot)
+	if err != nil || len(preds) == 0 {
+		return "📭 No prediction data for today yet."
+	}
+
+	var skipped []strategy.PredictionRecord
+	for _, p := range preds {
+		if strings.HasPrefix(p.Decision, "SKIP:") {
+			skipped = append(skipped, p)
+		}
+	}
+	if len(skipped) == 0 {
+		return "✅ All evaluated markets were bet on today."
+	}
+
+	// Sort by max edge descending — nearest-to-threshold first.
+	sort.Slice(skipped, func(i, j int) bool {
+		edgeI := math.Max(skipped[i].YesEdge, skipped[i].NoEdge)
+		edgeJ := math.Max(skipped[j].YesEdge, skipped[j].NoEdge)
+		return edgeI > edgeJ
+	})
+	if len(skipped) > 10 {
+		skipped = skipped[:10]
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("⏭ <b>Missed Markets Today</b> (%d skipped)\n<pre>", len(preds)-len(skipped)))
+	sb.WriteString(fmt.Sprintf("%-10s %-6s %-18s %6s %5s\n", "City", "Signal", "Reason", "Edge", "Conf"))
+	sb.WriteString(strings.Repeat("─", 52) + "\n")
+	for _, p := range skipped {
+		city := p.City
+		if len(city) > 9 {
+			city = city[:9]
+		}
+		sig := p.Signal
+		if len(sig) > 5 {
+			sig = sig[:5]
+		}
+		reason := strings.TrimPrefix(p.Decision, "SKIP:")
+		if len(reason) > 17 {
+			reason = reason[:16] + "…"
+		}
+		maxEdge := math.Max(p.YesEdge, p.NoEdge)
+		sb.WriteString(fmt.Sprintf("%-10s %-6s %-18s %5.3f %4.2f\n",
+			city, sig, reason, maxEdge, p.Confidence))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC | sorted by edge</i>", time.Now().UTC().Format("15:04")))
 	return sb.String()
 }
