@@ -354,6 +354,10 @@ func main() {
 				_ = notifier.NotifyError("rolling_winrate", fmt.Errorf("⚠️ %s", msg))
 			}
 		}
+		// TASK-133: rebuild hourly timing stats from full history at startup.
+		if err := calibration.RebuildHourlyStats(startupHistory, cfg.DataRoot); err != nil {
+			slog.Warn("timing: hourly stats rebuild failed", "err", err)
+		}
 	}
 
 	// Initialise risk manager from config.
@@ -794,6 +798,20 @@ func main() {
 			d = applyPlattCalibration(d, plattCal, adaptedSignalMinEdge, effectiveBankroll)
 			if d == nil {
 				continue
+			}
+
+			// TASK-133: apply time-of-day sizing multiplier based on historical win rate.
+			timingMult := calibration.TimingMultiplierNow(cfg.DataRoot)
+			if timingMult != 1.0 {
+				d.SizeUSDC *= timingMult
+				if d.SizeUSDC > cfg.MaxBet {
+					d.SizeUSDC = cfg.MaxBet
+				}
+				slog.Debug("timing multiplier applied",
+					"hour_utc", time.Now().UTC().Hour(),
+					"multiplier", fmt.Sprintf("%.3f", timingMult),
+					"size_usdc", fmt.Sprintf("%.2f", d.SizeUSDC),
+				)
 			}
 
 			// Per-bet risk gate: re-evaluate after each bet (history may grow).

@@ -1255,3 +1255,38 @@ Brier score хорош для долгосрочного трекинга, но 
 - В Telegram /status: добавить строку `Win Rate 20: X% (N bets)` рядом с Brier score
 - В dashboard stats: показывать rolling win rate таблицу по окнам [10, 20, 50]
 - 8 unit-тестов: empty, too few resolved, all wins, all losses, mixed, exactly at threshold, window larger than history, negative P&L detection
+
+---
+
+## 🔵 НОВЫЕ ЗАДАЧИ — авто-добавлены 2026-05-28
+
+### [x] 2026-05-28 — TASK-133: Time-of-day win rate tracker — timing multiplier для bet-size
+**Файлы:** `internal/calibration/timing.go` (новый), `internal/calibration/timing_test.go` (новый), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить)
+Prediction-market liquidity и order-flow паттерны существенно различаются по времени суток UTC. Трекинг побед/поражений по UTC-часу позволяет масштабировать bet-size в зависимости от исторической производительности в данный час.
+- `HourBucket` struct: Hour int, Wins int, Losses int — данные по одному UTC-часу
+- `LoadHourlyStats(dataRoot)` / `RebuildHourlyStats(records, dataRoot)` / `UpdateHourlyStats(rec, dataRoot)` — CRUD для `data/hourly_winrate.json`
+- `TimingMultiplier(buckets, hour) float64` — 1.0 + clamp(hourWR/globalWR - 1, -0.5, 0.2); диапазон [0.5, 1.2]; 1.0 если < 5 ставок в часу
+- `TimingMultiplierNow(dataRoot) float64` — мультипликатор для текущего UTC-часа
+- `HourlyTable(buckets)` — срез из 24 HourlyRow для отображения
+- В cmd/bot: применять `timingMult` к `d.SizeUSDC` после Platt калибровки; RebuildHourlyStats при старте
+- `dashboard timing` — таблица 24 часов: hour/wins/losses/total/win_rate/multiplier/signal; текущий час отмечен ▶
+- 8 unit-тестов: no data, hour below min samples, average hour, bad hour, good hour, invalid hour, rebuild/load roundtrip, unresolved ignored
+
+### [ ] TASK-134: Forecast horizon confidence decay — снижение confidence для дальних прогнозов
+**Файлы:** `internal/collectors/horizon.go` (новый), `internal/collectors/horizon_test.go` (новый), `internal/collectors/aggregator.go` (обновить)
+1-дневные прогнозы значительно точнее 5-дневных. Сейчас confidence считается только по межисточниковому согласию, но не учитывает горизонт прогноза (сколько часов до целевой даты). Добавить decay-функцию которая снижает confidence для дальних горизонтов.
+- `HorizonDecay(targetDate time.Time, forecastedAt time.Time) float64` — decay factor ∈ [0.65, 1.0]. 0-24h → 1.0, 24-48h → 0.92, 48-72h → 0.84, 72-96h → 0.76, 96-120h → 0.70, >120h → 0.65
+- `HorizonDecayLinear(horizonHours float64) float64` — упрощённая версия: max(0.65, 1.0 - horizonHours/400)
+- Добавить `ForecastHorizonHours float64` в FusedForecast (вычислять в AggregateAll как time.Until(targetDate).Hours())
+- В `fuse()`: `ff.Confidence *= HorizonDecayLinear(horizonHours)` после consensus correction
+- В `dashboard explain`: колонка "Horizon" с значением вроде "+36h" и цвет-кодировка (зелёный ≤ 24h, жёлтый 24-72h, красный > 72h)
+- 6 unit-тестов: same-day, 24h, 48h, 96h, 120h+, boundary check
+
+### [ ] TASK-135: Market duplicate guard — предотвращение ставок на одно и то же погодное событие
+**Файлы:** `internal/markets/duplicate_guard.go` (новый), `internal/markets/duplicate_guard_test.go` (новый), `cmd/bot/main.go` (обновить)
+Иногда Polymarket создаёт несколько рынков на одно погодное событие (e.g. "Will NYC hit 90°F on July 4?" и "Will New York reach 90 degrees on the 4th of July?"). Ставки на оба — это двойная экспозиция без дополнительного edge.
+- `MarketFingerprint(m Market) string` — canonical key: normalize(city) + "/" + signal + "/" + date(expiry). Например "new_york/heat/2026-07-04"
+- `FindDuplicates(markets []Market) map[string][]string` — map[fingerprint][]conditionID с 2+ рынками
+- `IsDuplicateOf(m Market, openBets []calibration.BetRecord) bool` — true если уже есть открытая ставка с тем же fingerprint
+- В cmd/bot: вызывать IsDuplicateOf перед EvaluateFused; skip с логом "duplicate-market: already bet on same event"
+- 6 unit-тестов: no duplicates, exact duplicate, different date, different signal, fingerprint normalization, open bets check

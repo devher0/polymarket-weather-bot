@@ -1663,3 +1663,26 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 - 7 unit-тестов: perfect consensus, extreme spread, single/empty, two close values, bounds check, MultiDim perfect, MultiDim mixed
 
 **Итого:** ~182 строки кода, `go build ./...` чисто, `go test ./...` — все пакеты зелёные.
+
+## 2026-05-28 00:17 UTC — TASK-133
+
+**Файлы изменены:**
+- `internal/calibration/timing.go` (новый, 162 строки) — time-of-day win rate tracker
+- `internal/calibration/timing_test.go` (новый, 117 строк) — 8 unit-тестов
+- `cmd/bot/main.go` (+24 строки) — timing multiplier + RebuildHourlyStats при старте
+- `cmd/dashboard/main.go` (+82 строки) — `dashboard timing` команда
+- `TASKS.md` (+65 строк) — добавлены TASK-133/134/135, TASK-133 закрыт
+
+**Что сделано:**
+
+**TASK-133: Time-of-day win rate tracker** — новый механизм масштабирования bet-size по UTC-часу на основе исторических паттернов побед/поражений:
+- `HourBucket` — 24 бакета (0-23h UTC), каждый хранит wins+losses
+- `LoadHourlyStats/RebuildHourlyStats/UpdateHourlyStats` — CRUD для `data/hourly_winrate.json`
+- `TimingMultiplier(buckets, hour)` — `1.0 + clamp(hourWR/globalWR - 1, -0.5, +0.2)`, диапазон [0.5, 1.2]; возвращает 1.0 при < 5 ставок в часу или глобально
+- `TimingMultiplierNow(dataRoot)` — мультипликатор для текущего UTC-часа
+- В cmd/bot: после Platt калибровки `d.SizeUSDC *= timingMult`; при старте `RebuildHourlyStats` заполняет статистику из полной истории ставок
+- `dashboard timing` — таблица 24 часов с wins/losses/win_rate/multiplier/signal, текущий час отмечен ▶, легенда внизу
+
+Rationale: Polymarket order flow и liquidity существенно меняются по времени суток. В часы с активной торговлей (US afternoon, Asia morning) спреды уже и качество исполнения лучше. Трекер позволяет боту со временем обнаружить эти паттерны и адаптировать размер ставок автоматически, без ручной настройки.
+
+**Итого:** ~385 строк кода, `go build ./...` чисто, `go test ./...` — все пакеты зелёные.

@@ -11,6 +11,7 @@
 //	go run ./cmd/dashboard export-predictions                — export today's prediction log to CSV (stdout)
 //	go run ./cmd/dashboard export-predictions --date=2026-05-27 --output=predictions.csv — specific date, to file
 //	go run ./cmd/dashboard drift                             — forecast stability table (TASK-126)
+//	go run ./cmd/dashboard timing                            — hourly win-rate and timing multiplier table (TASK-133)
 //	go run ./cmd/dashboard all                               — run all sub-commands
 package main
 
@@ -548,6 +549,9 @@ func main() {
 	case "drift":
 		// TASK-126: show forecast stability drift table.
 		cmdDrift(dataRoot)
+	case "timing":
+		// TASK-133: hourly win-rate and timing multiplier table.
+		cmdTiming(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -578,6 +582,7 @@ func printUsage() {
 	fmt.Println("  heatmap                           Show today's market opportunity heatmap summary (TASK-075)")
 	fmt.Println("  hourly <city>                     Hourly weather table for city (today + tomorrow) (TASK-078)")
 	fmt.Println("  health                            Per-source data availability stats (TASK-081)")
+	fmt.Println("  timing                            Hourly win-rate and bet-size timing multiplier (TASK-133)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -1321,4 +1326,91 @@ func cmdDrift(dataRoot string) {
 	fmt.Println()
 	fmt.Println("  Drift factor: 1.000 = stable, 0.700 = maximally unstable (confidence floored)")
 	fmt.Println("  Source: data/drift/{city}_d{N}.json — populated automatically when forecasts change")
+}
+
+// ── timing (TASK-133) ─────────────────────────────────────────────────────────
+
+// cmdTiming prints the hourly win-rate table and timing multiplier per UTC hour.
+// Operators can use this to understand at which hours the bot historically
+// performs best, and adjust strategies accordingly.
+func cmdTiming(dataRoot string) {
+	buckets, err := calibration.LoadHourlyStats(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "timing: load error: %v\n", err)
+		return
+	}
+
+	rows := calibration.HourlyTable(buckets)
+
+	// Count hours with enough data.
+	dataHours := 0
+	for _, r := range rows {
+		if r.WinRate >= 0 {
+			dataHours++
+		}
+	}
+
+	currentHour := time.Now().UTC().Hour()
+	currentMult := calibration.TimingMultiplier(buckets, currentHour)
+
+	fmt.Printf("\n  ── Hourly Win-Rate & Timing Multiplier (UTC) ──\n\n")
+	fmt.Printf("  Current hour: %02d:xx UTC  |  Current multiplier: %.3f\n\n", currentHour, currentMult)
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetStyle(table.StyleLight)
+	t.AppendHeader(table.Row{"Hour (UTC)", "Wins", "Losses", "Total", "Win Rate", "Multiplier", "Signal"})
+
+	for _, r := range rows {
+		var wrStr, multStr, signal string
+
+		if r.WinRate < 0 {
+			wrStr = "—"
+			multStr = "—"
+			signal = "no data"
+		} else {
+			wrStr = fmt.Sprintf("%.0f%%", r.WinRate*100)
+			multStr = fmt.Sprintf("%.3f", r.Multiplier)
+			switch {
+			case r.Multiplier >= 1.15:
+				signal = "▲ great"
+			case r.Multiplier >= 1.05:
+				signal = "▲ good"
+			case r.Multiplier <= 0.60:
+				signal = "▼ avoid"
+			case r.Multiplier <= 0.80:
+				signal = "▼ weak"
+			default:
+				signal = "→ neutral"
+			}
+		}
+
+		marker := "  "
+		if r.Hour == currentHour {
+			marker = "▶ "
+		}
+
+		t.AppendRow(table.Row{
+			fmt.Sprintf("%s%02d:00", marker, r.Hour),
+			r.Wins,
+			r.Losses,
+			r.Wins + r.Losses,
+			wrStr,
+			multStr,
+			signal,
+		})
+	}
+
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Name: "Hour (UTC)", Align: text.AlignLeft},
+		{Name: "Win Rate", Align: text.AlignRight},
+		{Name: "Multiplier", Align: text.AlignRight},
+		{Name: "Signal", Align: text.AlignLeft},
+	})
+	t.Render()
+
+	fmt.Println()
+	fmt.Printf("  Hours with data: %d/24\n", dataHours)
+	fmt.Println("  Multiplier range: 0.50 (worst) → 1.20 (best)  |  1.000 = neutral (< 5 bets)")
+	fmt.Println("  Source: data/hourly_winrate.json")
 }
