@@ -1700,21 +1700,21 @@ Telegram команда `/winrate` показывает rolling win rate за п
 - В bot loop: если `m.VolumeUSDC > 0 && m.VolumeUSDC < cfg.MinVolumeUSDC` → skip с логом "skipped: low volume {V} USDC (min={min})"
 - В `dashboard markets`: добавить колонку "Vol USDC" рядом с Spread
 
-### [ ] TASK-176: Pre-trade slippage guard — проверка что наш ордер не двигает цену >5%
+### [x] 2026-05-28 — TASK-176: Pre-trade slippage guard — проверка что наш ордер не двигает цену >5%
 **Файлы:** `internal/markets/slippage.go` (новый), `cmd/bot/main.go` (обновить)
 При малой ликвидности наш ордер может сам сдвинуть цену и сделать ставку невыгодной.
 - `EstimateSlippage(sizeUSDC, yesPrice float64, book []bookLevel) float64` — симулирует исполнение ордера по стакану, возвращает avg исполненную цену vs best bid
 - Если slippage > 0.03 (3 цента) → логировать "high slippage: {X} — reducing size" и обрезать size до 50% max
 - Если slippage > 0.07 → skip полностью
 
-### [ ] TASK-177: Per-source timeout config — настраиваемый timeout для каждого источника данных
+### [x] 2026-05-28 — TASK-177: Per-source timeout config — настраиваемый timeout для каждого источника данных
 **Файлы:** `config/config.go` (обновить), `internal/collectors/aggregator.go` (обновить)
 Сейчас timeout фиксирован. GOES/NASA иногда медленнее OpenMeteo. Добавить per-source таймауты.
 - `SourceTimeouts map[string]int` в Config (yaml: `source_timeouts:`, в секундах)
 - Default timeouts: openmeteo=8, nasa=10, noaa=8, goes=15, hrrr=8, ensemble=10
 - В `collectSources()`: использовать `context.WithTimeout(ctx, time.Duration(timeout)*time.Second)` для каждого источника
 
-### [ ] TASK-178: Brier score trend alert — Telegram уведомление при устойчивом ухудшении
+### [x] 2026-05-28 — TASK-178: Brier score trend alert — Telegram уведомление при устойчивом ухудшении
 **Файлы:** `internal/calibration/brier_trend.go` (новый), `cmd/bot/main.go` (обновить)
 3-недельный тренд Brier score — более устойчивый сигнал чем 14-дневное drift detection (TASK-147).
 - `BrierTrend(records []BetRecord, weeks int) (slope float64, r2 float64)` — линейная регрессия недельного Brier

@@ -129,6 +129,11 @@ type Config struct {
 	// is below this threshold. Markets with very low volume are illiquid toys.
 	// 0 = disabled. Env override: MIN_VOLUME_USDC
 	MinVolumeUSDC float64 `yaml:"min_volume_usdc"`
+
+	// TASK-177: per-source HTTP timeouts in seconds. Overrides the global 8s
+	// deadline for individual sources. 0 or missing → use the default for that source.
+	// Example yaml: source_timeouts: {openmeteo: 8, nasa: 10, noaa: 8, goes: 15}
+	SourceTimeouts map[string]int `yaml:"source_timeouts"`
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -166,6 +171,16 @@ func defaults() Config {
 		RollingWinRateThreshold: 0.35,
 		MinBetUSDC:              0.50,
 		MinVolumeUSDC:           500.0,
+		SourceTimeouts: map[string]int{
+			"openmeteo": 8,
+			"nasa":      10,
+			"noaa":      8,
+			"goes":      15,
+			"hrrr":      8,
+			"ensemble":  10,
+			"ecmwf":     12,
+			"gfs":       10,
+		},
 	}
 }
 

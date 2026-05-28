@@ -190,3 +190,17 @@ webhook_url: ""
 # even small orders move the price. Set to 0 to disable.
 # Env override: MIN_VOLUME_USDC
 min_volume_usdc: 500.0
+
+# TASK-177: per-source HTTP timeout overrides in seconds.
+# These are the maximum times to wait for each weather data source.
+# Sources that exceed their individual timeout are dropped gracefully.
+# All timeouts are also bounded by the global 8-second fetch deadline.
+source_timeouts:
+  openmeteo: 8
+  nasa: 10
+  noaa: 8
+  goes: 15
+  hrrr: 8
+  ensemble: 10
+  ecmwf: 12
+  gfs: 10

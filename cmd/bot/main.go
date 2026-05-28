@@ -253,6 +253,9 @@ func main() {
 	// TASK-162: configurable minimum bet size.
 	strategy.MinBetUSDC = cfg.MinBetUSDC
 
+	// TASK-177: apply per-source timeouts from config to the collectors package.
+	collectors.SetSourceTimeouts(cfg.SourceTimeouts)
+
 	// TASK-082: validate config at startup.
 	{
 		vr := config.Validate(cfg)
@@ -343,9 +346,16 @@ func main() {
 	// Print Brier score from past bets at startup
 	calibration.PrintBrierScore(cfg.DataRoot)
 	// TASK-147: log calibration drift status at startup.
+	// TASK-178: check 3-week Brier trend and alert on sustained worsening.
 	if startupDriftRecords, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
 		if line := calibration.DriftStatusLine(startupDriftRecords); line != "" {
 			slog.Info("calibration drift status", "status", line)
+		}
+		if alerted, msg := calibration.BrierTrendAlert(startupDriftRecords); alerted {
+			slog.Warn("calibration trend alert", "msg", msg)
+			_ = notifier.NotifyError("Brier trend", fmt.Errorf("%s", msg))
+		} else if trendLine := calibration.BrierTrendLine(startupDriftRecords); trendLine != "" {
+			slog.Info("calibration trend", "status", trendLine)
 		}
 	}
 
@@ -1143,6 +1153,26 @@ func main() {
 				}
 				if refreshed != nil {
 					d = refreshed
+				}
+
+				// TASK-176: pre-trade slippage guard — simulate filling the order
+				// against the live CLOB book to detect thin liquidity before committing.
+				if d.TokenID != "" {
+					buyingYes := d.Side == "YES"
+					slippageRes := markets.CheckSlippage(d.TokenID, d.SizeUSDC, buyingYes)
+					if slippageRes.Skip {
+						slog.Info("slippage: skipping bet (slippage too high)",
+							"conditionID", m.ConditionID,
+							"slippage", fmt.Sprintf("%.3f", slippageRes.Slippage),
+						)
+						continue
+					}
+					if slippageRes.AdjustedSize < d.SizeUSDC {
+						d2 := *d
+						d2.SizeUSDC = slippageRes.AdjustedSize
+						d2.Reason += fmt.Sprintf(" | slippage=%.3f(size_halved)", slippageRes.Slippage)
+						d = &d2
+					}
 				}
 
 				// Anti-detection: sleep a random human-like delay before each bet.

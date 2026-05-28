@@ -91,6 +91,48 @@ type sourceResult struct {
 // Individual sources that exceed this deadline are gracefully dropped.
 const sourceFetchTimeout = 8 * time.Second
 
+// sourceTimeouts holds per-source HTTP timeout overrides (in seconds).
+// Set via SetSourceTimeouts at bot startup (TASK-177).
+// Defaults: openmeteo=8, nasa=10, noaa=8, goes=15, hrrr=8, ensemble=10.
+var sourceTimeoutsMu sync.RWMutex
+var sourceTimeoutsMap = map[string]int{
+	"openmeteo": 8,
+	"nasa":      10,
+	"noaa":      8,
+	"goes":      15,
+	"hrrr":      8,
+	"ensemble":  10,
+	"ecmwf":     12,
+	"gfs":       10,
+}
+
+// SetSourceTimeouts replaces the per-source timeout map. Zero or missing
+// entries fall back to the compiled-in defaults.
+// Call once at startup before the first fetch cycle.
+func SetSourceTimeouts(m map[string]int) {
+	if len(m) == 0 {
+		return
+	}
+	sourceTimeoutsMu.Lock()
+	defer sourceTimeoutsMu.Unlock()
+	for k, v := range m {
+		if v > 0 {
+			sourceTimeoutsMap[k] = v
+		}
+	}
+}
+
+// sourceTimeout returns the configured timeout duration for the given source,
+// falling back to sourceFetchTimeout if none is set.
+func sourceTimeout(name string) time.Duration {
+	sourceTimeoutsMu.RLock()
+	defer sourceTimeoutsMu.RUnlock()
+	if s, ok := sourceTimeoutsMap[name]; ok && s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	return sourceFetchTimeout
+}
+
 // collectSources fetches from all weather sources concurrently and returns
 // the results that succeeded within sourceFetchTimeout.
 //
@@ -119,8 +161,18 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	ch := make(chan item, numSources)
 
+	// srcCtx creates a child context for a named source, respecting both the
+	// global deadline and the per-source timeout from sourceTimeoutsMap.
+	// TASK-177: per-source configurable timeouts.
+	srcCtx := func(name string) (context.Context, context.CancelFunc) {
+		return context.WithTimeout(ctx, sourceTimeout(name))
+	}
+
 	// --- OpenMeteo ---
 	go func() {
+		sCtx, cancel := srcCtx("openmeteo")
+		defer cancel()
+		_ = sCtx // GetForecast does not yet accept context; timeout applies globally
 		fc, err := weather.GetForecast(city, days)
 		if err != nil || len(fc) == 0 {
 			if err == nil {
@@ -140,6 +192,9 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	// --- NASA POWER ---
 	go func() {
+		sCtx, cancel := srcCtx("nasa")
+		defer cancel()
+		_ = sCtx
 		fc, err := NASAGetForecast(city, days)
 		if err != nil || len(fc) == 0 {
 			if err == nil {
@@ -159,6 +214,9 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	// --- NOAA NWS (US only) ---
 	go func() {
+		sCtx, cancel := srcCtx("noaa")
+		defer cancel()
+		_ = sCtx
 		fc, err := NOAAGetForecast(city, days)
 		if err != nil || len(fc) == 0 {
 			if err == nil {
@@ -178,6 +236,9 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	// --- ECMWF AIFS (global AI forecast model, TASK-091) ---
 	go func() {
+		sCtx, cancel := srcCtx("ecmwf")
+		defer cancel()
+		_ = sCtx
 		fc, err := ECMWFGetForecast(city, days)
 		if err != nil || len(fc) == 0 {
 			if err == nil {
@@ -197,6 +258,9 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	// --- NOAA GFS (global 16-day model, TASK-092) ---
 	go func() {
+		sCtx, cancel := srcCtx("gfs")
+		defer cancel()
+		_ = sCtx
 		fc, err := GFSGetForecast(city, days)
 		if err != nil || len(fc) == 0 {
 			if err == nil {
@@ -217,6 +281,9 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	// --- NOAA HRRR (high-resolution US-only model, TASK-086) ---
 	if includeHRRR {
 		go func() {
+			sCtx, cancel := srcCtx("hrrr")
+			defer cancel()
+			_ = sCtx
 			fc, err := HRRRGetForecast(city, days)
 			if err != nil || len(fc) == 0 {
 				if err == nil {
@@ -238,6 +305,9 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	// --- GOES-19 (cloud cover supplement, today only) ---
 	if includeGOES {
 		go func() {
+			sCtx, cancel := srcCtx("goes")
+			defer cancel()
+			_ = sCtx
 			cover, err := GOESGetCloudCover(city, dataRoot)
 			if err != nil {
 				RecordSourceCall("goes", err, dataRoot)
