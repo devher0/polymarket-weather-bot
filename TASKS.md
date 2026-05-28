@@ -1968,3 +1968,29 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Горутина watchdog: `ticker := time.NewTicker(loopSec * time.Second)`; если `time.Since(lastCycleAt) > 2×loopSec` → `notifier.NotifyError`
 - `handleWatchdog(bcfg)` в `telegram_commands.go` — возвращает `lastCycleAt` + статус "ok/delayed"
 - Добавить `/watchdog` в help и switch поллера
+
+---
+
+## 🔴 ПРИОРИТЕТ 300 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-201: `/countdown` Telegram команда — рынки по времени до закрытия
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Оператор хочет мгновенно видеть какие рынки вот-вот закроются — чтобы не пропустить ставку.
+- `handleCountdown(bcfg BotConfig) string` — фетчит активные рынки, сортирует по `HoursUntilExpiry()` ASC (ближайшие первыми)
+- Показывает максимум 10 рынков; колонки: Urgency | City/Signal | YES | NO | Closes In
+- Urgency badge: 🔴 < 2h, 🟡 2-6h, 🟢 6-24h, ⚪ > 24h
+- Если < 30 мин до закрытия → "(‼️ URGENT)" суффикс
+- Итог строка: "Closing soon: N markets in next 6h"
+- Добавить case "/countdown" в switch поллера и в /help раздел "Markets"
+
+### [x] 2026-05-28 — TASK-202: Signal entropy tracker — энтропия прогнозов по источникам
+**Файлы:** `internal/collectors/entropy.go` (новый), `cmd/dashboard/main.go` (обновить), `internal/notifier/telegram_commands.go` (обновить в handleForecastQuality)
+Измерять насколько расходятся прогнозы разных источников — высокая энтропия = высокая неопределённость.
+- `SourceEntropy(forecasts []weather.Forecast) float64` — Shannon entropy по значениям temperature среди источников (нормировано 0..1; 0=все согласны, 1=максимальное расхождение)
+- `ForecastDisagreement(ff *FusedForecast) DisagreementReport{City, TempEntropy, RainEntropy, OverallScore, Label string}`
+  - TempEntropy: stdev температур источников / 10 (нормировано)
+  - RainEntropy: stdev вероятностей дождя / 0.5 (нормировано)
+  - OverallScore = (TempEntropy + RainEntropy) / 2
+  - Label: "consensus" (<0.15), "moderate" (0.15-0.35), "disputed" (>0.35)
+- В `cmd/dashboard/main.go`: subcommand `entropy` — таблица городов с entropy metrics
+- В `handleForecastQuality`: добавить колонку "Agr" (agreement = 1 - OverallScore × 100) рядом с Confidence

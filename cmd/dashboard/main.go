@@ -697,6 +697,9 @@ func main() {
 	case "cycles":
 		// TASK-199: per-cycle performance journal.
 		cmdCycles(dataRoot)
+	case "entropy":
+		// TASK-202: signal entropy — source disagreement analysis.
+		cmdEntropy(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -748,6 +751,7 @@ func printUsage() {
 	fmt.Println("  exit-signals                      Open positions with exit recommendations (TASK-188)")
 	fmt.Println("  brier-history                     Daily Brier score snapshots + trend sparkline (TASK-198)")
 	fmt.Println("  cycles                            Per-cycle performance journal: duration/bets/edge (TASK-199)")
+	fmt.Println("  entropy                           Source disagreement analysis: per-city entropy (TASK-202)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -3730,4 +3734,62 @@ func cmdCycles(dataRoot string) {
 	}
 	fmt.Printf("\n  Totals — %d cycles | avg duration: %s | avg bets/cycle: %.2f | avg edge (bet cycles): %.4f\n",
 		n, avgDur.Round(time.Millisecond), avgBetsPerCycle, avgEdgeOverall)
+}
+
+// ── entropy (TASK-202) ────────────────────────────────────────────────────────
+
+// cmdEntropy prints a source disagreement analysis table for all cities.
+// High entropy means sources conflict → more uncertainty in our signal.
+func cmdEntropy(dataRoot string) {
+	header("🌀  SIGNAL ENTROPY — Source Disagreement Analysis")
+
+	reports := collectors.LoadDisagreementReports(dataRoot)
+	if len(reports) == 0 {
+		fmt.Println("  No cached forecast data found. Run the bot or fetch forecasts first.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City", "Temp Entropy", "Rain Entropy", "Overall", "Agree %", "Label", "Sources", "Status"})
+
+	for _, r := range reports {
+		label := r.Label
+		badge := "✅"
+		switch r.Label {
+		case "moderate":
+			badge = "🟡"
+		case "disputed":
+			badge = "🔴"
+		case "no data":
+			badge = "⚫"
+		}
+
+		t.AppendRow(table.Row{
+			r.City,
+			fmt.Sprintf("%.3f", r.TempEntropy),
+			fmt.Sprintf("%.3f", r.RainEntropy),
+			fmt.Sprintf("%.3f", r.OverallScore),
+			fmt.Sprintf("%.1f%%", r.Agreement*100),
+			label,
+			r.SourceCount,
+			badge,
+		})
+	}
+	t.Render()
+
+	// Summary.
+	consensus, moderate, disputed := 0, 0, 0
+	for _, r := range reports {
+		switch r.Label {
+		case "consensus":
+			consensus++
+		case "moderate":
+			moderate++
+		case "disputed":
+			disputed++
+		}
+	}
+	fmt.Printf("\n  Cities: %d total | ✅ consensus: %d | 🟡 moderate: %d | 🔴 disputed: %d\n",
+		len(reports), consensus, moderate, disputed)
+	fmt.Println("  Tip: disputed cities have high source disagreement — consider higher min edge before betting.")
 }

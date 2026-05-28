@@ -22,6 +22,7 @@
 //   /markets         — top active weather markets: city/signal/prices/spread/expiry
 //   /top-edge        — top markets ranked by edge×confidence score
 //   /ev              — EV capture ratio: expected vs realized P&L last 50 bets
+//   /countdown       — active markets sorted by time-to-close with urgency badges (TASK-201)
 //   /pause           — suspend all trading
 //   /resume          — resume trading
 //   /watchdog        — last successful cycle time + overdue status (TASK-200)
@@ -277,6 +278,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleEV(bcfg))
 				case "/watchdog":
 					sendReply(cfg, chatID, handleWatchdog(bcfg))
+				case "/countdown":
+					sendReply(cfg, chatID, handleCountdown(bcfg))
 				}
 			}
 		}
@@ -1826,7 +1829,8 @@ func handleHelp() string {
 /forecast-quality Confidence + age for all city forecasts
 /next            Top-3 best bet opportunities right now
 /markets         Active weather markets (price/spread/expiry)
-/top-edge        Markets ranked by edge×confidence</pre>
+/top-edge        Markets ranked by edge×confidence
+/countdown       Markets sorted by time-to-close (urgency)</pre>
 
 <b>📂 Positions &amp; History</b>
 <pre>/positions       Open (unresolved) bets
@@ -1915,7 +1919,8 @@ func handleDaily(bcfg BotConfig) string {
 	return sb.String()
 }
 
-// handleForecastQuality returns per-city forecast confidence and cache age. (TASK-191)
+// handleForecastQuality returns per-city forecast confidence, cache age, and
+// source agreement entropy. (TASK-191, updated TASK-202)
 func handleForecastQuality(bcfg BotConfig) string {
 	type cityRow struct {
 		city       string
@@ -1923,6 +1928,7 @@ func handleForecastQuality(bcfg BotConfig) string {
 		sources    []string
 		age        time.Duration
 		found      bool
+		ff         *collectors.FusedForecast
 	}
 
 	cities := make([]string, 0, len(weather.Cities))
@@ -1945,19 +1951,20 @@ func handleForecastQuality(bcfg BotConfig) string {
 			sources:    ff.Sources,
 			age:        time.Since(ff.FetchedAt),
 			found:      true,
+			ff:         ff,
 		})
 	}
 
 	var sb strings.Builder
 	sb.WriteString("<b>🌤 Forecast Quality</b>\n\n")
 	sb.WriteString("<pre>")
-	sb.WriteString(fmt.Sprintf("%-14s %5s %5s %-6s\n", "City", "Conf", "Age", "Status"))
-	sb.WriteString(strings.Repeat("─", 32) + "\n")
+	sb.WriteString(fmt.Sprintf("%-14s %5s %5s %4s %-6s\n", "City", "Conf", "Age", "Agr", "Status"))
+	sb.WriteString(strings.Repeat("─", 38) + "\n")
 
 	ready := 0
 	for _, row := range rows {
 		if !row.found {
-			sb.WriteString(fmt.Sprintf("%-14s  n/a   n/a ❌ no cache\n", row.city))
+			sb.WriteString(fmt.Sprintf("%-14s  n/a   n/a  n/a ❌ no cache\n", row.city))
 			continue
 		}
 		ageStr := fmt.Sprintf("%.0fm", row.age.Minutes())
@@ -1972,13 +1979,19 @@ func handleForecastQuality(bcfg BotConfig) string {
 		} else {
 			status = "❌"
 		}
-		sb.WriteString(fmt.Sprintf("%-14s %4.0f%% %5s %s\n",
-			row.city, row.confidence*100, ageStr, status))
+		// TASK-202: source agreement from entropy analysis.
+		agrStr := "n/a"
+		if row.ff != nil && len(row.ff.PerSourceForecasts) >= 2 {
+			rep := collectors.ForecastDisagreement(row.ff)
+			agrStr = fmt.Sprintf("%.0f%%", rep.Agreement*100)
+		}
+		sb.WriteString(fmt.Sprintf("%-14s %4.0f%% %5s %4s %s\n",
+			row.city, row.confidence*100, ageStr, agrStr, status))
 	}
-	sb.WriteString(strings.Repeat("─", 32) + "\n")
+	sb.WriteString(strings.Repeat("─", 38) + "\n")
 	sb.WriteString(fmt.Sprintf("Ready: %d/%d cities", ready, len(cities)))
 	sb.WriteString("</pre>")
-	sb.WriteString(fmt.Sprintf("\n<i>✅ conf≥50%% &amp; age<3h | ⚠️ marginal | ❌ stale/missing | %s UTC</i>",
+	sb.WriteString(fmt.Sprintf("\n<i>✅ conf≥50%% &amp; age<3h | ⚠️ marginal | ❌ stale/missing | Agr=source agreement | %s UTC</i>",
 		time.Now().UTC().Format("15:04")))
 	return sb.String()
 }
@@ -2314,4 +2327,109 @@ func handleWatchdog(bcfg BotConfig) string {
 			"Loop interval:  %ds",
 		status, detail, lastStr, since, bcfg.LoopSec,
 	)
+}
+
+// ── handleCountdown (TASK-201) ────────────────────────────────────────────
+
+// handleCountdown returns active weather markets sorted by time-to-close,
+// with urgency badges so the operator can quickly spot markets about to expire.
+func handleCountdown(bcfg BotConfig) string {
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to fetch markets: %v", err)
+	}
+
+	now := time.Now().UTC()
+
+	// Filter to markets with known city/signal that haven't expired yet.
+	type timedMarket struct {
+		m     markets.Market
+		hours float64
+	}
+	var active []timedMarket
+	for _, m := range mks {
+		if m.City == "" || m.Signal == "" {
+			continue
+		}
+		h := m.HoursUntilExpiry()
+		if h < 0 {
+			continue // already expired
+		}
+		active = append(active, timedMarket{m, h})
+	}
+
+	if len(active) == 0 {
+		return "📭 No active weather markets with known expiry found."
+	}
+
+	// Sort by soonest expiry first.
+	sort.Slice(active, func(i, j int) bool {
+		return active[i].hours < active[j].hours
+	})
+
+	// Count markets closing within 6h for the summary line.
+	soonCount := 0
+	for _, tm := range active {
+		if tm.hours <= 6 {
+			soonCount++
+		}
+	}
+
+	const maxShow = 10
+	if len(active) > maxShow {
+		active = active[:maxShow]
+	}
+
+	var sb strings.Builder
+	sb.WriteString("⏳ <b>Market Countdown</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-3s %-12s %-6s %5s %5s  %s\n", "Urg", "City", "Signal", "YES", "NO", "Closes In"))
+	sb.WriteString(strings.Repeat("─", 50) + "\n")
+
+	for _, tm := range active {
+		m := tm.m
+		h := tm.hours
+
+		// Urgency badge.
+		urgency := "⚪"
+		switch {
+		case h < 2:
+			urgency = "🔴"
+		case h < 6:
+			urgency = "🟡"
+		case h < 24:
+			urgency = "🟢"
+		}
+
+		// Human-readable time remaining.
+		var closesIn string
+		switch {
+		case h < 1:
+			mins := int(h * 60)
+			closesIn = fmt.Sprintf("%dm", mins)
+			if mins < 30 {
+				closesIn += " ‼️"
+			}
+		case h < 24:
+			closesIn = fmt.Sprintf("%.1fh", h)
+		default:
+			closesIn = fmt.Sprintf("%.1fd", h/24)
+		}
+
+		city := m.City
+		if len(city) > 12 {
+			city = city[:12]
+		}
+		sig := m.Signal
+		if len(sig) > 6 {
+			sig = sig[:6]
+		}
+
+		sb.WriteString(fmt.Sprintf("%-3s %-12s %-6s %5.2f %5.2f  %s\n",
+			urgency, city, sig, m.YesPrice, m.NoPrice, closesIn))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("Closing soon (≤6h): <b>%d</b> market(s)\n", soonCount))
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", now.Format("15:04")))
+	return sb.String()
 }
