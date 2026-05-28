@@ -124,6 +124,11 @@ type Config struct {
 	// exceeds this value, a Telegram notification is sent immediately (even in
 	// dry-run mode) so the operator can act manually. 0 = disabled.
 	OpportunityAlertThreshold float64 `yaml:"opportunity_alert_threshold"`
+
+	// TASK-175: skip markets whose total traded volume (from the Polymarket API)
+	// is below this threshold. Markets with very low volume are illiquid toys.
+	// 0 = disabled. Env override: MIN_VOLUME_USDC
+	MinVolumeUSDC float64 `yaml:"min_volume_usdc"`
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -160,6 +165,7 @@ func defaults() Config {
 		RollingWinRateWindow:    20,
 		RollingWinRateThreshold: 0.35,
 		MinBetUSDC:              0.50,
+		MinVolumeUSDC:           500.0,
 	}
 }
 
@@ -322,6 +328,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("OPPORTUNITY_ALERT_THRESHOLD"); v != nil {
 		cfg.OpportunityAlertThreshold = *v
+	}
+	if v := envFloat("MIN_VOLUME_USDC"); v != nil {
+		cfg.MinVolumeUSDC = *v
 	}
 
 	// Telegram

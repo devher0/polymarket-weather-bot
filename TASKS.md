@@ -1692,7 +1692,7 @@ Telegram команда `/winrate` показывает rolling win rate за п
 - `dashboard bias` — таблица: City | Signal | Bias | N | Status (over/under/ok) | Interpretation
 - 6 unit-тестов: нет данных→bias=0, 5 записей→правильный bias, clamp нижней границы, пустой LoadBiasSummary, splitCitySignal, rolling cap
 
-### [ ] TASK-175: Market volume filter — пропускать рынки с суммарным объёмом < MinVolumeUSDC
+### [x] 2026-05-28 — TASK-175: Market volume filter — пропускать рынки с суммарным объёмом < MinVolumeUSDC
 **Файлы:** `internal/markets/markets.go` (обновить), `config/config.go` (обновить), `config/config.yaml` (обновить)
 Рынки с объёмом $10 USDC — это неликвидная игрушка. Добавить фильтр по totalVolume из Gamma API.
 - Парсить `volume` (строка USD) из Gamma API ответа → `Market.VolumeUSDC float64`

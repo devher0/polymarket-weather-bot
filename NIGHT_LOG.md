@@ -1,5 +1,25 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 07:22 UTC — TASK-175
+
+**TASK-175: Market volume filter — пропуск рынков с объёмом < MinVolumeUSDC**
+
+Добавлен фильтр по суммарному торговому объёму рынка. Рынки с объёмом $10 USDC неликвидны: широкий спред и малый ордер двигает цену.
+
+**Изменения:**
+- `internal/markets/markets.go` (+8 строк) — добавлен `Volume string` в `polyMarket` struct; поле `VolumeUSDC float64` в `Market` struct; парсинг `strconv.ParseFloat(m.Volume)` при создании Market
+- `config/config.go` (+6 строк) — `MinVolumeUSDC float64` в Config, default 500.0, ENV `MIN_VOLUME_USDC`
+- `config/config.yaml` (+7 строк) — секция `min_volume_usdc: 500.0` с комментарием
+- `cmd/bot/main.go` (+9 строк) — skip-блок в loop: если `VolumeUSDC > 0 && VolumeUSDC < MinVolumeUSDC` → continue с slog
+- `cmd/dashboard/main.go` (+6 строк) — колонка "Vol USDC" в таблице `cmdMarkets()`: "—" если 0, иначе `%.0f`
+
+**Проверка:** `go build ./...` — OK
+
+**Файлы изменены:** 5
+**Строк добавлено:** ~36
+
+---
+
 ## 2026-05-28 03:05 UTC — TASK-145 + TASK-146
 
 **TASK-145: `dashboard compare` — сравнение двух периодов**

@@ -835,6 +835,16 @@ func main() {
 				}
 			}
 
+			// TASK-175: skip low-volume markets (volume=0 means unknown, so we only skip when explicitly below threshold).
+			if cfg.MinVolumeUSDC > 0 && m.VolumeUSDC > 0 && m.VolumeUSDC < cfg.MinVolumeUSDC {
+				slog.Info("skipped: low volume",
+					"conditionID", m.ConditionID,
+					"volume_usdc", fmt.Sprintf("%.0f", m.VolumeUSDC),
+					"min_volume_usdc", fmt.Sprintf("%.0f", cfg.MinVolumeUSDC),
+					"question", truncate(m.Question, 60))
+				continue
+			}
+
 			// Skip markets where we already have an open position.
 			if openPositions[m.ConditionID] {
 				slog.Info("skipped: already have position on", "conditionID", m.ConditionID,

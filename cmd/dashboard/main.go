@@ -967,7 +967,7 @@ func cmdMarkets() {
 
 	t := newTable()
 	t.AppendHeader(table.Row{
-		"City", "Signal", "YES", "NO", "Spread", "Status", "Expires in",
+		"City", "Signal", "YES", "NO", "Spread", "Vol USDC", "Status", "Expires in",
 	})
 
 	now := time.Now().UTC()
@@ -1011,8 +1011,13 @@ func cmdMarkets() {
 			}
 		}
 
+		volStr := "—"
+		if m.VolumeUSDC > 0 {
+			volStr = fmt.Sprintf("%.0f", m.VolumeUSDC)
+		}
+
 		t.AppendRow(table.Row{
-			cityDisplay, sigDisplay, yesStr, noStr, spreadStr, statusStr, expiryStr,
+			cityDisplay, sigDisplay, yesStr, noStr, spreadStr, volStr, statusStr, expiryStr,
 		})
 	}
 	t.Render()

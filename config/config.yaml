@@ -183,3 +183,10 @@ rolling_winrate_threshold: 0.35
 # POST JSON to this URL on bet_placed / bet_skipped_risk / cycle_complete / error.
 # Leave empty to disable. Env override: WEBHOOK_URL
 webhook_url: ""
+
+# ── Market volume filter (TASK-175) ──────────────────────────────────────────
+# Skip markets with total traded volume below this threshold (in USDC).
+# Markets with very low volume ($10) are illiquid toys — spreads are huge and
+# even small orders move the price. Set to 0 to disable.
+# Env override: MIN_VOLUME_USDC
+min_volume_usdc: 500.0

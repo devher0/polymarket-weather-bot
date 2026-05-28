@@ -40,6 +40,9 @@ type Market struct {
 	// Zero means not yet fetched; strategy should fall back to YesPrice/NoPrice.
 	FairYesPrice float64
 	FairNoPrice  float64
+	// TASK-175: total traded volume in USDC parsed from the API response.
+	// Zero means the field was absent in the response (not necessarily zero volume).
+	VolumeUSDC float64
 }
 
 type signal struct {
@@ -206,6 +209,8 @@ type polyMarket struct {
 	LastTradeSize  string      `json:"last_trade_size"`  // TASK-063: decimal string; unused but kept for completeness
 	// Polymarket Gamma API uses "last_traded_at" (RFC3339); CLOB API may omit it.
 	LastTradedAt string `json:"last_traded_at"` // TASK-063: RFC3339 timestamp or ""
+	// TASK-175: total traded volume; Gamma API returns this as a decimal string.
+	Volume string `json:"volume"`
 }
 
 type polyResp struct {
@@ -338,6 +343,14 @@ func GetWeatherMarkets() ([]Market, error) {
 				}
 			}
 
+			// TASK-175: parse volume string → float64 (0 when absent/unparseable).
+			var volumeUSDC float64
+			if m.Volume != "" {
+				if v, err := strconv.ParseFloat(m.Volume, 64); err == nil {
+					volumeUSDC = v
+				}
+			}
+
 			out = append(out, Market{
 				ConditionID:   m.ConditionID,
 				Question:      m.Question,
@@ -351,6 +364,7 @@ func GetWeatherMarkets() ([]Market, error) {
 				ThresholdC:    thresholdC,
 				LastTradeTime: lastTrade,
 				ExpiryUTC:     expiryUTC,
+				VolumeUSDC:    volumeUSDC,
 			})
 		}
 
