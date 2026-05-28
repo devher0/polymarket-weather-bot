@@ -157,6 +157,22 @@ telegram_chat_id: ""
 #   sunny: 0.05
 signal_min_edge: {}
 
+# ── Auto-blacklist (TASK-131) ─────────────────────────────────────────────────
+# Automatically suppress a (city, signal) pair that shows systematic losses.
+# Checked after every cycle; once triggered the pair is skipped for N days.
+# auto_blacklist_min_bets: minimum resolved bets before check activates (default 8)
+# auto_blacklist_loss_usdc: cumulative P&L threshold (negative; default -3.0)
+# auto_blacklist_days: days to suppress the pair (default 3)
+auto_blacklist_min_bets: 8
+auto_blacklist_loss_usdc: -3.0
+auto_blacklist_days: 3
+
+# ── Rolling win-rate alert (TASK-132) ─────────────────────────────────────────
+# Telegram warning when the rolling win rate over the last N resolved bets falls
+# below the threshold. Set rolling_winrate_window to 0 to disable.
+rolling_winrate_window: 20
+rolling_winrate_threshold: 0.35
+
 # ── Webhook notifications (TASK-046) ─────────────────────────────────────────
 # POST JSON to this URL on bet_placed / bet_skipped_risk / cycle_complete / error.
 # Leave empty to disable. Env override: WEBHOOK_URL

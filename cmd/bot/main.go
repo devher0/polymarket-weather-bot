@@ -335,6 +335,7 @@ func main() {
 
 	// TASK-072: weak signal alert — warn if any signal type has <40% win rate (≥10 samples).
 	// TASK-074: export calibration snapshot at startup.
+	// TASK-132: rolling win-rate alert at startup.
 	if startupHistory, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
 		sigBreakdown := calibration.SignalBreakdown(startupHistory)
 		weakSignals := calibration.WeakSignalAlert(sigBreakdown, 10, 40.0)
@@ -345,6 +346,13 @@ func main() {
 		// TASK-074: persist snapshot for dashboard / external tools
 		if err := calibration.ExportSnapshot(startupHistory, cfg.MinEdge, cfg.MaxDrawdownFraction, cfg.DataRoot); err != nil {
 			slog.Warn("calibration snapshot export failed", "err", err)
+		}
+		// TASK-132: check rolling win rate at startup; alert if below threshold.
+		if cfg.RollingWinRateWindow > 0 {
+			if alert, msg := calibration.WinRateAlert(startupHistory, cfg.RollingWinRateWindow, cfg.RollingWinRateThreshold); alert {
+				slog.Warn("rolling win rate alert", "message", msg)
+				_ = notifier.NotifyError("rolling_winrate", fmt.Errorf("⚠️ %s", msg))
+			}
 		}
 	}
 
@@ -724,6 +732,16 @@ func main() {
 				}
 			}
 
+			// TASK-131: skip markets where the (city, signal) pair is auto-blacklisted.
+			if m.City != "" && m.Signal != "" && markets.IsAutoBlacklisted(m.City, m.Signal, cfg.DataRoot) {
+				slog.Info("skipped: auto-blacklisted (city+signal)",
+					"city", m.City,
+					"signal", m.Signal,
+					"conditionID", m.ConditionID,
+					"question", truncate(m.Question, 60))
+				continue
+			}
+
 			// TASK-028: skip if a correlated city has already been bet this cycle.
 			if corr, reason := risk.CorrelatedCitiesOpen(m, placedThisCycle); corr {
 				slog.Info("skipped: "+reason, "conditionID", m.ConditionID)
@@ -978,6 +996,55 @@ func main() {
 		// TASK-046: webhook cycle_complete event.
 		if wErr := notifier.WebhookCycleComplete(placed, len(scoredList)); wErr != nil {
 			slog.Warn("webhook notify failed", "event", "cycle_complete", "err", wErr)
+		}
+
+		// TASK-131: update auto-blacklist for each (city, signal) pair that was
+		// evaluated this cycle. If a pair has accumulated too many losses it gets
+		// suppressed automatically.
+		if cfg.AutoBlacklistMinBets > 0 {
+			abCfg := markets.AutoBlacklistCfg{
+				MinBets:           cfg.AutoBlacklistMinBets,
+				LossThresholdUSDC: cfg.AutoBlacklistLossUSDC,
+				BlacklistDays:     cfg.AutoBlacklistDays,
+			}
+			seenPairs := make(map[string]bool)
+			for _, sc := range scoredList {
+				if sc.m.City == "" || sc.m.Signal == "" {
+					continue
+				}
+				key := sc.m.City + "/" + sc.m.Signal
+				if seenPairs[key] {
+					continue
+				}
+				seenPairs[key] = true
+				// Reload fresh history to include bets placed this cycle.
+				if freshHistory, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
+					// Convert to AutoBetRecord to avoid import cycle.
+					autoBets := make([]markets.AutoBetRecord, len(freshHistory))
+					for i, r := range freshHistory {
+						autoBets[i] = markets.AutoBetRecord{
+							City:           r.City,
+							Signal:         r.Signal,
+							Outcome:        r.Outcome,
+							SizeUSDC:       r.SizeUSDC,
+							OurProbability: r.OurProbability,
+							MarketPrice:    r.MarketPrice,
+						}
+					}
+					_ = markets.AutoBlacklistCheck(autoBets, sc.m.City, sc.m.Signal, cfg.DataRoot, abCfg)
+				}
+			}
+		}
+
+		// TASK-132: rolling win-rate alert — check after every cycle in case recent
+		// resolved updates have pushed the rolling rate below the threshold.
+		if cfg.RollingWinRateWindow > 0 {
+			if freshHistory, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
+				if alert, msg := calibration.WinRateAlert(freshHistory, cfg.RollingWinRateWindow, cfg.RollingWinRateThreshold); alert {
+					slog.Warn("rolling win rate alert", "message", msg)
+					_ = notifier.NotifyError("rolling_winrate", fmt.Errorf("⚠️ %s", msg))
+				}
+			}
 		}
 
 		res.placed = placed

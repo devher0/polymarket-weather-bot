@@ -72,6 +72,17 @@ type Config struct {
 	KellyFraction    float64 `yaml:"kelly_fraction"`     // fraction of full Kelly (0.25=quarter, 0.5=half, 1.0=full; default 0.5)
 	MaxKellyFraction float64 `yaml:"max_kelly_fraction"` // hard cap on bankroll fraction per bet (default 0.05 = 5%)
 
+	// Auto-blacklist (TASK-131): automatically suppress (city, signal) pairs that
+	// show systematic losses. 0/default values use the AutoBlacklistCfg defaults.
+	AutoBlacklistMinBets    int     `yaml:"auto_blacklist_min_bets"`    // min resolved bets before check (default 8)
+	AutoBlacklistLossUSDC   float64 `yaml:"auto_blacklist_loss_usdc"`   // cumulative loss threshold, negative (default -3.0)
+	AutoBlacklistDays       int     `yaml:"auto_blacklist_days"`        // days to suppress the pair (default 3)
+
+	// Rolling win-rate alert (TASK-132): Telegram warning when rolling win rate
+	// falls below threshold. 0 = disabled.
+	RollingWinRateWindow    int     `yaml:"rolling_winrate_window"`    // rolling window size (default 20)
+	RollingWinRateThreshold float64 `yaml:"rolling_winrate_threshold"` // alert threshold (default 0.35)
+
 	// Anti-detection / rate limiting
 	BetJitterEnabled    bool    `yaml:"bet_jitter_enabled"`     // sleep 30s–3min before each live bet (default: true)
 	MinBetIntervalHours float64 `yaml:"min_bet_interval_hours"` // cooldown per conditionID in hours (default: 4.0)
@@ -118,10 +129,15 @@ func defaults() Config {
 		MaxForecastAgeHours:   3.0,
 		MaxBetsPerCycle:     5,
 		MinHoursToExpiry:    6.0,
-		KellyFraction:       0.5,
-		MaxKellyFraction:    0.05,
-		BetJitterEnabled:    true,
-		MinBetIntervalHours: 4.0,
+		KellyFraction:           0.5,
+		MaxKellyFraction:        0.05,
+		BetJitterEnabled:        true,
+		MinBetIntervalHours:     4.0,
+		AutoBlacklistMinBets:    8,
+		AutoBlacklistLossUSDC:   -3.0,
+		AutoBlacklistDays:       3,
+		RollingWinRateWindow:    20,
+		RollingWinRateThreshold: 0.35,
 	}
 }
 

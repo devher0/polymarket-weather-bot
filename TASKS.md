@@ -1235,7 +1235,7 @@ Spread между источниками = мера неопределённос
 - В `dashboard explain` — выводить "consensus: X.XX (temp±Xσ, precip±Xσ)"
 - 7 unit-тестов: perfect consensus, total disagreement, two sources, empty, single, mixed dims, floor at 0
 
-### [ ] TASK-131: Auto-blacklist city+signal по убыточной истории
+### [x] 2026-05-28 — TASK-131: Auto-blacklist city+signal по убыточной истории
 **Файлы:** `internal/markets/auto_blacklist.go` (новый), `internal/markets/auto_blacklist_test.go` (новый), `cmd/bot/main.go` (обновить), `config/config.go` (обновить)
 Если пара (city, signal) систематически теряет деньги — автоматически добавлять в blacklist на N дней.
 - `AutoBlacklistCheck(records []calibration.BetRecord, city, signal, dataRoot string, cfg AutoBlacklistCfg) error` — анализирует последние MinBets resolved ставок для city+signal; если net PnL < -LossThreshold USDC → записывает в data/auto_blacklist.json с timestamp+expiry
@@ -1246,7 +1246,7 @@ Spread между источниками = мера неопределённос
 - Вызывать в cmd/bot перед CheckRisk — если IsAutoBlacklisted → skip с логом "auto-blacklisted"
 - `dashboard blacklist` — показывать manual + auto blacklist вместе
 
-### [ ] TASK-132: Rolling win rate monitor — алерт при деградации метрик
+### [x] 2026-05-28 — TASK-132: Rolling win rate monitor — алерт при деградации метрик
 **Файлы:** `internal/calibration/rolling_winrate.go` (новый), `internal/calibration/rolling_winrate_test.go` (новый), `cmd/bot/main.go` (обновить)
 Brier score хорош для долгосрочного трекинга, но медленно реагирует на резкую деградацию. Rolling win rate за последние 20 ставок — быстрый сигнал тревоги.
 - `ComputeRollingWinRate(records []BetRecord, window int) (winRate float64, sampleSize int)` — берёт последние `window` resolved ставок, считает процент победных; возвращает (-1, 0) если resolved < 5

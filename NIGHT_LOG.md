@@ -1,5 +1,26 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 02:14 UTC — TASK-131 / TASK-132
+
+**Файлы изменены:**
+- `internal/markets/auto_blacklist.go` (новый, 142 строки) — `AutoBetRecord`, `AutoBlacklistCfg`, `AutoBlacklistCheck`, `IsAutoBlacklisted`, `AutoBlacklistStatus`
+- `internal/markets/auto_blacklist_test.go` (новый, 155 строк) — 8 unit-тестов
+- `internal/calibration/rolling_winrate.go` (новый, 47 строк) — `ComputeRollingWinRate`, `WinRateAlert`
+- `internal/calibration/rolling_winrate_test.go` (новый, 100 строк) — 8 unit-тестов
+- `config/config.go` (+15 строк) — поля `AutoBlacklistMinBets`, `AutoBlacklistLossUSDC`, `AutoBlacklistDays`, `RollingWinRateWindow`, `RollingWinRateThreshold`; defaults
+- `config/config.yaml` (+22 строки) — секция auto_blacklist + rolling_winrate
+- `cmd/bot/main.go` (+45 строк) — IsAutoBlacklisted skip в market loop; AutoBlacklistCheck per-cycle; WinRateAlert при старте и после каждого цикла
+- `TASKS.md` — TASK-131, TASK-132 отмечены [x]
+
+**Что сделано:**
+- TASK-131: Auto-blacklist (city, signal). Если пара набирает ≥MinBets resolved ставок с cumulative PnL < -3 USDC — автоматически добавляется в data/auto_blacklist.json на 3 дня. Проверяется перед каждой оценкой рынка. `AutoBetRecord` — упрощённый тип для передачи данных без циклической зависимости (markets→calibration→strategy→markets).
+- TASK-132: Rolling win rate monitor. `ComputeRollingWinRate` берёт последние N resolved ставок, возвращает (-1, 0) при < 5. `WinRateAlert` даёт (true, msg) при падении ниже threshold. Alert шлётся в Telegram при старте бота и после каждого цикла.
+
+**Строки кода:** ~460 (новых/изменённых)
+**Тесты:** 17 новых, все проходят. `go build ./...` — чисто.
+
+---
+
 ## 2026-05-28 01:47 UTC — TASK-128 / TASK-129
 
 **Файлы изменены:**
