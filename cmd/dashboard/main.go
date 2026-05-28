@@ -268,10 +268,27 @@ func cmdPnL(dataRoot string) {
 	fmt.Printf("  Avg edge      : %+.2f%%\n", totalEdge/float64(len(resolved))*100)
 	fmt.Printf("  Total P&L     : %s\n", pnlColor.Sprintf("%+.2f USDC", totalPnL))
 
-	// Brier score
+	// Brier score (simple + size-weighted)
 	score, count, _ := calibration.BrierScore(records)
 	if count > 0 {
 		fmt.Printf("  Brier score   : %.4f (%d bets)\n", score, count)
+	}
+	if wScore, wCount, _ := calibration.WeightedBrierScore(records); wCount > 0 {
+		fmt.Printf("  Weighted Brier: %.4f (size-weighted)\n", wScore)
+	}
+
+	// EV capture ratio
+	evRes := calibration.RollingEV(records, 50)
+	if evRes.Count > 0 && evRes.ExpectedEV != 0 {
+		evStatus := "✅"
+		switch {
+		case evRes.CaptureRatio < 0.50:
+			evStatus = "🚨"
+		case evRes.CaptureRatio < 0.70:
+			evStatus = "⚠️"
+		}
+		fmt.Printf("  EV capture    : %.0f%% %s (exp $%.2f → realized $%.2f, last %d bets)\n",
+			evRes.CaptureRatio*100, evStatus, evRes.ExpectedEV, evRes.RealizedPnL, evRes.Count)
 	}
 
 	// Per-city breakdown table
@@ -656,6 +673,9 @@ func main() {
 	case "crossday":
 		// TASK-185: cross-day signal consistency table.
 		cmdCrossDay(dataRoot)
+	case "ev-track":
+		// TASK-187: EV capture ratio table (overall + per signal).
+		cmdEVTrack(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -699,6 +719,7 @@ func printUsage() {
 	fmt.Println("  kelly-opt                         Empirical optimal Kelly fraction via grid search (TASK-183)")
 	fmt.Println("  stability                         Forecast probability stability tracker per market (TASK-184)")
 	fmt.Println("  crossday                          Cross-day signal consistency table: which cities/signals persist (TASK-185)")
+	fmt.Println("  ev-track                          EV capture ratio: expected vs realized P&L by signal (TASK-187)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -2885,4 +2906,102 @@ func cmdCrossDay(dataRoot string) {
 	fmt.Println()
 	fmt.Println("  Persistent = signal fires same direction on all checked forecast days (d+0 → d+2).")
 	fmt.Println("  Boost is additive confidence applied in EvaluateFused() when signal is consistent.")
+}
+
+// ── ev-track (TASK-187) ───────────────────────────────────────────────────────
+
+// cmdEVTrack prints EV capture ratio: how much of our theoretical edge we're realizing.
+func cmdEVTrack(dataRoot string) {
+	header("📊 EV CAPTURE RATIO")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+		return
+	}
+
+	const window = 50
+	overall := calibration.RollingEV(records, window)
+	if overall.Count == 0 {
+		fmt.Println("  No resolved bets yet.")
+		return
+	}
+
+	// Overall summary
+	capPct := 0.0
+	if overall.ExpectedEV != 0 {
+		capPct = overall.CaptureRatio * 100
+	}
+	capColor := styleWin
+	if capPct < 70 {
+		capColor = styleNeutral
+	}
+	if capPct < 50 {
+		capColor = styleLoss
+	}
+
+	fmt.Printf("  Window        : last %d resolved bets\n", overall.Count)
+	fmt.Printf("  Expected EV   : $%.2f\n", overall.ExpectedEV)
+	fmt.Printf("  Realized P&L  : $%.2f\n", overall.RealizedPnL)
+	fmt.Printf("  Capture Ratio : %s\n\n", capColor.Sprintf("%.1f%%", capPct))
+
+	// Per-signal breakdown
+	bySignal := calibration.RollingEVBySignal(records, window)
+	if len(bySignal) == 0 {
+		return
+	}
+
+	header("📈 EV CAPTURE BY SIGNAL")
+
+	type sigRow struct {
+		sig string
+		ev  calibration.EVResult
+	}
+	var rows []sigRow
+	for sig, ev := range bySignal {
+		rows = append(rows, sigRow{sig, ev})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ev.CaptureRatio != rows[j].ev.CaptureRatio {
+			return rows[i].ev.CaptureRatio > rows[j].ev.CaptureRatio
+		}
+		return rows[i].sig < rows[j].sig
+	})
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Signal", "N", "Exp EV", "Realized", "Capture%", "Status"})
+
+	for _, row := range rows {
+		capStr := "N/A"
+		status := "—"
+		color := styleNeutral
+		if row.ev.ExpectedEV > 0 {
+			pct := row.ev.CaptureRatio * 100
+			capStr = fmt.Sprintf("%.1f%%", pct)
+			switch {
+			case pct >= 70:
+				status = "✅ Good"
+				color = styleWin
+			case pct >= 50:
+				status = "⚠️ Weak"
+				color = styleNeutral
+			default:
+				status = "🚨 Leak"
+				color = styleLoss
+			}
+			capStr = color.Sprint(capStr)
+		}
+		t.AppendRow(table.Row{
+			row.sig,
+			row.ev.Count,
+			fmt.Sprintf("$%.2f", row.ev.ExpectedEV),
+			fmt.Sprintf("$%.2f", row.ev.RealizedPnL),
+			capStr,
+			status,
+		})
+	}
+	t.Render()
+	fmt.Println()
+	fmt.Println("  Capture < 70% may indicate calibration issues, market impact, or edge decay.")
+	fmt.Println("  Expected EV = Σ (ourP - mktP) × sizeUSDC for each bet.")
 }

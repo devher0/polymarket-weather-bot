@@ -349,6 +349,45 @@ func BrierScore(records []BetRecord) (score float64, count int, err error) {
 	return score, count, nil
 }
 
+// WeightedBrierScore computes a bet-size-weighted Brier score.
+// Each resolved bet contributes proportionally to its size relative to the
+// mean resolved-bet size. Larger bets count more than smaller bets.
+// Returns (0, 0, nil) if there are no resolved bets.
+func WeightedBrierScore(records []BetRecord) (score float64, count int, err error) {
+	var resolved []BetRecord
+	var totalSize float64
+	for _, r := range records {
+		if r.Outcome != nil {
+			resolved = append(resolved, r)
+			totalSize += r.SizeUSDC
+		}
+	}
+	count = len(resolved)
+	if count == 0 {
+		return 0, 0, nil
+	}
+	meanSize := totalSize / float64(count)
+	if meanSize == 0 {
+		return 0, 0, nil
+	}
+	var weightedSum, weightSum float64
+	for _, r := range resolved {
+		w := r.SizeUSDC / meanSize
+		o := 0.0
+		if *r.Outcome {
+			o = 1.0
+		}
+		diff := r.OurProbability - o
+		weightedSum += w * diff * diff
+		weightSum += w
+	}
+	if weightSum == 0 {
+		return 0, 0, nil
+	}
+	score = weightedSum / weightSum
+	return score, count, nil
+}
+
 // PrintBrierScore loads history and logs the current Brier score to stdout.
 // Intended to be called at bot startup.
 func PrintBrierScore(dataRoot string) {
@@ -367,6 +406,10 @@ func PrintBrierScore(dataRoot string) {
 	quality := brierQuality(score)
 	fmt.Printf("[calibration] Brier score: %.4f (%s) over %d resolved bets\n",
 		score, quality, count)
+	// Also print size-weighted Brier for capital-weighted accuracy view.
+	if wScore, wCount, _ := WeightedBrierScore(records); wCount > 0 {
+		fmt.Printf("[calibration] Weighted Brier: %.4f (size-weighted, %d bets)\n", wScore, wCount)
+	}
 
 	// Also print win rate
 	wins := 0

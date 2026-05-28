@@ -1805,3 +1805,42 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `FusedForecast.CrossDayScore float64` — сохраняет AgreementFraction для анализа
 - `dashboard crossday` — таблица city×signal: Days Checked | Days Agree | Agreement% | Boost | Persistence label
 - 11 unit-тестов: FullAgreement/PartialAgreement/NoAgreement/NoCache/OnlyTargetDay/HeatSignal/AllSignals/UnknownSignal/BoostApplied/CapAt097/Noop
+
+---
+
+## 🔴 ПРИОРИТЕТ 29 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-186: Size-weighted Brier score — точность взвешенная по размеру ставки
+**Файлы:** `internal/calibration/calibration.go` (обновить), `cmd/dashboard/main.go` (обновить)
+Текущий Brier score считает каждую ставку равнозначной. Ставка на $20 важнее ставки на $0.50 — используем размер как вес.
+- `WeightedBrierScore(records []BetRecord) (score float64, count int, err error)` — вес = SizeUSDC / meanSize среди resolved
+- Показывать рядом с обычным Brier в `cmdPnL`: "Brier: 0.230 (weighted: 0.215)"
+- Также логировать при старте бота рядом с обычным `PrintBrierScore`
+- Тест: пустые записи, одна запись (вес=1.0), разные размеры, все проигрыши
+
+### [x] 2026-05-28 — TASK-187: Telegram `/ev` команда — EV capture ratio за последние 50 ставок
+**Файлы:** `internal/calibration/ev.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Сколько от нашего теоретического edge мы реально захватываем? EV capture < 70% — признак проблемы с калибровкой или market impact.
+- `EVResult{Count, ExpectedEV, RealizedPnL, CaptureRatio float64}` в `internal/calibration/ev.go`
+- `RollingEV(records []BetRecord, n int) EVResult` — последние n resolved бетов (n=0 → все)
+  - ExpectedEV = Σ(edge × size) где edge = ourP - marketPrice
+  - RealizedPnL = Σ(size×(1/mktP-1) для побед, -size для проигрышей)
+  - CaptureRatio = realizedPnL / expectedEV (бесконечность если expectedEV≤0)
+- `handleEV(dataRoot string) string` в telegram_commands.go
+  - Показывает: Count, ExpectedEV, RealizedPnL, CaptureRatio (с эмодзи ✅>0.7 / ⚠️>0.5 / 🚨≤0.5)
+  - Добавить `/ev` в docstring и switch поллера
+- `dashboard ev-track` subcommand — та же таблица, но с breakdown по сигналу (rain/heat/etc.)
+- 4 unit-теста: пустой список, все победы, все поражения, смешанный
+
+### [ ] TASK-188: Market exit signal — когда продавать позицию
+**Файлы:** `internal/calibration/exit_signal.go` (новый), `cmd/bot/main.go` (обновить)
+Если наш прогноз существенно изменился с момента ставки, возможно позицию выгоднее продать.
+- `ExitSignal{ConditionID, Side, EntryP, CurrentP, Delta, CurrentMktPrice, SuggestedAction string}`
+- `ComputeExitSignals(openBets []BetRecord, forecasts map[string]float64) []ExitSignal`
+  - forecasts: conditionID → текущий ourP (из последнего prediction log)
+  - Delta = currentP - entryP
+  - Если delta < -0.20 (прогноз сильно ухудшился): SuggestedAction = "SELL"
+  - Если delta > 0.15 (прогноз улучшился, цена скорее всего выросла): SuggestedAction = "HOLD/REDUCE_SIZE"
+  - Иначе: "HOLD"
+- В bot main loop: после фетча forecasts → вычислять exit signals → Telegram уведомление если SELL
+- `dashboard exit-signals` subcommand — таблица открытых позиций с рекомендациями

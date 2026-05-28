@@ -16,6 +16,7 @@
 //   /config         — show current bot configuration parameters (TASK-172)
 //   /markets        — top active weather markets: city/signal/prices/spread/expiry (TASK-179)
 //   /top-edge       — top markets ranked by edge×confidence score (TASK-182)
+//   /ev             — EV capture ratio: expected vs realized P&L last 50 bets (TASK-187)
 //   /pause          — suspend all trading
 //   /resume         — resume trading
 //
@@ -250,6 +251,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleMarkets(bcfg))
 				case "/top-edge":
 					sendReply(cfg, chatID, handleTopEdge(bcfg))
+				case "/ev":
+					sendReply(cfg, chatID, handleEV(bcfg))
 				}
 			}
 		}
@@ -1697,5 +1700,69 @@ func handleTopEdge(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>Score = edge × confidence | %s UTC</i>",
 		time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// handleEV returns the EV capture ratio for the last 50 resolved bets,
+// plus a per-signal breakdown. (TASK-187)
+func handleEV(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return fmt.Sprintf("❌ Error loading history: %v", err)
+	}
+
+	const window = 50
+	res := calibration.RollingEV(records, window)
+	if res.Count == 0 {
+		return "📭 No resolved bets yet — EV capture unavailable."
+	}
+
+	// Status emoji for capture ratio.
+	statusEmoji := "🚨"
+	switch {
+	case res.CaptureRatio >= 0.70:
+		statusEmoji = "✅"
+	case res.CaptureRatio >= 0.50:
+		statusEmoji = "⚠️"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📊 <b>EV Capture Ratio (last %d bets)</b>\n\n", res.Count))
+	sb.WriteString(fmt.Sprintf("Expected EV:  <b>$%.2f</b>\n", res.ExpectedEV))
+	sb.WriteString(fmt.Sprintf("Realized P&L: <b>$%.2f</b>\n", res.RealizedPnL))
+	sb.WriteString(fmt.Sprintf("Capture:      <b>%.0f%%</b> %s\n\n", res.CaptureRatio*100, statusEmoji))
+
+	// Per-signal breakdown.
+	bySignal := calibration.RollingEVBySignal(records, window)
+	if len(bySignal) > 0 {
+		sb.WriteString("<pre>")
+		sb.WriteString(fmt.Sprintf("%-8s %5s %7s %7s %7s\n", "Signal", "N", "ExpEV", "PnL", "Cap%"))
+		sb.WriteString(strings.Repeat("─", 40) + "\n")
+
+		// Collect and sort signals.
+		type sigRow struct {
+			sig string
+			ev  calibration.EVResult
+		}
+		var rows []sigRow
+		for sig, ev := range bySignal {
+			rows = append(rows, sigRow{sig, ev})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			return rows[i].ev.CaptureRatio > rows[j].ev.CaptureRatio
+		})
+
+		for _, row := range rows {
+			capStr := "N/A"
+			if row.ev.ExpectedEV > 0 {
+				capStr = fmt.Sprintf("%.0f%%", row.ev.CaptureRatio*100)
+			}
+			sb.WriteString(fmt.Sprintf("%-8s %5d %7.2f %7.2f %7s\n",
+				row.sig, row.ev.Count, row.ev.ExpectedEV, row.ev.RealizedPnL, capStr))
+		}
+		sb.WriteString("</pre>")
+	}
+
+	sb.WriteString(fmt.Sprintf("\n<i>✅≥70%% ⚠️≥50%% 🚨<50%% | %s UTC</i>", time.Now().UTC().Format("15:04")))
 	return sb.String()
 }
