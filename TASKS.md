@@ -1902,7 +1902,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `go run ./cmd/dashboard heatmap` → выводит ASCII-матрицу с обозначениями
 - Итоговые статистики: Max prob (город/сигнал), Min prob, Avg confidence
 
-### [ ] TASK-194: `/trend` Telegram команда — 7-дневный тренд выбранного города
+### [x] 2026-05-28 — TASK-194: `/trend` Telegram команда — 7-дневный тренд выбранного города
 **Файл:** `internal/notifier/telegram_commands.go` (обновить)
 Оператор пишет `/trend new_york` и видит как менялось наше edge/confidence за неделю для этого города.
 - `handleTrend(city string, bcfg BotConfig) string` — фильтрует resolved bets для города за 7 дней

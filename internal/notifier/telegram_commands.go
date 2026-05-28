@@ -6,6 +6,7 @@
 //   /positions       — list of open (unresolved) bets
 //   /daily           — today's bets timeline with running P&L
 //   /compare         — compare today vs yesterday: bets/wins/edge/PnL
+//   /trend [city]    — 7-day trend for a city: daily bets/wins/edge/PnL
 //   /next            — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
 //   /forecast-quality — per-city forecast confidence + age
@@ -198,6 +199,13 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleDaily(bcfg))
 				case "/compare":
 					sendReply(cfg, chatID, handleCompare(bcfg))
+				case "/trend":
+					arg := ""
+					parts := strings.SplitN(text, " ", 2)
+					if len(parts) == 2 {
+						arg = strings.TrimSpace(parts[1])
+					}
+					sendReply(cfg, chatID, handleTrend(arg, bcfg))
 				case "/next":
 					sendReply(cfg, chatID, handleNext(bcfg))
 				case "/forecast":
@@ -1950,6 +1958,155 @@ func handleForecastQuality(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>✅ conf≥50%% &amp; age<3h | ⚠️ marginal | ❌ stale/missing | %s UTC</i>",
 		time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// handleTrend returns 7-day trend for a specific city. (TASK-194)
+func handleTrend(city string, bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	// Normalize city name (to uppercase for consistency).
+	city = strings.ToUpper(city)
+
+	// If no city specified, list available cities.
+	if city == "" {
+		citySet := make(map[string]bool)
+		for _, r := range records {
+			if r.City != "" {
+				citySet[r.City] = true
+			}
+		}
+		if len(citySet) == 0 {
+			return "📭 No cities found in bet history."
+		}
+		var cities []string
+		for c := range citySet {
+			cities = append(cities, c)
+		}
+		sort.Strings(cities)
+
+		var sb strings.Builder
+		sb.WriteString("<b>📊 Available Cities</b>\n\n")
+		sb.WriteString("Use `/trend CITY_NAME` to see trend. Examples:\n")
+		sb.WriteString("<pre>")
+		for _, c := range cities {
+			sb.WriteString(c + "\n")
+		}
+		sb.WriteString("</pre>")
+		return sb.String()
+	}
+
+	// Collect 7-day stats for the city.
+	now := time.Now().UTC()
+	startDate := now.AddDate(0, 0, -6)
+
+	type dayStats struct {
+		date     string
+		count    int
+		wins     int
+		pnl      float64
+		totalEdge float64
+		totalSize float64
+	}
+
+	dayMap := make(map[string]*dayStats)
+	for i := 0; i < 7; i++ {
+		d := startDate.AddDate(0, 0, i)
+		dateStr := d.Format("2006-01-02")
+		dayMap[dateStr] = &dayStats{date: dateStr}
+	}
+
+	// Populate day stats.
+	for _, r := range records {
+		if !strings.EqualFold(r.City, city) {
+			continue
+		}
+		dateStr := r.Timestamp.UTC().Format("2006-01-02")
+		if _, ok := dayMap[dateStr]; !ok {
+			continue
+		}
+		dayMap[dateStr].count++
+		dayMap[dateStr].totalSize += r.SizeUSDC
+		dayMap[dateStr].totalEdge += (r.OurProbability - r.MarketPrice) * r.SizeUSDC
+
+		if r.Outcome != nil {
+			if *r.Outcome {
+				dayMap[dateStr].wins++
+				dayMap[dateStr].pnl += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+			} else {
+				dayMap[dateStr].pnl -= r.SizeUSDC
+			}
+		}
+	}
+
+	// Organize into sorted order.
+	var days []dayStats
+	for _, s := range dayMap {
+		days = append(days, *s)
+	}
+	sort.Slice(days, func(i, j int) bool {
+		return days[i].date < days[j].date
+	})
+
+	// Build output table.
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>📈 %s — 7-Day Trend</b>\n\n", city))
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-12s %4s %5s %8s %8s\n", "Date", "Bets", "W/L%", "Avg Edge", "P&L"))
+	sb.WriteString(strings.Repeat("─", 45) + "\n")
+
+	bestDay := ""
+	bestPnL := math.Inf(-1)
+	worstDay := ""
+	worstPnL := math.Inf(1)
+	totalBets := 0
+	totalPnL := 0.0
+
+	for _, d := range days {
+		if d.count == 0 {
+			sb.WriteString(fmt.Sprintf("%-12s  —    —        —         —\n", d.date))
+			continue
+		}
+		totalBets += d.count
+
+		winRate := float64(d.wins) / float64(d.count) * 100
+		avgEdge := 0.0
+		if d.totalSize > 0 {
+			avgEdge = d.totalEdge / d.totalSize
+		}
+		pnlStr := fmt.Sprintf("%+.2f", d.pnl)
+		if d.pnl > bestPnL {
+			bestDay = d.date
+			bestPnL = d.pnl
+		}
+		if d.pnl < worstPnL {
+			worstDay = d.date
+			worstPnL = d.pnl
+		}
+		totalPnL += d.pnl
+
+		sb.WriteString(fmt.Sprintf("%-12s %4d %4.0f%% %+8.4f %8s\n",
+			d.date, d.count, winRate, avgEdge, pnlStr))
+	}
+
+	sb.WriteString(strings.Repeat("─", 45) + "\n")
+	sb.WriteString(fmt.Sprintf("%-12s %4d         %+8.2f USDC\n", "Total", totalBets, totalPnL))
+	sb.WriteString("</pre>")
+
+	if bestDay != "" && worstDay != "" {
+		trend := "→"
+		if bestPnL > 100 {
+			trend = "↑"
+		} else if worstPnL < -100 {
+			trend = "↓"
+		}
+		sb.WriteString(fmt.Sprintf("\n%s Best: %s | Worst: %s",
+			trend, bestDay, worstDay))
+	}
+
 	return sb.String()
 }
 
