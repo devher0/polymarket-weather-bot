@@ -649,6 +649,9 @@ func main() {
 	case "city-accuracy":
 		// TASK-196: per-city forecast accuracy (Brier score breakdown).
 		cmdCityAccuracy(dataRoot)
+	case "bankroll":
+		// TASK-197: bankroll history and balance chart.
+		cmdBankrollChart(dataRoot)
 	case "pnl-city":
 		// TASK-161: per-city P&L breakdown table.
 		cmdPnLCity(dataRoot)
@@ -720,6 +723,7 @@ func printUsage() {
 	fmt.Println("  markets                           Live Polymarket weather market overview: price/spread/status (TASK-159)")
 	fmt.Println("  spread-analysis                   Market spread distribution & liquidity stats per city (TASK-195)")
 	fmt.Println("  city-accuracy                     Per-city forecast accuracy (Brier score breakdown) (TASK-196)")
+	fmt.Println("  bankroll                          Bankroll history, balance, and chart (last 30 days) (TASK-197)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
@@ -3088,6 +3092,89 @@ func cmdExitSignals(dataRoot string) {
 	fmt.Printf("\n  %d open positions  |  %s suggested SELL\n",
 		len(signals), styleLoss.Sprintf("%d", sellCount))
 	fmt.Println("  SELL: forecast dropped >0.20 from entry  |  HOLD/REDUCE_SIZE: improved >0.15")
+}
+
+// cmdBankrollChart displays bankroll history and balance over time. (TASK-197)
+func cmdBankrollChart(dataRoot string) {
+	header("💰 BANKROLL HISTORY")
+
+	history, err := calibration.LoadBankrollHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+		return
+	}
+
+	if len(history) == 0 {
+		fmt.Println("  No bankroll history yet. Records are saved daily.")
+		return
+	}
+
+	stats := calibration.ComputeBankrollStats(history)
+
+	// Show statistics.
+	fmt.Printf("  Start Balance:      $%.2f USDC\n", stats.StartBalance)
+	fmt.Printf("  Current Balance:    $%.2f USDC\n", stats.CurrentBalance)
+	fmt.Printf("  Cumulative Profit:  %+.2f USDC\n", stats.CumulativeProfit)
+	fmt.Printf("  Daily Average:      %+.2f USDC\n", stats.DailyAverage)
+	fmt.Printf("  Best Day:           %s ($%.2f)\n", stats.BestDay, stats.BestDayValue)
+	fmt.Printf("  Worst Day:          %s ($%.2f)\n", stats.WorstDay, stats.WorstDayValue)
+	fmt.Printf("  Days Up/Down/Flat:  %d/%d/%d out of %d days\n",
+		stats.DaysUp, stats.DaysDown, stats.DaysFlat, stats.DaysOfData)
+	fmt.Println()
+
+	// Show chart (last 30 days).
+	maxDays := 30
+	fmt.Println("  " + repeatStr("─", 50))
+	fmt.Println("  Chart (last 30 days):")
+	fmt.Println("  " + repeatStr("─", 50))
+	fmt.Print(calibration.FormatBankrollChart(history, maxDays))
+
+	// Show table of last 10 days.
+	if len(history) > 0 {
+		fmt.Println()
+		fmt.Println("  " + repeatStr("─", 50))
+		fmt.Println("  Recent Snapshots:")
+		fmt.Println("  " + repeatStr("─", 50))
+
+		t := newTable()
+		t.AppendHeader(table.Row{"Date", "Balance", "Change", "P&L Today", "Resolved"})
+
+		start := 0
+		if len(history) > 10 {
+			start = len(history) - 10
+		}
+
+		for i := start; i < len(history); i++ {
+			snap := history[i]
+			changeStr := "—"
+			if i > 0 {
+				prev := history[i-1]
+				change := snap.BalanceUSDC - prev.BalanceUSDC
+				changeStr = fmt.Sprintf("%+.2f", change)
+				if change > 0 {
+					changeStr = styleWin.Sprint(changeStr)
+				} else if change < 0 {
+					changeStr = styleLoss.Sprint(changeStr)
+				}
+			}
+
+			pnlStr := fmt.Sprintf("%+.2f", snap.CumulativePnL)
+			if snap.CumulativePnL > 0 {
+				pnlStr = styleWin.Sprint(pnlStr)
+			} else if snap.CumulativePnL < 0 {
+				pnlStr = styleLoss.Sprint(pnlStr)
+			}
+
+			t.AppendRow(table.Row{
+				snap.Date,
+				fmt.Sprintf("$%.2f", snap.BalanceUSDC),
+				changeStr,
+				pnlStr,
+				snap.ResolvedBets,
+			})
+		}
+		t.Render()
+	}
 }
 
 // cmdCityAccuracy displays per-city forecast accuracy (Brier score breakdown). (TASK-196)

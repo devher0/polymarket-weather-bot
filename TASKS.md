@@ -1928,7 +1928,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `cmdCityAccuracy(dataRoot)` — таблица: City | Brier | Bets | Status (good/ok/poor)
 - Сортировка по Brier ASC (лучшие первыми)
 
-### [ ] TASK-197: Bankroll tracking — график баланса по дням
+### [x] 2026-05-28 — TASK-197: Bankroll tracking — график баланса по дням
 **Файлы:** `internal/calibration/bankroll.go` (обновить), `cmd/dashboard/main.go` (обновить)
 Показать как растёт/падает наш bankroll — ключевой метрик долгосрочного выживания.
 - `LoadBankrollHistory(dataRoot)` → [](timestamp, balance_usdc)

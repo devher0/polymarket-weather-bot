@@ -1,5 +1,30 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 09:10 UTC — TASK-197
+
+**Задача:** Реализовать отслеживание bankroll и отображение графика баланса по дням.
+
+**Реализация:**
+- Новый файл `internal/calibration/bankroll_history.go` (165 строк)
+  - `BankrollSnapshot` struct: date, balance, timestamp, resolved_bets, cumulative_pnl
+  - `SaveBankrollSnapshot()` — сохраняет daily snapshot в `data/bankroll/history.json`, обновляет если запись для дня уже есть
+  - `LoadBankrollHistory()` — загружает историю из файла, сортирует по дате
+  - `BankrollStats` — агрегированные метрики (current balance, cumulative profit, best/worst day, days up/down/flat)
+  - `ComputeBankrollStats()` — считает aggregate statistics из истории
+  - `FormatBankrollChart()` — ASCII bar chart для последних 30 дней (или другого количества)
+- Dashboard функция `cmdBankrollChart(dataRoot)` — выводит полный bankroll отчет:
+  - Статистика: Start/Current Balance, Cumulative Profit, Daily Avg, Best/Worst Days, Days Up/Down/Flat
+  - ASCII chart последних 30 дней с масштабированием по min/max
+  - Таблица с последними 10 дневными snapshot'ами: Date | Balance | Change | P&L | Resolved
+  - Цветовое выделение: 🟢 положительные изменения | 🔴 отрицательные
+- Добавлен case `bankroll` в switch statement main() и в printUsage()
+
+**Результат:** `go build ./...` ✅
+**Файлы изменены:** 2
+**Строк добавлено:** ~230 (bankroll_history.go + dashboard)
+
+---
+
 ## 2026-05-28 09:02 UTC — TASK-196
 
 **Задача:** Реализовать отслеживание точности прогнозов по городам.
