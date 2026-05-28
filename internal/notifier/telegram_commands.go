@@ -5,6 +5,7 @@
 //   /positions — list of open (unresolved) bets
 //   /next     — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
+//   /summary  — compact multi-section health overview (TASK-146)
 //   /pause    — suspend all trading
 //   /resume   — resume trading
 //
@@ -181,6 +182,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					paused.Store(0)
 					sendReply(cfg, chatID, "▶️ Trading <b>resumed</b>.")
 					slog.Info("telegram: trading resumed via /resume command")
+				case "/summary":
+					sendReply(cfg, chatID, handleSummary(bcfg))
 				}
 			}
 		}
@@ -554,6 +557,131 @@ func formatAge(d time.Duration) string {
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}
 	return fmt.Sprintf("%.1fh", d.Hours())
+}
+
+// ── TASK-146: /summary command ────────────────────────────────────────────
+
+// handleSummary returns a compact multi-section bot health overview for Telegram.
+// Stays well under the 4096-char Telegram message limit.
+func handleSummary(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	bankroll := calibration.LoadBankroll(bcfg.DataRoot)
+
+	// ── performance ─────────────────────────────────────────────────────────
+	var resolved, wins int
+	var totalPnL float64
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue
+		}
+		resolved++
+		if *r.Outcome {
+			wins++
+			totalPnL += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			totalPnL -= r.SizeUSDC
+		}
+	}
+	winRateStr := "—"
+	if resolved > 0 {
+		winRateStr = fmt.Sprintf("%.0f%% (%d/%d)", float64(wins)/float64(resolved)*100, wins, resolved)
+	}
+
+	brierStr := "—"
+	if score, count, berr := calibration.BrierScore(records); berr == nil && count > 0 {
+		brierStr = fmt.Sprintf("%.4f (%d bets)", score, count)
+	}
+
+	sharpeStr := "—"
+	if sh, cnt, serr := calibration.RollingSharpe(bcfg.DataRoot, 30); serr == nil && cnt >= 2 {
+		sharpeStr = fmt.Sprintf("%.3f [%s, %dd]", sh, calibration.SharpeQuality(sh), cnt)
+	}
+
+	streakStr := calibration.StreakStatusLine(records)
+	if streakStr == "" {
+		streakStr = "—"
+	}
+
+	// ── today ────────────────────────────────────────────────────────────────
+	today := time.Now().UTC().Format("2006-01-02")
+	var todayBets, todayOpen int
+	var todayPnL float64
+	for _, r := range records {
+		if r.Timestamp.UTC().Format("2006-01-02") != today {
+			continue
+		}
+		todayBets++
+		if r.Outcome == nil {
+			todayOpen++
+		} else {
+			if *r.Outcome {
+				todayPnL += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+			} else {
+				todayPnL -= r.SizeUSDC
+			}
+		}
+	}
+
+	// ── top city / signal ────────────────────────────────────────────────────
+	type bdEntry struct {
+		name  string
+		wr    float64
+		count int
+	}
+	cityBD := calibration.CityBreakdown(records)
+	var topCity string
+	bestCityWR := -1.0
+	for city, s := range cityBD {
+		if s.Count >= 3 && s.WinRate() > bestCityWR {
+			bestCityWR = s.WinRate()
+			topCity = fmt.Sprintf("%s %.0f%%(%d)", city, s.WinRate(), s.Count)
+		}
+	}
+	_ = bdEntry{}
+	sigBD := calibration.SignalBreakdown(records)
+	var topSig string
+	bestSigWR := -1.0
+	for sig, s := range sigBD {
+		if s.Count >= 3 && s.WinRate() > bestSigWR {
+			bestSigWR = s.WinRate()
+			topSig = fmt.Sprintf("%s %.0f%%(%d)", sig, s.WinRate(), s.Count)
+		}
+	}
+
+	pnlSign := "+"
+	if totalPnL < 0 {
+		pnlSign = ""
+	}
+	todayPnLSign := "+"
+	if todayPnL < 0 {
+		todayPnLSign = ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("📊 <b>Bot Summary</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-14s %.2f USDC\n", "Bankroll:", bankroll))
+	sb.WriteString(fmt.Sprintf("%-14s %s\n", "Win rate:", winRateStr))
+	sb.WriteString(fmt.Sprintf("%-14s %s\n", "Brier:", brierStr))
+	sb.WriteString(fmt.Sprintf("%-14s %s\n", "Sharpe 30d:", sharpeStr))
+	sb.WriteString(fmt.Sprintf("%-14s %s\n", "Streak:", streakStr))
+	sb.WriteString(fmt.Sprintf("%-14s %s%.2f USDC (all time)\n", "P&L:", pnlSign, totalPnL))
+	sb.WriteString("────────────────────────────\n")
+	sb.WriteString(fmt.Sprintf("%-14s %d bets (%d open)\n", "Today:", todayBets, todayOpen))
+	sb.WriteString(fmt.Sprintf("%-14s %s%.2f USDC\n", "Today P&L:", todayPnLSign, todayPnL))
+	if topCity != "" {
+		sb.WriteString(fmt.Sprintf("%-14s %s\n", "Top city:", topCity))
+	}
+	if topSig != "" {
+		sb.WriteString(fmt.Sprintf("%-14s %s\n", "Top signal:", topSig))
+	}
+	sb.WriteString("</pre>")
+
+	return sb.String()
 }
 
 func forecastAlertEmoji(level int) string {

@@ -558,6 +558,12 @@ func main() {
 	case "summary":
 		// TASK-144: single-page health overview.
 		cmdSummary(dataRoot)
+	case "compare":
+		// TASK-145: compare two consecutive periods.
+		cmpFlags := flag.NewFlagSet("compare", flag.ExitOnError)
+		cmpDays := cmpFlags.Int("days", 7, "Length of each comparison period in days")
+		_ = cmpFlags.Parse(os.Args[2:])
+		cmdCompare(dataRoot, *cmpDays)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -591,6 +597,7 @@ func printUsage() {
 	fmt.Println("  timing                            Hourly win-rate and bet-size timing multiplier (TASK-133)")
 	fmt.Println("  freshness                         Forecast freshness table: age/status per city (TASK-140)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
+	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -1693,6 +1700,206 @@ func cmdSummary(dataRoot string) {
 	}
 
 	fmt.Printf("\n  Generated at: %s\n", now.Format("2006-01-02 15:04:05 UTC"))
+}
+
+// ── compare (TASK-145) ────────────────────────────────────────────────────
+
+// periodStats aggregates performance metrics for a slice of resolved BetRecords.
+type periodStats struct {
+	Bets     int
+	Wins     int
+	TotalPnL float64
+	EdgeSum  float64
+	BrierSum float64
+}
+
+func (p periodStats) winRate() float64 {
+	if p.Bets == 0 {
+		return 0
+	}
+	return float64(p.Wins) / float64(p.Bets) * 100
+}
+
+func (p periodStats) avgEdge() float64 {
+	if p.Bets == 0 {
+		return 0
+	}
+	return p.EdgeSum / float64(p.Bets) * 100
+}
+
+func (p periodStats) brierScore() float64 {
+	if p.Bets == 0 {
+		return 0
+	}
+	return p.BrierSum / float64(p.Bets)
+}
+
+func computePeriodStats(records []calibration.BetRecord, from, to time.Time) periodStats {
+	var s periodStats
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue
+		}
+		ts := r.Timestamp.UTC()
+		if ts.Before(from) || !ts.Before(to) {
+			continue
+		}
+		s.Bets++
+		won := *r.Outcome
+		if won {
+			s.Wins++
+			s.TotalPnL += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			s.TotalPnL -= r.SizeUSDC
+		}
+		edge := r.OurProbability - r.MarketPrice
+		if edge < 0 {
+			edge = -edge
+		}
+		s.EdgeSum += edge
+		// Brier: squared difference (our_prob vs outcome).
+		outcome := 0.0
+		if won {
+			outcome = 1.0
+		}
+		diff := r.OurProbability - outcome
+		s.BrierSum += diff * diff
+	}
+	return s
+}
+
+// trendSymbol returns ▲/▼/= for a numeric change (positive=improvement depends on metric).
+// higherIsBetter=true means increase is good (win rate, P&L, edge).
+// higherIsBetter=false means decrease is good (Brier score).
+func trendSymbol(current, previous float64, higherIsBetter bool) string {
+	const eps = 0.001
+	delta := current - previous
+	if delta > eps && higherIsBetter {
+		return styleWin.Sprint("▲")
+	}
+	if delta < -eps && higherIsBetter {
+		return styleLoss.Sprint("▼")
+	}
+	if delta < -eps && !higherIsBetter {
+		return styleWin.Sprint("▲") // lower Brier = improvement
+	}
+	if delta > eps && !higherIsBetter {
+		return styleLoss.Sprint("▼")
+	}
+	return styleNeutral.Sprint("=")
+}
+
+// cmdCompare compares the current N-day window to the previous N-day window.
+func cmdCompare(dataRoot string, days int) {
+	header(fmt.Sprintf("📊 PERIOD COMPARISON (%d days vs previous %d days)", days, days))
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error loading history: %v\n", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	cur := computePeriodStats(records, now.AddDate(0, 0, -days), now)
+	prev := computePeriodStats(records, now.AddDate(0, 0, -2*days), now.AddDate(0, 0, -days))
+
+	if cur.Bets == 0 && prev.Bets == 0 {
+		fmt.Println("  No resolved bets in either period yet.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Metric", fmt.Sprintf("Current (%dd)", days), fmt.Sprintf("Previous (%dd)", days), "Trend"})
+
+	// Total bets.
+	t.AppendRow(table.Row{
+		"Total Bets",
+		cur.Bets,
+		prev.Bets,
+		trendSymbol(float64(cur.Bets), float64(prev.Bets), true),
+	})
+
+	// Win rate.
+	curWR := cur.winRate()
+	prevWR := prev.winRate()
+	curWRStr := fmt.Sprintf("%.1f%% (%d/%d)", curWR, cur.Wins, cur.Bets)
+	prevWRStr := fmt.Sprintf("%.1f%% (%d/%d)", prevWR, prev.Wins, prev.Bets)
+	if cur.Bets == 0 {
+		curWRStr = "—"
+	}
+	if prev.Bets == 0 {
+		prevWRStr = "—"
+	}
+	t.AppendRow(table.Row{
+		"Win Rate",
+		curWRStr,
+		prevWRStr,
+		trendSymbol(curWR, prevWR, true),
+	})
+
+	// Avg edge.
+	curEdge := cur.avgEdge()
+	prevEdge := prev.avgEdge()
+	curEdgeStr := fmt.Sprintf("%.1f%%", curEdge)
+	prevEdgeStr := fmt.Sprintf("%.1f%%", prevEdge)
+	if cur.Bets == 0 {
+		curEdgeStr = "—"
+	}
+	if prev.Bets == 0 {
+		prevEdgeStr = "—"
+	}
+	t.AppendRow(table.Row{
+		"Avg Edge",
+		curEdgeStr,
+		prevEdgeStr,
+		trendSymbol(curEdge, prevEdge, true),
+	})
+
+	// Total P&L.
+	pnlColor := func(v float64) string {
+		if v > 0 {
+			return styleWin.Sprintf("%+.2f USDC", v)
+		}
+		if v < 0 {
+			return styleLoss.Sprintf("%+.2f USDC", v)
+		}
+		return styleNeutral.Sprintf("%.2f USDC", v)
+	}
+	t.AppendRow(table.Row{
+		"Total P&L",
+		pnlColor(cur.TotalPnL),
+		pnlColor(prev.TotalPnL),
+		trendSymbol(cur.TotalPnL, prev.TotalPnL, true),
+	})
+
+	// Brier score (lower is better).
+	curBrier := cur.brierScore()
+	prevBrier := prev.brierScore()
+	curBrierStr := fmt.Sprintf("%.4f", curBrier)
+	prevBrierStr := fmt.Sprintf("%.4f", prevBrier)
+	if cur.Bets == 0 {
+		curBrierStr = "—"
+	}
+	if prev.Bets == 0 {
+		prevBrierStr = "—"
+	}
+	t.AppendRow(table.Row{
+		"Brier Score",
+		curBrierStr,
+		prevBrierStr,
+		trendSymbol(curBrier, prevBrier, false),
+	})
+
+	t.Render()
+
+	periodLabel := func(from, to time.Time) string {
+		return fmt.Sprintf("%s → %s", from.Format("Jan 02"), to.Format("Jan 02"))
+	}
+	fmt.Printf("\n  Current:  %s   |   Previous:  %s\n",
+		periodLabel(now.AddDate(0, 0, -days), now),
+		periodLabel(now.AddDate(0, 0, -2*days), now.AddDate(0, 0, -days)),
+	)
+	fmt.Println("  ▲ = improved   ▼ = worsened   = = unchanged")
 }
 
 // brierQuality is duplicated here for dashboard-internal use; the canonical

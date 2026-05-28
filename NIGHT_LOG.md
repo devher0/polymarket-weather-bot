@@ -1,5 +1,28 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 03:05 UTC — TASK-145 + TASK-146
+
+**TASK-145: `dashboard compare` — сравнение двух периодов**
+
+Добавлен новый sub-command `dashboard compare [--days=N]` (default: 7 дней). Сравнивает текущий N-дневный период с предыдущим N-дневным периодом по 5 метрикам.
+
+**Изменения:**
+- `cmd/dashboard/main.go` (+130 строк) — тип `periodStats` с методами `winRate()`, `avgEdge()`, `brierScore()`; функция `computePeriodStats(records, from, to)` — фильтрует BetRecord по временному окну и считает stats; функция `trendSymbol(cur, prev, higherIsBetter)` — ▲/▼/= с цветом; функция `cmdCompare(dataRoot, days)` — таблица: Metric | Current | Previous | Trend для Total Bets, Win Rate, Avg Edge, Total P&L, Brier Score; зарегистрирован в switch и printUsage
+
+**TASK-146: Telegram `/summary` команда**
+
+Добавлена команда `/summary` в Telegram-полер. Выводит компактный многосекционный обзор состояния бота в формате `<pre>` (моноширинный, совместим с Telegram).
+
+**Изменения:**
+- `internal/notifier/telegram_commands.go` (+90 строк) — функция `handleSummary(bcfg)`: bankroll, win rate, Brier score, Sharpe 30d, streak, P&L (all-time), today bets/open/P&L, top city/signal; `case "/summary":` в switch; docstring обновлён
+
+**Проверка:** `go build ./...` — OK
+
+**Файлы изменены:** `cmd/dashboard/main.go`, `internal/notifier/telegram_commands.go`
+**Строк добавлено:** ~220
+
+---
+
 ## 2026-05-28 04:47 UTC — TASK-142 + TASK-143
 
 **TASK-142: OpenMeteo snowfall direct signal**
