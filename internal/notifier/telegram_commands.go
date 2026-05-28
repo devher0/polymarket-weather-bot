@@ -335,6 +335,12 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handlePnLWeekday(bcfg))
 				case "/drift":
 					sendReply(cfg, chatID, handleDrift(bcfg))
+				case "/prob-dist":
+					sendReply(cfg, chatID, handleProbDist(bcfg))
+				case "/size-dist":
+					sendReply(cfg, chatID, handleSizeDist(bcfg))
+				case "/best-bets":
+					sendReply(cfg, chatID, handleBestBets(bcfg))
 				}
 			}
 		}
@@ -3902,4 +3908,36 @@ func handleDrift(bcfg BotConfig) string {
 		summary.Count,
 		time.Now().UTC().Format("15:04"),
 	)
+}
+
+// ── TASK-235: /prob-dist ──────────────────────────────────────────────────────
+
+func handleProbDist(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+	buckets := calibration.BuildProbDist(records)
+	return calibration.FormatProbDist(buckets)
+}
+
+// ── TASK-236: /size-dist ──────────────────────────────────────────────────────
+
+func handleSizeDist(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+	buckets := calibration.ComputeSizeBuckets(records)
+	return calibration.FormatSizeDist(buckets)
+}
+
+// ── TASK-237: /best-bets ─────────────────────────────────────────────────────
+
+func handleBestBets(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+	return calibration.FormatBestBets(records, 5)
 }

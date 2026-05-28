@@ -2372,3 +2372,37 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Команда `/drift`: "📊 Price Drift Analysis\nAvg drift: +3.2pp ✅ (market confirms our edge)\nPositive: 12 | Negative: 5"
 - Сохранять в `data/price_drift.json`
 - 4 unit-теста: save, update, summary calculation, empty
+
+---
+
+## 🔴 ПРИОРИТЕТ 1500 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-235: Probability accuracy distribution `/prob-dist`
+**Файлы:** `internal/calibration/prob_dist.go` (новый), `internal/calibration/prob_dist_test.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Группирует resolved ставки по 6 тирам предсказанной вероятности (0.40–1.00) и сравнивает среднюю предсказанную вероятность с реальным win rate.
+- `ProbBucket{Label, Lo, Hi, Count, Wins, PredSum, PnL, TotalRisked}` + AvgPred/WinPct/ROIPct/CalibrationGap методы
+- `BuildProbDist(records []BetRecord) []ProbBucket` — 6 бакетов: 0.40-0.50, 0.50-0.55, 0.55-0.60, 0.60-0.70, 0.70-0.80, 0.80-1.00
+- `ProbDistECE(buckets) float64` — Expected Calibration Error (взвешенный средний |pred-actual|)
+- `FormatProbDist(buckets) string` — HTML таблица Range|N|Pred|Win%|Gap|ROI% с ✅/🟡/❌ по gap
+- Telegram `/prob-dist`: таблица + ECE оценка ("excellent/moderate/poor calibration")
+- 6 unit-тестов: empty, below threshold, correct bins, avg pred, perfect calibration ECE, no data format
+
+### [x] 2026-05-28 — TASK-236: Bet size tier win-rate distribution `/size-dist`
+**Файлы:** `internal/calibration/size_dist.go` (новый), `internal/calibration/size_dist_test.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Группирует resolved ставки по размеру ставки (<$1, $1-$2, $2-$5, $5+) и показывает win rate/ROI по тиру.
+- `SizeBucket{Label, MaxSize, Count, Wins, PnL, TotalRisked}` + WinPct/ROIPct/AvgSize методы
+- `ComputeSizeBuckets(records []BetRecord) []SizeBucket` — 4 бакета
+- `SizeValidation(buckets) (string, bool)` — проверяет монотонность win rate (большие ставки = лучше?)
+- `FormatSizeDist(buckets) string` — HTML таблица Size|N|Avg$|Win%|P&L|ROI% + validation footer
+- Telegram `/size-dist`: проверяет правильность Kelly-сайзинга
+- 7 unit-тестов: empty, correct bins, P&L win/loss, monotone/non-monotone validation, not enough data
+
+### [x] 2026-05-28 — TASK-237: Top & bottom bets by realized ROI% `/best-bets`
+**Файлы:** `internal/calibration/best_bets.go` (новый), `internal/calibration/best_bets_test.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Показывает топ-5 и худшие 5 ставок по ROI% (P&L / SizeUSDC).
+- `BetSummary{ConditionID, City, Signal, Side, OurProb, MarketPrice, SizeUSDC, PnL, ROIPct, Outcome, ResolvedAt}`
+- `computeBetSummaries(records) []BetSummary` — вычисляет P&L и ROI для каждой resolved ставки
+- `TopBottomBets(records, topN) (top, bottom []BetSummary)` — сортирует по ROI%, копирует top/bottom (фикс: не шарят backing array)
+- `FormatBestBets(records, topN) string` — HTML таблица City+Sig|Side|ROI%|P&L|Prob
+- Telegram `/best-bets`: "🔝 Top bets / 💀 Worst bets" (топ 5 каждого)
+- 7 unit-тестов: empty, basic ranking (sort descending), fewer than N, unresolved ignored, format no data, ROI win/loss
