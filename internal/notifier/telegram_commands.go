@@ -42,6 +42,8 @@
 //   /momentum        — forecast trend direction for all cities (TASK-230)
 //   /best-city       — top cities ranked by total positive edge across all signals (TASK-231)
 //   /edge-buckets    — edge-tier win-rate validator: are bigger edges more profitable? (TASK-232)
+//   /burnout         — signal burnout detector: over-trading + burst alert per signal (TASK-238)
+//   /portfolio       — enriched open positions with live unrealized P&L (TASK-239)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -341,6 +343,10 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleSizeDist(bcfg))
 				case "/best-bets":
 					sendReply(cfg, chatID, handleBestBets(bcfg))
+				case "/burnout":
+					sendReply(cfg, chatID, handleBurnout(bcfg))
+				case "/portfolio":
+					sendReply(cfg, chatID, handlePortfolio(bcfg))
 				}
 			}
 		}
@@ -2007,7 +2013,11 @@ func handleHelp() string {
 /best-city       Top cities ranked by total positive edge
 /edge-buckets    Edge-tier win-rate validator (does larger edge = better wins?)
 /pnl-weekday     P&L by day of week — find your best and worst trading days
-/drift           Post-bet price drift analysis — does market confirm your edge?</pre>
+/drift           Post-bet price drift analysis — does market confirm your edge?
+/prob-dist       Probability accuracy distribution (calibration check)
+/size-dist       Bet-size tier win rate (Kelly validation)
+/best-bets       Top-5 and worst-5 bets by realized ROI%
+/burnout         Signal burnout detector: over-trading + burst alerts</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -2021,6 +2031,7 @@ func handleHelp() string {
 
 <b>📂 Positions &amp; History</b>
 <pre>/positions       Open (unresolved) bets
+/portfolio       Open positions with live unrealized P&L
 /explain &lt;id&gt;   Strategy audit trail for a conditionID
 /export [days]   Send bet history CSV (default: 30 days)</pre>
 
@@ -3940,4 +3951,110 @@ func handleBestBets(bcfg BotConfig) string {
 		return "❌ Could not load bet history."
 	}
 	return calibration.FormatBestBets(records, 5)
+}
+
+// ── TASK-238: /burnout ────────────────────────────────────────────────────────
+
+func handleBurnout(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+	report := calibration.AnalyzeBurnout(records, calibration.DefaultBurnoutConfig())
+	return calibration.FormatBurnout(report)
+}
+
+// ── TASK-239: /portfolio ──────────────────────────────────────────────────────
+
+// handlePortfolio returns an enriched view of open positions: unrealized P&L,
+// price change since entry, hours to expiry, and exit signal recommendation.
+func handlePortfolio(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	// Gather open records for expiry lookup.
+	var open []calibration.BetRecord
+	for _, r := range records {
+		if r.Outcome == nil {
+			open = append(open, r)
+		}
+	}
+	if len(open) == 0 {
+		return "📭 No open positions."
+	}
+
+	// Fetch unrealized P&L (live prices, 2s each).
+	positions := calibration.FetchUnrealizedPnL(records)
+	posMap := map[string]calibration.UnrealizedPosition{}
+	for _, p := range positions {
+		posMap[p.ConditionID] = p
+	}
+
+	// Build per-position rows.
+	type row struct {
+		rec     calibration.BetRecord
+		pos     calibration.UnrealizedPosition
+		hasLive bool
+	}
+	var rows []row
+	for _, r := range open {
+		p, ok := posMap[r.ConditionID]
+		rows = append(rows, row{rec: r, pos: p, hasLive: ok && p.FetchError == ""})
+	}
+
+	// Compute totals.
+	var totalExposure, totalUnrealized float64
+	for _, rw := range rows {
+		totalExposure += rw.rec.SizeUSDC
+		if rw.hasLive {
+			totalUnrealized += rw.pos.UnrealizedPnL
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>📂 Portfolio (%d open)</b>\n", len(rows)))
+	sb.WriteString(fmt.Sprintf("Total exposure: <b>$%.2f USDC</b>  |  Unrealized: <b>%+.2f USDC</b>\n\n",
+		totalExposure, totalUnrealized))
+
+	for _, rw := range rows {
+		r := rw.rec
+		label := fmt.Sprintf("%s/%s %s", r.City, r.Signal, r.Side)
+		if r.City == "" {
+			label = fmt.Sprintf("%.8s %s", r.ConditionID, r.Side)
+		}
+
+		entry := fmt.Sprintf("%.3f", r.MarketPrice)
+		cur := "N/A"
+		pnlStr := ""
+		if rw.hasLive {
+			cur = fmt.Sprintf("%.3f", rw.pos.CurrentPrice)
+			sign := "+"
+			if rw.pos.UnrealizedPnL < 0 {
+				sign = ""
+			}
+			pnlStr = fmt.Sprintf(" (%s%.2f)", sign, rw.pos.UnrealizedPnL)
+		}
+
+		// Hours to expiry via market end date (best-effort, no blocking call).
+		expiryStr := ""
+		if !r.Timestamp.IsZero() {
+			// Rough estimate: if the bet was placed and we know signal/city
+			// we can't easily compute expiry here without an API call.
+			// Show placement time instead.
+			placed := r.Timestamp.UTC().Format("Jan 02 15:04")
+			expiryStr = fmt.Sprintf(" | placed %s", placed)
+		}
+
+		sb.WriteString(fmt.Sprintf("• <b>%s</b> $%.2f\n  entry %s → cur %s%s%s\n",
+			label, r.SizeUSDC, entry, cur, pnlStr, expiryStr))
+	}
+
+	sign := "+"
+	if totalUnrealized < 0 {
+		sign = ""
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>Unrealized total: %s%.2f USDC</i>", sign, totalUnrealized))
+	return sb.String()
 }

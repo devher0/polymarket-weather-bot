@@ -2406,3 +2406,28 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `FormatBestBets(records, topN) string` — HTML таблица City+Sig|Side|ROI%|P&L|Prob
 - Telegram `/best-bets`: "🔝 Top bets / 💀 Worst bets" (топ 5 каждого)
 - 7 unit-тестов: empty, basic ranking (sort descending), fewer than N, unresolved ignored, format no data, ROI win/loss
+
+---
+
+## 🔴 ПРИОРИТЕТ 1600 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-238: Signal burnout detector + `/burnout` Telegram команда
+**Файлы:** `internal/calibration/burnout.go` (новый), `internal/calibration/burnout_test.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Детектирует когда конкретный сигнал торгуется слишком часто относительно его недавнего win rate. Чрезмерная торговля одной идеей усиливает потери когда модель ошибается — "выгорание" сигнала.
+- `BurnoutConfig{WindowDays, FreqMultiplier, WinRateThreshold, BurstWindow, BurstLimit, MinBets}` — порог настройки
+- `BurnoutResult{Signal, BetsWindow, WinRate, Bursting, BurstCount, Overloaded, FreqRatio, AlertMessage}`
+- `BurnoutReport{Results, GlobalAvg, WindowDays, GeneratedAt}` + `HasAlerts() bool`
+- `AnalyzeBurnout(records, cfg)` — алгоритм: freq > FreqMultiplier×avg И WR < WinRateThreshold → overloaded; 5+ бетов за 48ч → burst
+- `FormatBurnout(report) string` — ASCII таблица + alerts секция для Telegram
+- Telegram `/burnout`: обнаруживает over-trading + burst паттерны для всех сигналов
+- 7 unit-тестов: Empty, NoAlert, Overloaded, Burst, HighFreqGoodRate, UnresolvedIgnoredForWinRate, FormatBurnout_NoAlerts
+
+### [x] 2026-05-28 — TASK-239: `/portfolio` Telegram команда — обогащённые позиции с unrealized P&L
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Текущий `/positions` просто выводит список из CSV. Новый `/portfolio` обогащает данные: для каждой открытой позиции делает live-запрос текущей цены, вычисляет нереализованный P&L, показывает PriceChange и итоговый unrealized по портфелю.
+- `handlePortfolio(bcfg)` — загружает историю, вызывает `calibration.FetchUnrealizedPnL()`, строит enriched таблицу
+- Колонки: label (City/Sig Side) | $size | entry→current | ΔP&L | placed timestamp
+- Итоговые строки: total exposure USDC + total unrealized USDC
+- Graceful: если live fetch не удался — показывает "N/A" без краша
+- Добавлены case "/burnout" и case "/portfolio" в switch поллера
+- Обновлён /help: burnout в Analytics, portfolio в Positions & History
