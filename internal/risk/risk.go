@@ -182,6 +182,27 @@ func (m *Manager) CheckExposure(records []calibration.BetRecord) error {
 	return nil
 }
 
+// ── Bet cooldown guard ────────────────────────────────────────────────────────
+
+// IsCoolingDown returns true when the most recent bet on (city, signal)
+// was placed within the last cooldownHours hours.
+//
+// The guard prevents the bot from hammering the same market immediately
+// after a bet, giving time for the market to reprice. Returns false when
+// cooldownHours is 0 (disabled) or city/signal is empty.
+func IsCoolingDown(city, signal string, records []calibration.BetRecord, cooldownHours int) bool {
+	if cooldownHours <= 0 || city == "" || signal == "" {
+		return false
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(cooldownHours) * time.Hour)
+	for _, r := range records {
+		if r.City == city && r.Signal == signal && r.Timestamp.UTC().After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
 // ── Correlation guard ─────────────────────────────────────────────────────────
 
 // CheckCorrelation returns an error when opening a new bet on (city, signal)

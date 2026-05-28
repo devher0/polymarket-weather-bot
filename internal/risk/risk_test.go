@@ -364,3 +364,45 @@ func TestCheckCorrelation_DifferentCityAllowed(t *testing.T) {
 		t.Errorf("expected nil for different city, got %v", err)
 	}
 }
+
+// ── IsCoolingDown tests ────────────────────────────────────────────────────
+
+func newCitySignalRecordAt(condID, city, signal string, ts time.Time) calibration.BetRecord {
+	return calibration.BetRecord{
+		ConditionID:    condID,
+		Timestamp:      ts,
+		Side:           "YES",
+		OurProbability: 0.6,
+		MarketPrice:    0.5,
+		SizeUSDC:       5,
+		City:           city,
+		Signal:         signal,
+	}
+}
+
+func TestIsCoolingDown_NoPreviousBet(t *testing.T) {
+	records := []calibration.BetRecord{
+		newCitySignalRecordAt("a", "london", "rain", time.Now().UTC().Add(-1*time.Hour)),
+	}
+	if risk.IsCoolingDown("new_york", "rain", records, 4) {
+		t.Error("expected false: no previous bet on new_york/rain")
+	}
+}
+
+func TestIsCoolingDown_JustPlaced(t *testing.T) {
+	records := []calibration.BetRecord{
+		newCitySignalRecordAt("a", "new_york", "rain", time.Now().UTC().Add(-30*time.Minute)),
+	}
+	if !risk.IsCoolingDown("new_york", "rain", records, 4) {
+		t.Error("expected true: bet placed 30 min ago within 4h cooldown")
+	}
+}
+
+func TestIsCoolingDown_PastCooldown(t *testing.T) {
+	records := []calibration.BetRecord{
+		newCitySignalRecordAt("a", "new_york", "rain", time.Now().UTC().Add(-5*time.Hour)),
+	}
+	if risk.IsCoolingDown("new_york", "rain", records, 4) {
+		t.Error("expected false: bet placed 5h ago, cooldown is 4h")
+	}
+}

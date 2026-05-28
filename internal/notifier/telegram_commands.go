@@ -685,6 +685,12 @@ func handleSummary(bcfg BotConfig) string {
 	if topSig != "" {
 		sb.WriteString(fmt.Sprintf("%-14s %s\n", "Top signal:", topSig))
 	}
+
+	// TASK-150: P&L bar chart for the last 14 days.
+	if pnlLine := calibration.DailyPnLLine(records, 14); pnlLine != "" {
+		sb.WriteString(fmt.Sprintf("%-14s %s\n", "History:", pnlLine))
+	}
+
 	sb.WriteString("</pre>")
 
 	return sb.String()

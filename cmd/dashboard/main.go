@@ -426,9 +426,10 @@ func cmdForecast(dataRoot string) {
 		"Precip mm",
 		"Rain %",
 		"Wind km/h",
+		"Spread°C",
 		"Ens.Unc °C",
 		"Confidence",
-		"Sources",
+		"N Src",
 		"Age",
 	})
 
@@ -453,12 +454,24 @@ func cmdForecast(dataRoot string) {
 			ensStr = fmt.Sprintf("%.1f", ff.EnsembleUncertainty)
 		}
 
-		srcStr := ""
-		for i, s := range ff.Sources {
-			if i > 0 {
-				srcStr += ","
+		// Compute inter-source temperature spread (stddev of MaxTempC).
+		spreadStr := "—"
+		nSrc := len(ff.PerSourceForecasts)
+		if nSrc >= 2 {
+			temps := make([]float64, 0, nSrc)
+			for _, sf := range ff.PerSourceForecasts {
+				temps = append(temps, sf.MaxTempC)
 			}
-			srcStr += s
+			spread := forecastTempSpread(temps)
+			raw := fmt.Sprintf("%.1f", spread)
+			switch {
+			case spread > 5.0:
+				spreadStr = styleLoss.Sprint(raw)
+			case spread > 2.0:
+				spreadStr = styleNeutral.Sprint(raw)
+			default:
+				spreadStr = styleWin.Sprint(raw)
+			}
 		}
 
 		t.AppendRow(table.Row{
@@ -469,9 +482,10 @@ func cmdForecast(dataRoot string) {
 			fmt.Sprintf("%.1f", ff.Forecast.PrecipitationMM),
 			fmt.Sprintf("%.0f%%", ff.Forecast.PrecipitationProbability),
 			fmt.Sprintf("%.0f", ff.Forecast.WindSpeedKMH),
+			spreadStr,
 			ensStr,
 			confStr,
-			truncate(srcStr, 32),
+			nSrc,
 			ageStr,
 		})
 	}
@@ -484,7 +498,8 @@ func cmdForecast(dataRoot string) {
 	fmt.Println("  Legend: " +
 		styleWin.Sprint("conf ≥ 0.75 = high") + "  " +
 		styleNeutral.Sprint("conf < 0.40 = low") + "  " +
-		"Ens.Unc = ensemble temperature stddev (°C)")
+		"Ens.Unc = ensemble temperature stddev (°C)  " +
+		"Spread: " + styleWin.Sprint("<2°C") + " " + styleNeutral.Sprint("2-5°C") + " " + styleLoss.Sprint(">5°C"))
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
@@ -975,6 +990,48 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// forecastTempSpread returns the population stddev of the given temperatures.
+func forecastTempSpread(temps []float64) float64 {
+	if len(temps) < 2 {
+		return 0
+	}
+	mean := 0.0
+	for _, v := range temps {
+		mean += v
+	}
+	mean /= float64(len(temps))
+	variance := 0.0
+	for _, v := range temps {
+		d := v - mean
+		variance += d * d
+	}
+	variance /= float64(len(temps))
+	// math.Sqrt requires math import — use inline Newton's method for small numbers.
+	x := variance
+	if x <= 0 {
+		return 0
+	}
+	// Use standard library — math is already imported via other usages.
+	return mathSqrt(x)
+}
+
+// mathSqrt is a thin alias to avoid import; dashboard imports math via calibration or directly.
+// If math is not already imported this file, we use the approach of computing sqrt via Newton.
+func mathSqrt(x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	z := x
+	for i := 0; i < 50; i++ {
+		z1 := (z + x/z) / 2
+		if z1 == z {
+			break
+		}
+		z = z1
+	}
+	return z
 }
 
 // ── hourly (TASK-078) ─────────────────────────────────────────────────────────

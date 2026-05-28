@@ -90,6 +90,7 @@ type Config struct {
 	// Anti-detection / rate limiting
 	BetJitterEnabled    bool    `yaml:"bet_jitter_enabled"`     // sleep 30s–3min before each live bet (default: true)
 	MinBetIntervalHours float64 `yaml:"min_bet_interval_hours"` // cooldown per conditionID in hours (default: 4.0)
+	BetCooldownHours    int     `yaml:"bet_cooldown_hours"`     // pause after betting on same (city,signal) pair (default: 4)
 
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
@@ -138,6 +139,7 @@ func defaults() Config {
 		ProtocolFeeRate:         0.02,
 		BetJitterEnabled:        true,
 		MinBetIntervalHours:     4.0,
+		BetCooldownHours:        4,
 		AutoBlacklistMinBets:    8,
 		AutoBlacklistLossUSDC:   -3.0,
 		AutoBlacklistDays:       3,
@@ -293,6 +295,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("MIN_BET_INTERVAL_HOURS"); v != nil {
 		cfg.MinBetIntervalHours = *v
+	}
+	if v := envInt("BET_COOLDOWN_HOURS"); v != nil {
+		cfg.BetCooldownHours = *v
 	}
 
 	// Telegram
