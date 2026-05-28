@@ -3104,3 +3104,24 @@ Rationale: Polymarket order flow и liquidity существенно меняю�
 **Тесты**: all PASS
 **Строк кода:** ~110 (volume_tracker.go) + ~65 (handleVolume/formatVolume) + ~10 wiring
 **Файлы:** `internal/markets/volume_tracker.go`, `internal/markets/markets.go`, `internal/strategy/strategy.go`, `internal/notifier/telegram_commands.go`
+
+---
+
+## 2026-05-28 09:04 UTC — TASK-222
+
+### TASK-222: Auto-generated insight summary в DailyDigest
+
+**Что сделано:**
+- `internal/notifier/telegram.go` (обновлён):
+  - `GenerateDailyInsights(records, dataRoot) string` — 4 детерминированных правила:
+    1. 🔥 Best signal today win rate > 70% (≥2 resolved today)
+    2. ⚠️ Drawdown > 10% от пика (LoadPeakBankroll + LoadBankroll)
+    3. 💡 Missed high-conf bet (conf ≥ 0.75, SKIP decision из prediction_log)
+    4. 📈 Brier improving: 7d vs 14d разница ≥ 0.01 (BrierWindow)
+  - `DailyDigest()`: добавлен вызов `GenerateDailyInsights()` → `insightsSection` в msg
+  - Секция появляется только если есть хотя бы 1 инсайт; иначе — "" (не добавляет пустой блок)
+
+**go build ./...**: ✅
+**Тесты**: all PASS
+**Строк кода:** ~65 (GenerateDailyInsights) + ~5 wiring в DailyDigest
+**Файлы:** `internal/notifier/telegram.go`

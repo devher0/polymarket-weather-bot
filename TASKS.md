@@ -2226,7 +2226,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Добавить `HighVolume bool` в Market struct: volume > 10000 USDC → выше доверие к цене
 - Высокий объём = более точная market probability, учитывать в EvaluateFused() weight
 
-### [ ] TASK-222: Auto-generated insight summary — ежедневный AI-анализ производительности
+### [x] 2026-05-28 — TASK-222: Auto-generated insight summary — ежедневный AI-анализ производительности
 **Файл:** `internal/notifier/telegram.go` (обновить), `cmd/bot/main.go` (обновить)
 Раз в день (в 09:00) — помимо DailyDigest отправлять 2-3 строки инсайтов.
 - `GenerateDailyInsights(records []BetRecord, dataRoot string) string` — детерминированные правила:
