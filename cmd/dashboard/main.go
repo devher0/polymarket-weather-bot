@@ -555,6 +555,9 @@ func main() {
 	case "freshness":
 		// TASK-140: forecast freshness table.
 		cmdFreshness(dataRoot)
+	case "summary":
+		// TASK-144: single-page health overview.
+		cmdSummary(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -587,6 +590,7 @@ func printUsage() {
 	fmt.Println("  health                            Per-source data availability stats (TASK-081)")
 	fmt.Println("  timing                            Hourly win-rate and bet-size timing multiplier (TASK-133)")
 	fmt.Println("  freshness                         Forecast freshness table: age/status per city (TASK-140)")
+	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -1451,6 +1455,259 @@ func cmdTiming(dataRoot string) {
 	fmt.Println("  Multiplier range: 0.50 (worst) → 1.20 (best)  |  1.000 = neutral (< 5 bets)")
 	fmt.Println("  HorizonDecay: 🟢 ≥0.90 (fresh)  🟡 0.75–0.90  🔴 <0.75 (stale)  |  — = no horizon data yet")
 	fmt.Println("  Source: data/hourly_winrate.json")
+}
+
+// ── summary (TASK-144) ────────────────────────────────────────────────────
+
+// cmdSummary prints a single-page health overview combining bankroll, performance,
+// today's activity, streak, top performers, and source health.
+func cmdSummary(dataRoot string) {
+	header("BOT HEALTH SUMMARY")
+	now := time.Now()
+	today := now.Format("2006-01-02")
+
+	// ── Load base data ──────────────────────────────────────────────────────
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: could not load history: %v\n", err)
+		records = nil
+	}
+
+	bankroll := calibration.LoadBankroll(dataRoot)
+	peak := calibration.LoadPeakBankroll(dataRoot)
+
+	// ── 1. Bankroll ─────────────────────────────────────────────────────────
+	drawdownFraction := calibration.DrawdownFraction(peak, bankroll)
+	drawdownPct := drawdownFraction * 100
+	ddMult := calibration.DrawdownMultiplier(drawdownFraction, 0.30)
+
+	ddColor := styleWin
+	if drawdownPct > 20 {
+		ddColor = styleLoss
+	} else if drawdownPct > 10 {
+		ddColor = styleNeutral
+	}
+
+	fmt.Printf("\n  %-20s %s\n", "Bankroll:", styleWin.Sprintf("$%.2f USDC", bankroll))
+	fmt.Printf("  %-20s $%.2f USDC\n", "Peak:", peak)
+	fmt.Printf("  %-20s %s  (mult: %.2f×)\n", "Drawdown:",
+		ddColor.Sprintf("%.1f%%", drawdownPct), ddMult)
+
+	// ── 2. Performance ──────────────────────────────────────────────────────
+	fmt.Println()
+	resolved := make([]calibration.BetRecord, 0, len(records))
+	open := make([]calibration.BetRecord, 0, len(records))
+	wins := 0
+	for _, r := range records {
+		if r.Outcome == nil {
+			open = append(open, r)
+		} else {
+			resolved = append(resolved, r)
+			if *r.Outcome {
+				wins++
+			}
+		}
+	}
+
+	brierScore, brierCount, _ := calibration.BrierScore(records)
+	winRate := 0.0
+	if len(resolved) > 0 {
+		winRate = float64(wins) / float64(len(resolved)) * 100
+	}
+
+	brierStr := "—"
+	if brierCount > 0 {
+		brierStr = fmt.Sprintf("%.4f (%s)", brierScore, brierQuality(brierScore))
+	}
+	winStr := "—"
+	if len(resolved) > 0 {
+		winStr = fmt.Sprintf("%.1f%%  (%d/%d)", winRate, wins, len(resolved))
+	}
+
+	fmt.Printf("  %-20s %s\n", "Brier Score:", brierStr)
+	fmt.Printf("  %-20s %s\n", "Win Rate:", winStr)
+	fmt.Printf("  %-20s %d open  /  %d resolved  /  %d total\n", "Positions:",
+		len(open), len(resolved), len(records))
+
+	sharpe, sharpeCount, _ := calibration.RollingSharpe(dataRoot, 30)
+	if sharpeCount >= 2 {
+		fmt.Printf("  %-20s %.3f (%s, %dd)\n", "Sharpe (30d):",
+			sharpe, calibration.SharpeQuality(sharpe), sharpeCount)
+	}
+
+	// ── 3. Today ────────────────────────────────────────────────────────────
+	fmt.Println()
+	todayBets := 0
+	todayPnL := 0.0
+	todayUnresolved := 0
+	for _, r := range records {
+		if r.Timestamp.Format("2006-01-02") != today {
+			continue
+		}
+		todayBets++
+		if r.Outcome == nil {
+			todayUnresolved++
+		} else {
+			odds := 1.0 / r.MarketPrice
+			pnl := r.SizeUSDC * (odds - 1)
+			if !*r.Outcome {
+				pnl = -r.SizeUSDC
+			}
+			todayPnL += pnl
+		}
+	}
+	pnlColor := styleWin
+	if todayPnL < 0 {
+		pnlColor = styleLoss
+	} else if todayPnL == 0 {
+		pnlColor = styleNeutral
+	}
+	fmt.Printf("  %-20s %d bets  (%d unresolved)\n", "Today:", todayBets, todayUnresolved)
+	fmt.Printf("  %-20s %s\n", "Today P&L:", pnlColor.Sprintf("%+.2f USDC", todayPnL))
+
+	// ── 4. Streak ───────────────────────────────────────────────────────────
+	streakLine := calibration.StreakStatusLine(records)
+	fmt.Printf("  %-20s %s\n", "Streak:", streakLine)
+
+	// ── 5. Top cities ───────────────────────────────────────────────────────
+	fmt.Println()
+	cityBD := calibration.CityBreakdown(records)
+	type bdEntry struct {
+		name string
+		stats calibration.BreakdownStats
+	}
+	var cities []bdEntry
+	for k, v := range cityBD {
+		if v.Count >= 3 {
+			cities = append(cities, bdEntry{k, v})
+		}
+	}
+	sort.Slice(cities, func(i, j int) bool {
+		return cities[i].stats.WinRate() > cities[j].stats.WinRate()
+	})
+	if len(cities) > 0 {
+		fmt.Printf("  %-20s", "Top Cities:")
+		limit := 3
+		if len(cities) < limit {
+			limit = len(cities)
+		}
+		for i := 0; i < limit; i++ {
+			c := cities[i]
+			fmt.Printf("  %s %.0f%%(%d)", c.name, c.stats.WinRate(), c.stats.Count)
+		}
+		fmt.Println()
+	}
+
+	// ── 6. Top signals ──────────────────────────────────────────────────────
+	sigBD := calibration.SignalBreakdown(records)
+	var sigs []bdEntry
+	for k, v := range sigBD {
+		if v.Count >= 3 {
+			sigs = append(sigs, bdEntry{k, v})
+		}
+	}
+	sort.Slice(sigs, func(i, j int) bool {
+		return sigs[i].stats.WinRate() > sigs[j].stats.WinRate()
+	})
+	if len(sigs) > 0 {
+		fmt.Printf("  %-20s", "Top Signals:")
+		limit := 3
+		if len(sigs) < limit {
+			limit = len(sigs)
+		}
+		for i := 0; i < limit; i++ {
+			s := sigs[i]
+			fmt.Printf("  %s %.0f%%(%d)", s.name, s.stats.WinRate(), s.stats.Count)
+		}
+		fmt.Println()
+	}
+
+	// ── 7. Source health summary ─────────────────────────────────────────────
+	health := collectors.LoadSourceHealth(dataRoot)
+	if len(health) > 0 {
+		fmt.Println()
+		fmt.Printf("  %-20s", "Sources:")
+		sourceOrder := []string{"openmeteo", "nasa", "noaa", "goes", "hrrr", "ecmwf"}
+		for _, src := range sourceOrder {
+			h, ok := health[src]
+			if !ok {
+				continue
+			}
+			status := h.Status(now)
+			icon := "✅"
+			if status == "degraded" {
+				icon = "⚠️"
+			} else if status == "down" || status == "unknown" {
+				icon = "❌"
+			}
+			fmt.Printf("  %s%s", icon, src)
+		}
+		fmt.Println()
+	}
+
+	// ── 8. Recent bets ──────────────────────────────────────────────────────
+	fmt.Println()
+	fmt.Println(styleHeader.Sprint("  Recent Bets"))
+	// Sort resolved by time desc, show last 5
+	allResolved := make([]calibration.BetRecord, 0, len(resolved))
+	allResolved = append(allResolved, resolved...)
+	sort.Slice(allResolved, func(i, j int) bool {
+		return allResolved[i].Timestamp.After(allResolved[j].Timestamp)
+	})
+	if len(allResolved) == 0 {
+		fmt.Println("  (no resolved bets yet)")
+	} else {
+		limit := 5
+		if len(allResolved) < limit {
+			limit = len(allResolved)
+		}
+		for i := 0; i < limit; i++ {
+			r := allResolved[i]
+			label := "WIN"
+			col := styleWin
+			if !*r.Outcome {
+				label = "LOSS"
+				col = styleLoss
+			}
+			cityStr := r.City
+			if cityStr == "" {
+				cityStr = "?"
+			}
+			sigStr := r.Signal
+			if sigStr == "" {
+				sigStr = "?"
+			}
+			odds := 1.0 / r.MarketPrice
+			pnl := r.SizeUSDC * (odds - 1)
+			if !*r.Outcome {
+				pnl = -r.SizeUSDC
+			}
+			fmt.Printf("  %s  %s  %s/%s  %s  %+.2f USDC\n",
+				r.Timestamp.Format("01-02 15:04"),
+				col.Sprint(label),
+				cityStr, sigStr,
+				r.Side,
+				pnl,
+			)
+		}
+	}
+
+	fmt.Printf("\n  Generated at: %s\n", now.Format("2006-01-02 15:04:05 UTC"))
+}
+
+// brierQuality is duplicated here for dashboard-internal use; the canonical
+// version lives in calibration package.
+func brierQuality(score float64) string {
+	switch {
+	case score <= 0.08:
+		return "excellent"
+	case score <= 0.12:
+		return "good"
+	case score <= 0.18:
+		return "acceptable"
+	default:
+		return "poor"
+	}
 }
 
 // ── freshness (TASK-140) ───────────────────────────────────────────────────
