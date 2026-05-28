@@ -44,6 +44,9 @@ type FusedForecast struct {
 	// is versus the city's 30-day historical baseline. +2 = major wet event.
 	// 0 when historical data unavailable.
 	PrecipZScore float64
+	// TASK-185: fraction of adjacent forecast days (d+0..d+2) that agree with
+	// the target day's signal direction (0 = no data, 1.0 = full agreement).
+	CrossDayScore float64
 }
 
 // staticSourceWeights defines the base weight for each data source.

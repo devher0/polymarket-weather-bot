@@ -1,5 +1,30 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 08:08 UTC — TASK-185
+
+**TASK-185: Cross-day signal persistence — буст confidence при согласии смежных прогнозных дней**
+
+Метеорологическое улучшение: если rain/heat/cold одинаково предсказывается на d+0, d+1 и d+2 — сигнал гораздо надёжнее чем одиночный. Персистентные погодные системы (фронты, антициклоны) хорошо предсказываются за несколько дней.
+
+**Изменения:**
+- `internal/collectors/cross_day.go` (новый, 128 строк) — `CrossDayResult` struct; `signalProbFromForecast()` (все 9 сигналов); `CheckCrossDay(city, signal, dayOffset, threshold, dataRoot)` — загружает кэш d+0/d+1/d+2, считает направленное согласие; `ApplyCrossDay(ff, res)` — применяет boost к Confidence (cap 0.97), добавляет "cross_day" в Sources
+- `internal/collectors/cross_day_test.go` (новый, 160 строк) — 11 unit-тестов: FullAgreement/PartialAgreement/NoAgreement/NoCache/OnlyTargetDay/HeatSignal/AllSignals/UnknownSignal/BoostApplied/CapAt097/Noop
+- `internal/collectors/aggregator.go` (+3 строки) — добавлено поле `CrossDayScore float64` в `FusedForecast`
+- `internal/strategy/strategy.go` (+6 строк) — вызов `CheckCrossDay` + `ApplyCrossDay` в `EvaluateFused()` после stability check, до confidence gate
+- `cmd/dashboard/main.go` (+55 строк) — `cmdCrossDay()` с таблицей city×signal: Days Checked | Days Agree | Agreement% | Boost | Persistence; зарегистрирован в switch и printUsage
+
+**Boost logic:**
+- 3/3 дней согласны → +0.08 к confidence
+- 2/3 дней согласны → +0.04 к confidence
+- < 2/3 → без изменений
+
+**Проверка:** `go build ./...` — OK; `go test ./...` — все 9 пакетов PASS (11 новых тестов)
+
+**Файлы изменены:** 5
+**Строк добавлено:** ~352
+
+---
+
 ## 2026-05-28 07:22 UTC — TASK-175
 
 **TASK-175: Market volume filter — пропуск рынков с объёмом < MinVolumeUSDC**

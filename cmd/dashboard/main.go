@@ -653,6 +653,9 @@ func main() {
 	case "stability":
 		// TASK-184: forecast stability tracker.
 		cmdStability(dataRoot)
+	case "crossday":
+		// TASK-185: cross-day signal consistency table.
+		cmdCrossDay(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -695,6 +698,7 @@ func printUsage() {
 	fmt.Println("  hourly-winrate                    Win rate & P&L breakdown by UTC hour of day (TASK-180)")
 	fmt.Println("  kelly-opt                         Empirical optimal Kelly fraction via grid search (TASK-183)")
 	fmt.Println("  stability                         Forecast probability stability tracker per market (TASK-184)")
+	fmt.Println("  crossday                          Cross-day signal consistency table: which cities/signals persist (TASK-185)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -2796,4 +2800,89 @@ func cmdStability(dataRoot string) {
 	fmt.Println()
 	fmt.Println("  Unstable = stddev > 0.15 across today's evaluation cycles.")
 	fmt.Println("  High instability suggests disagreement between data sources or stale cache.")
+}
+
+// ── crossday (TASK-185) ───────────────────────────────────────────────────────
+
+// cmdCrossDay shows a table of cross-day signal consistency for each city
+// and signal type, using only the on-disk forecast cache (no network calls).
+// Rows with full agreement (all adjacent days align) are highlighted green.
+func cmdCrossDay(dataRoot string) {
+	header("🔄  CROSS-DAY SIGNAL CONSISTENCY")
+
+	signals := []string{"rain", "heat", "cold", "wind", "snow", "sunny", "fog", "humid", "dry"}
+
+	type rowEntry struct {
+		city      string
+		signal    string
+		result    *collectors.CrossDayResult
+	}
+
+	var rows []rowEntry
+	for city := range weather.Cities {
+		for _, sig := range signals {
+			res := collectors.CheckCrossDay(city, sig, 0, 0, dataRoot)
+			if res.DaysChecked <= 1 {
+				continue // no useful cross-day data for this city+signal pair
+			}
+			rows = append(rows, rowEntry{city: city, signal: sig, result: res})
+		}
+	}
+
+	if len(rows) == 0 {
+		fmt.Println("  No cross-day forecast data available.")
+		fmt.Println("  Run the bot at least once so day+0 and day+1 forecasts are cached.")
+		return
+	}
+
+	// Sort: full agreement first, then by city.
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].result.AgreementFraction != rows[j].result.AgreementFraction {
+			return rows[i].result.AgreementFraction > rows[j].result.AgreementFraction
+		}
+		if rows[i].city != rows[j].city {
+			return rows[i].city < rows[j].city
+		}
+		return rows[i].signal < rows[j].signal
+	})
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City", "Signal", "Days Checked", "Days Agree", "Agreement", "Boost", "Persistence"})
+
+	for _, r := range rows {
+		res := r.result
+		agr := fmt.Sprintf("%.0f%%", res.AgreementFraction*100)
+		boost := "—"
+		if res.ConfidenceBoost > 0 {
+			boost = fmt.Sprintf("+%.2f", res.ConfidenceBoost)
+		}
+
+		var label string
+		var labelColor text.Colors
+		switch {
+		case res.AgreementFraction >= 1.0:
+			label = "persistent ✓"
+			labelColor = styleWin
+		case res.AgreementFraction >= 2.0/3.0-1e-9:
+			label = "likely"
+			labelColor = text.Colors{text.FgCyan}
+		default:
+			label = "inconsistent"
+			labelColor = styleLoss
+		}
+
+		t.AppendRow(table.Row{
+			r.city,
+			r.signal,
+			res.DaysChecked,
+			res.DaysConsistent,
+			agr,
+			boost,
+			labelColor.Sprint(label),
+		})
+	}
+	t.Render()
+	fmt.Println()
+	fmt.Println("  Persistent = signal fires same direction on all checked forecast days (d+0 → d+2).")
+	fmt.Println("  Boost is additive confidence applied in EvaluateFused() when signal is consistent.")
 }

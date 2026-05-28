@@ -1788,3 +1788,20 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `IsUnstable(conditionID string) bool` — stddev > 0.15
 - В `EvaluateFused`: если `IsUnstable(conditionID)` → добавить `"SKIP:unstable"` или снизить confidence на 20%
 - `dashboard stability` — таблица conditionID | city | signal | stability | N | last_p
+
+---
+
+## 🔴 ПРИОРИТЕТ 28 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-185: Cross-day signal persistence — буст уверенности при согласии смежных дней
+**Файлы:** `internal/collectors/cross_day.go` (новый), `internal/collectors/cross_day_test.go` (новый), `internal/collectors/aggregator.go` (обновить поле FusedForecast), `internal/strategy/strategy.go` (интегрировать), `cmd/dashboard/main.go` (новый subcommand)
+Метеорологический факт: если rain/heat/cold одинаково предсказывается на 3 последовательных дня, сигнал намного надёжнее чем для одного дня. "Персистентные" погодные системы лучше предсказываются.
+- `CrossDayResult{City, Signal, DaysChecked, DaysConsistent, AgreementFraction, ConfidenceBoost}`
+- `CheckCrossDay(city, signal, targetDayOffset, threshold, dataRoot)` — загружает кэш d+0/d+1/d+2, считает направленное согласие
+- `ApplyCrossDay(ff, res)` — применяет boost к ff.Confidence (cap 0.97), добавляет "cross_day" в Sources, записывает ff.CrossDayScore
+- Boost: 3/3 дней согласны → +0.08; 2/3 → +0.04; иначе → 0
+- `signalProbFromForecast(f, signal, threshold)` — вычисляет сигнальную вероятность из weather.Forecast (все 9 типов)
+- В `EvaluateFused()`: вызывать CheckCrossDay + ApplyCrossDay до confidence gate
+- `FusedForecast.CrossDayScore float64` — сохраняет AgreementFraction для анализа
+- `dashboard crossday` — таблица city×signal: Days Checked | Days Agree | Agreement% | Boost | Persistence label
+- 11 unit-тестов: FullAgreement/PartialAgreement/NoAgreement/NoCache/OnlyTargetDay/HeatSignal/AllSignals/UnknownSignal/BoostApplied/CapAt097/Noop

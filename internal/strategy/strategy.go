@@ -284,6 +284,13 @@ func EvaluateFused(
 		ff.Confidence *= 0.80
 	}
 
+	// TASK-185: boost confidence when adjacent forecast days agree with today's signal.
+	// Only makes sense when city and signal are both known (they always are here).
+	if m.City != "" && m.Signal != "" {
+		crossDay := collectors.CheckCrossDay(m.City, m.Signal, m.DaysUntilExpiry(), m.ThresholdC, dataRoot)
+		collectors.ApplyCrossDay(ff, crossDay)
+	}
+
 	// ofiImbalance is set after FetchOrderFlow; the closure captures it by reference
 	// so later calls to logPrediction (for BET decisions) will include the OFI value.
 	var ofiImbalance float64
