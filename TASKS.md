@@ -1639,3 +1639,38 @@ Telegram команда `/winrate` показывает rolling win rate за п
 - Колонки: Signal | N | Win% | PnL
 - Итог: total N, overall Win%, total PnL
 - Добавить `/winrate` в docstring и поллер
+
+---
+
+## 🔴 ПРИОРИТЕТ 100 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-170: Market discovery caching — кэш рынков на диск с TTL 1h
+**Файлы:** `internal/markets/cache.go` (новый), `internal/markets/markets.go` (обновить), `cmd/bot/main.go` (обновить)
+Кэшировать результат `GetWeatherMarkets()` в `data/markets_cache.json` с TTL 1 час. Ускоряет рестарты (обычно 10-30 секунд API calls) и снижает нагрузку на Polymarket API.
+- `SetCacheDataRoot(root string)` — вызвать при старте бота с cfg.DataRoot
+- `loadCache() ([]Market, bool)` — читать, проверять TTL, возвращать false если просрочен
+- `saveCache(markets []Market)` — записывать после успешного фетча
+- Вставить вызовы в начало/конец `GetWeatherMarkets()`
+
+### [x] 2026-05-28 — TASK-171: Losing streak Kelly reducer — снижать ставки при серии проигрышей
+**Файлы:** `internal/calibration/streak.go` (новый), `internal/calibration/streak_test.go` (новый), `cmd/bot/main.go` (обновить)
+Детектировать серию consecutive проигрышей в истории ставок. При 2 проигрышах подряд → Kelly ×0.85, при 3+ → Kelly ×0.70. Сбрасывать до ×1.0 при первой победе.
+- `StreakResult{Count int, IsWin bool}` struct
+- `CurrentStreak(records []BetRecord) StreakResult`
+- `StreakKellyFactor(s StreakResult) float64` → 0.70 / 0.85 / 1.0
+- В `cmd/bot/main.go`: применять `streakKelly * strategy.KellyFraction` аналогично drawdownMult
+- 5 unit-тестов: пустая история, одна победа, 2 поражения, 3 поражения, сброс после победы
+
+### [ ] TASK-172: `/config` Telegram команда — показать текущий конфиг бота
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Оператор отправляет `/config` и видит ключевые параметры текущего запущенного бота: min_edge, max_bet, kelly, bankroll, dry_run и пр.
+- `handleConfig(bcfg BotConfig) string` — форматирует `<pre>` таблицу с ключевыми полями из BotConfig
+- Добавить `/config` в docstring и поллер
+
+### [ ] TASK-173: `dashboard positions` — таблица открытых позиций
+**Файл:** `cmd/dashboard/main.go` (обновить)
+`go run ./cmd/dashboard positions` — показать все открытые (unresolved) ставки из истории.
+- `cmdPositions(dataRoot)` — фильтрует `calibration.LoadHistory()` где Resolved=false
+- Таблица: Time | Market/City/Signal | Side | Size | Price | Hours Left
+- Итог: N open, total exposure USDC
+- Сортировка по времени истечения (ближайшие сначала)

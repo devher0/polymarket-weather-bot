@@ -283,6 +283,10 @@ func main() {
 		"data_root", cfg.DataRoot,
 	)
 
+	// TASK-170: initialise market discovery cache root so cache.go knows where
+	// to write/read data/markets_cache.json.
+	markets.SetCacheDataRoot(cfg.DataRoot)
+
 	// --- Telegram test mode ---
 	if *testTelegram {
 		if err := notifier.SendTestMessage(); err != nil {
@@ -466,6 +470,23 @@ func main() {
 				"drawdown_mult", fmt.Sprintf("%.2f", drawdownMult),
 				"effective_bankroll", fmt.Sprintf("%.2f USDC", effectiveBankroll),
 			)
+		}
+
+		// TASK-171: reduce Kelly on losing streaks to limit drawdown during bad runs.
+		// 2 losses → 0.85×, 3+ losses → 0.70×; resets to 1.0 on any win.
+		{
+			streak := calibration.CurrentStreak(history)
+			streakFactor := calibration.StreakKellyFactor(streak)
+			if streakFactor < 1.0 {
+				strategy.KellyFraction = cfg.KellyFraction * streakFactor
+				slog.Warn("streak Kelly reduction applied",
+					"consecutive_losses", streak.Count,
+					"kelly_factor", fmt.Sprintf("%.2f", streakFactor),
+					"kelly_fraction", fmt.Sprintf("%.4f", strategy.KellyFraction),
+				)
+			} else {
+				strategy.KellyFraction = cfg.KellyFraction
+			}
 		}
 
 		// TASK-152: dynamic Kelly scaling — scale MaxKellyFraction up/down based on

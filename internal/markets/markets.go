@@ -268,7 +268,12 @@ func (m Market) DaysUntilExpiry() int {
 }
 
 // GetWeatherMarkets pages through Polymarket and returns weather-related markets.
+// Results are cached to disk for up to 1 hour (TASK-170) to reduce API calls.
 func GetWeatherMarkets() ([]Market, error) {
+	if cached, ok := loadMarketCache(); ok {
+		return cached, nil
+	}
+
 	var out []Market
 	cursor := ""
 
@@ -355,6 +360,9 @@ func GetWeatherMarkets() ([]Market, error) {
 		cursor = pr.NextCursor
 	}
 
+	if len(out) > 0 {
+		saveMarketCache(out)
+	}
 	return out, nil
 }
 
