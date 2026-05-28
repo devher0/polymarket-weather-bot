@@ -39,6 +39,8 @@
 //   /alerts          — NWS active alerts for US cities from cache (TASK-227)
 //   /signals         — per-signal win rate + Brier + 7d trend (TASK-228)
 //   /ab-test         — A/B strategy test: quarter-Kelly vs half-Kelly results (TASK-229)
+//   /momentum        — forecast trend direction for all cities (TASK-230)
+//   /best-city       — top cities ranked by total positive edge across all signals (TASK-231)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -321,7 +323,11 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 				case "/alerts":
 					sendReply(cfg, chatID, handleAlerts(bcfg))
 				case "/ab-test":
-					sendReply(cfg, chatID, "AB test not available")
+					sendReply(cfg, chatID, handleABTest(bcfg))
+				case "/momentum":
+					sendReply(cfg, chatID, handleMomentum(bcfg))
+				case "/best-city":
+					sendReply(cfg, chatID, handleBestCity(bcfg))
 				}
 			}
 		}
@@ -1794,6 +1800,109 @@ func handleTopEdge(bcfg BotConfig) string {
 	return sb.String()
 }
 
+// handleBestCity returns the top 3 cities ranked by total positive edge across
+// all their active signals. (TASK-231)
+func handleBestCity(bcfg BotConfig) string {
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to fetch markets: %v", err)
+	}
+
+	type cityStats struct {
+		totalEdge float64
+		markets   int
+	}
+	cityMap := map[string]*cityStats{}
+
+	for _, m := range mks {
+		if m.City == "" || m.Signal == "" {
+			continue
+		}
+		ff, ok := collectors.LoadForecastCache(m.City, m.DaysUntilExpiry(), bcfg.DataRoot, 3*time.Hour)
+		if !ok || ff == nil {
+			ff, ok = collectors.LoadForecastCache(m.City, 0, bcfg.DataRoot, 3*time.Hour)
+		}
+		if !ok || ff == nil {
+			continue
+		}
+
+		heatThreshold := 35.0
+		if m.ThresholdC != 0 {
+			heatThreshold = m.ThresholdC
+		}
+		var ourP float64
+		switch m.Signal {
+		case "heat":
+			ourP = weather.HeatProbability(ff.Forecast, heatThreshold)
+		case "cold":
+			ourP = 1 - weather.HeatProbability(ff.Forecast, heatThreshold)
+		case "rain":
+			ourP = weather.RainProbability(ff.Forecast)
+		case "sunny":
+			ourP = weather.SunnyProbability(ff.Forecast)
+		case "wind":
+			ourP = math.Min(0.95, ff.WindSpeedKMH/80.0)
+		case "snow":
+			ourP = weather.SnowProbability(ff.Forecast)
+		case "fog":
+			ourP = weather.FogProbability(ff.Forecast)
+		case "humid":
+			ourP = weather.HumidProbability(ff.Forecast, m.ThresholdC)
+		case "dry":
+			ourP = weather.DryProbability(ff.Forecast)
+		default:
+			ourP = 0.5
+		}
+
+		yesEdge := ourP - m.YesPrice
+		noEdge := (1 - ourP) - m.NoPrice
+		bestEdge := math.Max(yesEdge, noEdge)
+		if bestEdge <= 0 {
+			continue
+		}
+
+		if cityMap[m.City] == nil {
+			cityMap[m.City] = &cityStats{}
+		}
+		cityMap[m.City].totalEdge += bestEdge
+		cityMap[m.City].markets++
+	}
+
+	if len(cityMap) == 0 {
+		return "No cities with positive edge right now."
+	}
+
+	type ranked struct {
+		city  string
+		stats cityStats
+	}
+	var list []ranked
+	for city, s := range cityMap {
+		list = append(list, ranked{city, *s})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].stats.totalEdge > list[j].stats.totalEdge
+	})
+
+	medals := []string{"🥇", "🥈", "🥉"}
+	var sb strings.Builder
+	sb.WriteString("<b>🏆 Best Cities by Total Edge</b>\n\n")
+	for i, r := range list {
+		if i >= 3 {
+			break
+		}
+		medal := medals[i]
+		sb.WriteString(fmt.Sprintf("%s <b>%s</b> — edge: +%.2f (%d market",
+			medal, r.city, r.stats.totalEdge, r.stats.markets))
+		if r.stats.markets != 1 {
+			sb.WriteString("s")
+		}
+		sb.WriteString(")\n")
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
 // handleEV returns the EV capture ratio for the last 50 resolved bets,
 // plus a per-signal breakdown. (TASK-187)
 func handleEV(bcfg BotConfig) string {
@@ -1880,7 +1989,9 @@ func handleHelp() string {
 /roi             Cumulative ROI% from start with weekly sparkline
 /compare-signals Compare per-signal win rate: last 30d vs prev 30d
 /volume          Top markets by traded volume (24h + total)
-/ab-test         A/B test: quarter-Kelly vs half-Kelly results</pre>
+/ab-test         A/B test: quarter-Kelly vs half-Kelly results
+/momentum        Forecast trend direction for all cities
+/best-city       Top cities ranked by total positive edge</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -3484,6 +3595,157 @@ func handleAlerts(bcfg BotConfig) string {
 
 	if !anyAlerts {
 		sb.WriteString("\n<i>All clear — no active NWS warnings.</i>")
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// handleABTest shows A/B strategy test results (quarter-Kelly vs half-Kelly). (TASK-229)
+func handleABTest(bcfg BotConfig) string {
+	a, b, err := strategy.LoadABStats(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load A/B test data."
+	}
+	if a.TotalBets == 0 && b.TotalBets == 0 {
+		return "⏳ No A/B test data yet.\nBets are automatically logged as they occur — check back after a few trades."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>🔬 A/B Strategy Test</b>\n")
+	sb.WriteString("<i>A = quarter-Kelly (0.25) · B = half-Kelly (0.50)</i>\n\n")
+
+	fmtPct := func(v float64, n int) string {
+		if n == 0 {
+			return "n/a"
+		}
+		return fmt.Sprintf("%.1f%%", v)
+	}
+	fmtBrierAB := func(score float64, n int) string {
+		if n == 0 {
+			return "n/a"
+		}
+		return fmt.Sprintf("%.4f", score)
+	}
+	fmtROI := func(roi float64, n int) string {
+		if n == 0 {
+			return "n/a"
+		}
+		sign := ""
+		if roi > 0 {
+			sign = "+"
+		}
+		return fmt.Sprintf("%s%.1f%%", sign, roi)
+	}
+	fmtPnL := func(pnl float64, n int) string {
+		if n == 0 {
+			return "n/a"
+		}
+		sign := ""
+		if pnl > 0 {
+			sign = "+"
+		}
+		return fmt.Sprintf("%s$%.2f", sign, pnl)
+	}
+
+	type abRow struct{ label, aVal, bVal string }
+	abRows := []abRow{
+		{"Bets logged", fmt.Sprintf("%d", a.TotalBets), fmt.Sprintf("%d", b.TotalBets)},
+		{"Resolved", fmt.Sprintf("%d", a.ResolvedBets), fmt.Sprintf("%d", b.ResolvedBets)},
+		{"Win rate", fmtPct(a.WinRate, a.ResolvedBets), fmtPct(b.WinRate, b.ResolvedBets)},
+		{"Brier score", fmtBrierAB(a.BrierScore, a.ResolvedBets), fmtBrierAB(b.BrierScore, b.ResolvedBets)},
+		{"ROI", fmtROI(a.ROI, a.ResolvedBets), fmtROI(b.ROI, b.ResolvedBets)},
+		{"Total P&L", fmtPnL(a.TotalPnL, a.ResolvedBets), fmtPnL(b.TotalPnL, b.ResolvedBets)},
+	}
+
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-14s %-12s %-12s\n", "Metric", "A (0.25)", "B (0.50)"))
+	sb.WriteString(strings.Repeat("-", 40) + "\n")
+	for _, r := range abRows {
+		sb.WriteString(fmt.Sprintf("%-14s %-12s %-12s\n", r.label, r.aVal, r.bVal))
+	}
+	sb.WriteString("</pre>")
+
+	winner, reason := strategy.ABWinner(a, b)
+	if winner == "" {
+		sb.WriteString(fmt.Sprintf("\n⏳ <i>%s</i>", reason))
+	} else {
+		varLabel := map[strategy.ABVariant]string{
+			strategy.VariantA: "A (quarter-Kelly)",
+			strategy.VariantB: "B (half-Kelly)",
+		}
+		sb.WriteString(fmt.Sprintf("\n🏆 <b>Winner: %s</b>\n<i>%s</i>", varLabel[winner], reason))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n\n<i>Updated: %s UTC</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// handleMomentum shows forecast trend direction for all known cities. (TASK-230)
+func handleMomentum(bcfg BotConfig) string {
+	cityOrder := []string{
+		"new_york", "miami", "chicago", "los_angeles",
+		"london", "paris", "berlin", "tokyo", "sydney",
+	}
+	cityLabel := map[string]string{
+		"new_york":      "New York",
+		"miami":         "Miami",
+		"chicago":       "Chicago",
+		"los_angeles":   "LA",
+		"london":        "London",
+		"paris":         "Paris",
+		"berlin":        "Berlin",
+		"tokyo":         "Tokyo",
+		"sydney":        "Sydney",
+	}
+
+	tempEmoji := func(dir string) string {
+		switch dir {
+		case "rising":
+			return "🔥"
+		case "falling":
+			return "❄️"
+		default:
+			return "➡️"
+		}
+	}
+	precipEmoji := func(dir string) string {
+		switch dir {
+		case "rising":
+			return "🌧"
+		case "falling":
+			return "☀️"
+		default:
+			return "➡️"
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>📈 Forecast Momentum</b>\n")
+	sb.WriteString("<i>Direction of change across last 3 fetch cycles</i>\n\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-14s %-10s %-10s\n", "City", "Temp", "Precip"))
+	sb.WriteString(strings.Repeat("-", 36) + "\n")
+
+	hasAny := false
+	for _, city := range cityOrder {
+		label := cityLabel[city]
+		if label == "" {
+			label = city
+		}
+		m, ok := collectors.GetMomentum(city, bcfg.DataRoot)
+		if !ok {
+			sb.WriteString(fmt.Sprintf("%-14s %-10s %-10s\n", label, "❓ n/a", "❓ n/a"))
+			continue
+		}
+		hasAny = true
+		tStr := fmt.Sprintf("%s %+.1f°", tempEmoji(m.TempDir), m.TempDelta)
+		pStr := fmt.Sprintf("%s %+.0fpp", precipEmoji(m.PrecipDir), m.PrecipDelta)
+		sb.WriteString(fmt.Sprintf("%-14s %-10s %-10s\n", label, tStr, pStr))
+	}
+	sb.WriteString("</pre>")
+
+	if !hasAny {
+		sb.WriteString("\n<i>No momentum data yet — data accumulates after 2+ bot cycles.</i>")
 	}
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
 	return sb.String()

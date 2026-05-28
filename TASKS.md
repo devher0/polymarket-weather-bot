@@ -2306,7 +2306,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 
 ## 🔴 ПРИОРИТЕТ 1300 — Новые улучшения (добавлено 2026-05-28)
 
-### [ ] TASK-229: Telegram `/ab-test` — A/B strategy test status в Telegram
+### [x] 2026-05-28 — TASK-229: Telegram `/ab-test` — A/B strategy test status в Telegram
 **Файл:** `internal/notifier/telegram_commands.go` (обновить)
 Добавить `/ab-test` команду, которая показывает текущие результаты A/B теста Kelly fraction.
 - `handleABTest(bcfg BotConfig) string`
@@ -2317,7 +2317,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Добавить в /help секция "Analytics"
 - Данные брать через `strategy.LoadABStats(bcfg.DataRoot)`
 
-### [ ] TASK-230: Forecast momentum tracker — `/momentum` Telegram команда
+### [x] 2026-05-28 — TASK-230: Forecast momentum tracker — `/momentum` Telegram команда
 **Файлы:** `internal/collectors/momentum_cache.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
 Отслеживать направление изменения прогнозов между циклами фетча.
 - `MomentumPoint{City string, Timestamp time.Time, TempC, PrecipMM, PrecipProb float64}`
@@ -2328,7 +2328,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Status: "🔥 rising" / "❄️ falling" / "➡️ stable" / "❓ no data"
 - Интегрировать в bot loop: вызывать SaveMomentum(city, ff, dataRoot) после фетча
 
-### [ ] TASK-231: `/best-city` — топ город с наибольшим суммарным edge прямо сейчас
+### [x] 2026-05-28 — TASK-231: `/best-city` — топ город с наибольшим суммарным edge прямо сейчас
 **Файл:** `internal/notifier/telegram_commands.go` (обновить)
 Команда `/best-city` — из всех активных рынков найти город с максимальным суммарным edge.
 - Загружать активные рынки, для каждого города суммировать edge по всем сигналам
