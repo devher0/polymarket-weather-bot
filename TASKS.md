@@ -2152,3 +2152,41 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - ASCII sparkline через `asciiSparkline(cumulativeValues)`
 - Формат: "Initial: $100.00 | Current: $127.30 | ROI: +27.3%\n\nWeekly P&L:\n[sparkline]\n..."
 - Добавить case "/roi" в switch поллера и в /help раздел "Analytics"
+
+---
+
+## 🔴 ПРИОРИТЕТ 900 — Новые улучшения (добавлено 2026-05-28)
+
+### [ ] TASK-216: Profit milestone Telegram alerts — 🎉 алерт при достижении порогов доходности
+**Файлы:** `internal/calibration/milestone.go` (новый), `internal/calibration/milestone_test.go` (новый), `cmd/bot/main.go` (обновить)
+Когда банкролл пересекает 125%/150%/200%/300% от начального — отправлять 🎉 Telegram-алерт. Алерт один раз на каждый milestone (сохранять достигнутые в `data/milestones.json`).
+- `Milestone{Pct float64, Label string}` — e.g. {1.25, "125%"}, {1.50, "150%"}, {2.0, "200%"}, {3.0, "300%"}
+- `CheckMilestones(current, initial float64, dataRoot string) []Milestone` — возвращает список новых (непройденных раньше) milestone
+- `MarkMilestone(pct float64, dataRoot string) error` — сохраняет достигнутый milestone в JSON
+- `LoadMilestones(dataRoot string) map[float64]bool` — список уже достигнутых
+- В `cmd/bot/main.go`: после каждого цикла вызывать CheckMilestones; для каждого нового milestone → `notifier.NotifyMilestone(token, chatID, m, current)` в telegram.go
+- `NotifyMilestone(token, chatID string, m Milestone, bankroll float64) error` — сообщение: "🎉 Profit Milestone: +25% ROI! Bankroll: $125.00 USDC (was $100.00)"
+- 5 unit-тестов: нет достижений, первое достижение, уже достигнутый (не повторять), несколько новых сразу, nil dataRoot
+
+### [ ] TASK-217: `dashboard leaderboard` — топ city+signal по всем метрикам
+**Файл:** `cmd/dashboard/main.go` (добавить `cmdLeaderboard`, case в switch)
+Показывает топ-10 комбинаций city+signal по ROI% за всё время — "зал славы" лучших торговых паттернов.
+- Переиспользует `calibration.CityPnL()` + `calibration.SignalBreakdown()` для group-by (city,signal)
+- Отдельная функция `CitySignalLeaderboard(records)` → `[]LeaderboardEntry{City, Signal, Bets, Wins, PnL, ROI, WinRate}`
+- Сортировка: primary by ROI% desc, secondary by Bets desc (больше данных = надёжнее)
+- Мин. 3 ставки для попадания в рейтинг
+- Колонки: # | City | Signal | Bets | Win% | P&L | ROI%
+- Медаль: 🥇🥈🥉 для топ-3; цвет зелёный (ROI>15%), жёлтый (0-15%), красный (<0%)
+- `go run ./cmd/dashboard leaderboard`
+
+### [ ] TASK-218: Per-signal calibration error tracker — кривые калибровки по сигналам
+**Файлы:** `internal/calibration/calibration_curve.go` (новый), `internal/calibration/calibration_curve_test.go` (новый), `cmd/dashboard/main.go` (обновить)
+Плохо откалиброванная вероятность — root cause многих потерь. Показываем гистограмму deviation: насколько наши predicted P совпадают с реальными исходами по сигналу.
+- Разбить [0,1] на 5 бакетов: [0,0.2), [0.2,0.4), [0.4,0.6), [0.6,0.8), [0.8,1.0]
+- `CalibrationBucket{PredMid, ActualRate, Count int}`
+- `BuildCalibrationCurve(records []BetRecord, signal string) []CalibrationBucket` — для каждого бакета: среднее ourP и реальный win rate среди resolved
+- `CalibrationError(curve []CalibrationBucket) float64` — средний |pred - actual| по бакетам (weighted by count)
+- `cmdCalibrationCurve(dataRoot)` — для каждого сигнала: таблица бакетов + ECE (Expected Calibration Error)
+- Показывает какой сигнал переоценён/недооценён: "rain: ECE=0.08 (overconfident)", "heat: ECE=0.03 (well-calibrated)"
+- 4 unit-теста: empty, one signal, perfect calibration, systematic overestimation
+- `go run ./cmd/dashboard calibration-curve`

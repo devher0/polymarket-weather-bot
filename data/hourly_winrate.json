@@ -1,0 +1,172 @@
+{
+  "buckets": [
+    {
+      "hour": 0,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 1,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 2,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 3,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 4,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 5,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 6,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 7,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 8,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 9,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 10,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 11,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 12,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 13,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 14,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 15,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 16,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 17,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 18,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 19,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 20,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 21,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 22,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    },
+    {
+      "hour": 23,
+      "wins": 0,
+      "losses": 0,
+      "horizon_sum": 0,
+      "horizon_count": 0
+    }
+  ]
+}

@@ -193,9 +193,17 @@ func classify(question string) (city, sig string, thresholdC float64) {
 // -- Polymarket CLOB types (minimal) --
 
 type polyToken struct {
-	Outcome string  `json:"outcome"`
-	TokenID string  `json:"token_id"`
-	Price   float64 `json:"price,string"`
+	Outcome string      `json:"outcome"`
+	TokenID string      `json:"token_id"`
+	Price   json.Number `json:"price"`
+}
+
+func (t polyToken) price() float64 {
+	if t.Price == "" {
+		return 0
+	}
+	v, _ := t.Price.Float64()
+	return v
 }
 
 type polyMarket struct {
@@ -356,8 +364,8 @@ func GetWeatherMarkets() ([]Market, error) {
 				Question:      m.Question,
 				YesTokenID:    yes.TokenID,
 				NoTokenID:     no.TokenID,
-				YesPrice:      yes.Price,
-				NoPrice:       no.Price,
+				YesPrice:      yes.price(),
+				NoPrice:       no.price(),
 				City:          city,
 				Signal:        sig,
 				EndDate:       m.EndDateISO,
@@ -417,9 +425,9 @@ func RefreshPrices(m Market) (updated Market, refreshed bool, err error) {
 	for _, t := range pm.Tokens {
 		switch strings.ToLower(t.Outcome) {
 		case "yes":
-			updated.YesPrice = t.Price
+			updated.YesPrice = t.price()
 		case "no":
-			updated.NoPrice = t.Price
+			updated.NoPrice = t.price()
 		}
 	}
 	return updated, true, nil

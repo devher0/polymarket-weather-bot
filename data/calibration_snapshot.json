@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-05-28T08:31:40Z",
+  "total_bets": 0,
+  "resolved_bets": 0,
+  "open_bets": 0,
+  "overall_brier": 0,
+  "brier_quality": "excellent",
+  "overall_win_rate": 0,
+  "adaptive_edge_factor": 1,
+  "drawdown_pct": 0,
+  "drawdown_multiplier": 1,
+  "bankroll_usdc": 100,
+  "peak_bankroll_usdc": 0,
+  "city_breakdown": {},
+  "signal_breakdown": {}
+}

@@ -1570,6 +1570,28 @@ func main() {
 					}
 				}
 
+				// TASK-216: check profit milestones and alert via Telegram.
+				{
+					currentBankroll := calibration.LoadBankroll(cfg.DataRoot)
+					initialBR := cfg.InitialBankroll
+					if initialBR <= 0 {
+						initialBR = calibration.DefaultBankroll
+					}
+					for _, m := range calibration.CheckMilestones(currentBankroll, initialBR, cfg.DataRoot) {
+						slog.Info("profit milestone reached",
+							"milestone", m.Label,
+							"bankroll", fmt.Sprintf("%.2f", currentBankroll),
+							"initial", fmt.Sprintf("%.2f", initialBR),
+						)
+						if err := notifier.NotifyMilestone(m, currentBankroll, initialBR); err != nil {
+							slog.Warn("milestone notify failed", "err", err)
+						}
+						if err := calibration.MarkMilestone(m.Pct, cfg.DataRoot); err != nil {
+							slog.Warn("milestone mark failed", "err", err)
+						}
+					}
+				}
+
 				// TASK-075: append market opportunity heatmap CSV for today.
 				if hmRows, hmErr := strategy.LoadTodayHeatmap(cfg.DataRoot); hmErr == nil && len(hmRows) == 0 {
 					// File doesn't exist yet — LoadTodayHeatmap returns nil slice, heatmap

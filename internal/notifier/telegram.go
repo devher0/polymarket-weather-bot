@@ -641,6 +641,32 @@ var _ = absF
 
 // SendOpportunityAlert sends a proactive Telegram notification when a newly
 // discovered market has edge above the configured OpportunityAlertThreshold
+// NotifyMilestone sends a 🎉 Telegram alert when the bankroll crosses a profit
+// milestone for the first time (TASK-216).
+//
+// No-op when Telegram is not configured.
+func NotifyMilestone(m calibration.Milestone, current, initial float64) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	roiPct := (current - initial) / initial * 100
+	msg := fmt.Sprintf(
+		"🎉 <b>Profit Milestone Reached!</b>\n\n"+
+			"Milestone: <b>%s</b>\n"+
+			"Bankroll: <b>$%.2f USDC</b>  (started: $%.2f)\n"+
+			"ROI: <b>+%.1f%%</b>  Net P&L: +$%.2f USDC\n\n"+
+			"<i>%s UTC</i>",
+		m.Label,
+		current, initial,
+		roiPct, current-initial,
+		time.Now().UTC().Format("2006-01-02 15:04"),
+	)
+
+	return cfg.send(msg)
+}
+
 // (TASK-165). Useful in semi-manual or dry-run modes where the operator wants
 // to decide manually whether to bet.
 //
