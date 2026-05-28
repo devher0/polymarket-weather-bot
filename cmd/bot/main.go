@@ -418,6 +418,8 @@ func main() {
 		highEdgeBet       bool           // at least one bet with edge > 0.15
 		thinLiquidityOnly bool           // all candidate markets had thin liquidity
 		decisions         []dryRunRecord // populated for dry-run-file (TASK-049)
+		confSum           float64        // sum of ff.Confidence for placed bets (TASK-199)
+		confCount         int            // bets that had a FusedForecast (TASK-199)
 	}
 
 	run := func() cycleResult {
@@ -1268,6 +1270,11 @@ func main() {
 						Size:   d.SizeUSDC,
 						Reason: d.Reason,
 					})
+					// TASK-199: accumulate confidence for cycle stats.
+					if ff != nil {
+						res.confSum += ff.Confidence
+						res.confCount++
+					}
 				}
 			} else {
 				placed++
@@ -1285,6 +1292,11 @@ func main() {
 					Size:   d.SizeUSDC,
 					Reason: d.Reason,
 				})
+				// TASK-199: accumulate confidence for cycle stats.
+				if ff != nil {
+					res.confSum += ff.Confidence
+					res.confCount++
+				}
 				// Accumulate estimated dry-run P&L (edge × size, in cents).
 				pnlCents := int64(d.Edge * d.SizeUSDC * 100)
 				sess.dryRunPnL.Add(pnlCents)
@@ -1383,7 +1395,35 @@ func main() {
 		slog.Info("dry-run-file written", "path", *dryRunFile, "bets", result.placed)
 	}
 
+	// TASK-199: recordCycleStat appends per-cycle performance data to data/cycles.csv.
+	recordCycleStat := func(res cycleResult, startT time.Time) {
+		avgEdge := 0.0
+		if len(res.decisions) > 0 {
+			for _, dr := range res.decisions {
+				avgEdge += dr.Edge
+			}
+			avgEdge /= float64(len(res.decisions))
+		}
+		avgConf := 0.0
+		if res.confCount > 0 {
+			avgConf = res.confSum / float64(res.confCount)
+		}
+		stat := calibration.CycleStat{
+			Timestamp:        startT.UTC(),
+			DurationMs:       time.Since(startT).Milliseconds(),
+			MarketsEvaluated: res.marketsFound,
+			BetsPlaced:       res.placed,
+			AvgEdge:          avgEdge,
+			AvgConfidence:    avgConf,
+		}
+		if err := calibration.AppendCycleStat(stat, cfg.DataRoot); err != nil {
+			slog.Warn("cycle stats: append failed", "err", err)
+		}
+	}
+
+	cycleStart := time.Now()
 	result := run()
+	recordCycleStat(result, cycleStart)
 	writeDryRunFile(result)
 	metrics.UpdateCycle(result.placed) // TASK-051: update /healthz state
 
@@ -1441,6 +1481,30 @@ func main() {
 			ProtocolFeeRate:  cfg.ProtocolFeeRate,
 		})
 
+		// TASK-200: watchdog goroutine — alert if no successful cycle for > 2×loop_sec.
+		go func() {
+			watchdogTick := time.NewTicker(time.Duration(cfg.LoopSec) * time.Second)
+			defer watchdogTick.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-watchdogTick.C:
+					last := metrics.LastCycleAt()
+					if last.IsZero() {
+						continue // no cycle yet
+					}
+					threshold := time.Duration(cfg.LoopSec*2) * time.Second
+					if time.Since(last) > threshold {
+						msg := fmt.Sprintf("⚠️ Watchdog: no cycle in %.0fs (expected ≤%ds)",
+							time.Since(last).Seconds(), cfg.LoopSec*2)
+						slog.Warn("watchdog: cycle overdue", "since_last", time.Since(last))
+						_ = notifier.NotifyError("watchdog", fmt.Errorf("%s", msg))
+					}
+				}
+			}
+		}()
+
 		// TASK-047: adaptive loop interval.
 		// nextInterval computes the delay before the next cycle based on results.
 		adaptiveInterval := func(res cycleResult) time.Duration {
@@ -1483,9 +1547,11 @@ func main() {
 				break loop
 
 			case <-timer.C:
+				loopCycleStart := time.Now()
 				loopResult := run()
-				writeDryRunFile(loopResult) // TASK-049
-				metrics.UpdateCycle(loopResult.placed) // TASK-051: update /healthz state
+				recordCycleStat(loopResult, loopCycleStart) // TASK-199
+				writeDryRunFile(loopResult)                  // TASK-049
+				metrics.UpdateCycle(loopResult.placed)       // TASK-051: update /healthz state
 
 				// TASK-113: record daily return and emit Sharpe log / alert.
 				{

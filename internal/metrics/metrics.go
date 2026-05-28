@@ -69,6 +69,16 @@ func SetLoopSec(sec int) {
 	state.loopSec.Store(int64(sec))
 }
 
+// LastCycleAt returns the time of the most recent completed cycle.
+// Returns zero time if no cycle has run yet.
+func LastCycleAt() time.Time {
+	ts := state.lastCycleAt.Load()
+	if ts == 0 {
+		return time.Time{}
+	}
+	return time.Unix(ts, 0)
+}
+
 // ── snapshot holds computed metric values for one scrape ─────────────────
 
 type snapshot struct {

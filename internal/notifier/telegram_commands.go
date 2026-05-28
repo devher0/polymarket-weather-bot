@@ -24,6 +24,7 @@
 //   /ev              — EV capture ratio: expected vs realized P&L last 50 bets
 //   /pause           — suspend all trading
 //   /resume          — resume trading
+//   /watchdog        — last successful cycle time + overdue status (TASK-200)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -49,6 +50,7 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
+	"github.com/devher0/polymarket-weather-bot/internal/metrics"
 	"github.com/devher0/polymarket-weather-bot/internal/risk"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
@@ -273,6 +275,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleTopEdge(bcfg))
 				case "/ev":
 					sendReply(cfg, chatID, handleEV(bcfg))
+				case "/watchdog":
+					sendReply(cfg, chatID, handleWatchdog(bcfg))
 				}
 			}
 		}
@@ -1833,7 +1837,8 @@ func handleHelp() string {
 <pre>/healthcheck     Data sources, calibration, risk state
 /source-weights  Dynamic source weights vs baseline
 /config          Current bot configuration
-/watchlist       Manage watchlisted markets</pre>
+/watchlist       Manage watchlisted markets
+/watchdog        Last cycle time + delay status</pre>
 
 <b>⚙️ Control</b>
 <pre>/pause           Suspend all trading
@@ -2278,4 +2283,35 @@ func handleCompare(bcfg BotConfig) string {
 
 	sb.WriteString("</pre>")
 	return sb.String()
+}
+
+// ── handleWatchdog (TASK-200) ─────────────────────────────────────────────────
+
+func handleWatchdog(bcfg BotConfig) string {
+	last := metrics.LastCycleAt()
+	if last.IsZero() {
+		return "🐕 <b>Watchdog</b>\n\nNo cycle has run yet this session."
+	}
+
+	since := time.Since(last).Round(time.Second)
+	lastStr := last.UTC().Format("2006-01-02 15:04:05 UTC")
+
+	status := "✅ ok"
+	detail := ""
+	if bcfg.LoopSec > 0 {
+		threshold := time.Duration(bcfg.LoopSec*2) * time.Second
+		if since > threshold {
+			status = "⚠️ delayed"
+			detail = fmt.Sprintf(" (expected ≤%ds)", bcfg.LoopSec*2)
+		}
+	}
+
+	return fmt.Sprintf(
+		"🐕 <b>Watchdog</b>\n\n"+
+			"Status:         <b>%s</b>%s\n"+
+			"Last cycle:     %s\n"+
+			"Time since:     %s\n"+
+			"Loop interval:  %ds",
+		status, detail, lastStr, since, bcfg.LoopSec,
+	)
 }

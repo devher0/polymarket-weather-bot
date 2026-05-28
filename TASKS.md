@@ -1952,7 +1952,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - В `telegram_commands.go handleStatus()`: добавить строку `Brier 30d: ▁▃▅▇ (trend)` если есть ≥5 снимков
 - 5 unit-тестов: AppendIdempotent (повторный вызов не дублирует), BrierSparklineEmpty, BrierSparklineAscending (чем ниже Brier тем выше блок), LoadRoundtrip, AppendFirstDay
 
-### [ ] TASK-199: Per-cycle stats CSV — журнал производительности циклов
+### [x] 2026-05-28 — TASK-199: Per-cycle stats CSV — журнал производительности циклов
 **Файлы:** `internal/calibration/cycle_stats.go` (новый), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить)
 Логировать статистику каждого цикла в `data/cycles.csv`: timestamp, duration_ms, markets_evaluated, bets_placed, avg_edge, avg_confidence. Позволяет анализировать производительность бота во времени.
 - `CycleStat{Timestamp, DurationMs, MarketsEvaluated, BetsPlaced int, AvgEdge, AvgConfidence float64}`
@@ -1961,7 +1961,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - В `cmd/bot/main.go`: в конце каждого `run()` вызывать AppendCycleStat с данными из cycleResult
 - `cmd/dashboard/main.go` subcommand `cycles`: таблица последних 20 циклов + итоги: avg duration, avg bets/cycle, avg edge
 
-### [ ] TASK-200: `/watchdog` Telegram команда + горутина самопроверки
+### [x] 2026-05-28 — TASK-200: `/watchdog` Telegram команда + горутина самопроверки
 **Файлы:** `cmd/bot/main.go` (обновить), `internal/notifier/telegram_commands.go` (обновить)
 Добавить background горутину-сторожа: если прошло > 2×loop_sec без успешного цикла — отправить Telegram-уведомление "⚠️ Watchdog: no cycle in Xs (expected ≤Ys)". Также команда `/watchdog` возвращает время последнего успешного цикла и статус.
 - В `cmd/bot/main.go`: `lastCycleAt atomic.Value` — обновлять в начале каждого успешного цикла

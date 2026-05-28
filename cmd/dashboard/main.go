@@ -694,6 +694,9 @@ func main() {
 	case "brier-history":
 		// TASK-198: daily Brier score snapshot table + sparkline.
 		cmdBrierHistory(dataRoot)
+	case "cycles":
+		// TASK-199: per-cycle performance journal.
+		cmdCycles(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -744,6 +747,7 @@ func printUsage() {
 	fmt.Println("  ev-track                          EV capture ratio: expected vs realized P&L by signal (TASK-187)")
 	fmt.Println("  exit-signals                      Open positions with exit recommendations (TASK-188)")
 	fmt.Println("  brier-history                     Daily Brier score snapshots + trend sparkline (TASK-198)")
+	fmt.Println("  cycles                            Per-cycle performance journal: duration/bets/edge (TASK-199)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -3642,4 +3646,88 @@ func cmdBrierHistory(dataRoot string) {
 	latest := snaps[len(snaps)-1]
 	fmt.Printf("  Latest (%s): Brier=%.4f  7d=%.4f  30d=%.4f  |  %d total resolved bets\n",
 		latest.Date, latest.BrierAll, latest.Brier7d, latest.Brier30d, latest.BetsAll)
+}
+
+// ── cycles (TASK-199) ────────────────────────────────────────────────────────
+
+func cmdCycles(dataRoot string) {
+	stats, err := calibration.LoadCycleStats(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cycles: load error: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n  ── Per-Cycle Performance Journal ──\n\n")
+
+	if len(stats) == 0 {
+		fmt.Println("  No cycle data yet. Run the bot in loop mode to populate data/cycles.csv.")
+		return
+	}
+
+	// Show last 20 cycles.
+	start := 0
+	if len(stats) > 20 {
+		start = len(stats) - 20
+	}
+	recent := stats[start:]
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetStyle(table.StyleLight)
+	t.AppendHeader(table.Row{"#", "Timestamp (UTC)", "Duration", "Markets", "Bets", "Avg Edge", "Avg Conf"})
+
+	for i, s := range recent {
+		idx := start + i + 1
+		dur := time.Duration(s.DurationMs) * time.Millisecond
+		durStr := dur.Round(time.Millisecond).String()
+
+		edgeStr := "—"
+		if s.BetsPlaced > 0 {
+			edgeStr = fmt.Sprintf("%.3f", s.AvgEdge)
+		}
+		confStr := "—"
+		if s.BetsPlaced > 0 && s.AvgConfidence > 0 {
+			confStr = fmt.Sprintf("%.3f", s.AvgConfidence)
+		}
+		t.AppendRow(table.Row{
+			idx,
+			s.Timestamp.Format("2006-01-02 15:04:05"),
+			durStr,
+			s.MarketsEvaluated,
+			s.BetsPlaced,
+			edgeStr,
+			confStr,
+		})
+	}
+	t.Render()
+
+	// Summary stats.
+	var totalDur time.Duration
+	var totalBets, totalMarkets int
+	var edgeSum float64
+	edgeN := 0
+	for _, s := range stats {
+		totalDur += time.Duration(s.DurationMs) * time.Millisecond
+		totalBets += s.BetsPlaced
+		totalMarkets += s.MarketsEvaluated
+		if s.BetsPlaced > 0 {
+			edgeSum += s.AvgEdge
+			edgeN++
+		}
+	}
+	n := len(stats)
+	avgDur := time.Duration(0)
+	if n > 0 {
+		avgDur = totalDur / time.Duration(n)
+	}
+	avgBetsPerCycle := 0.0
+	if n > 0 {
+		avgBetsPerCycle = float64(totalBets) / float64(n)
+	}
+	avgEdgeOverall := 0.0
+	if edgeN > 0 {
+		avgEdgeOverall = edgeSum / float64(edgeN)
+	}
+	fmt.Printf("\n  Totals — %d cycles | avg duration: %s | avg bets/cycle: %.2f | avg edge (bet cycles): %.4f\n",
+		n, avgDur.Round(time.Millisecond), avgBetsPerCycle, avgEdgeOverall)
 }
