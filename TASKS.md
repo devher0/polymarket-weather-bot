@@ -1844,3 +1844,34 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
   - Иначе: "HOLD"
 - В bot main loop: после фетча forecasts → вычислять exit signals → Telegram уведомление если SELL
 - `dashboard exit-signals` subcommand — таблица открытых позиций с рекомендациями
+
+---
+
+## 🔴 ПРИОРИТЕТ 30 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-189: `/help` Telegram команда — список всех доступных команд
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Операторы часто забывают какие команды доступны. Добавить `/help` который выводит полный список с описаниями.
+- `handleHelp() string` — статическая строка с таблицей всех команд в формате `<pre>/cmd — описание</pre>`
+- Команды сгруппировать по категориям: 📊 Аналитика, 🌤 Прогнозы, ⚙️ Управление, 📁 Экспорт
+- Добавить case "/help" в switch поллера
+- Обновить docstring файла (строки 1-22)
+
+### [x] 2026-05-28 — TASK-190: `/daily` Telegram команда — хронология сегодняшних ставок
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показать что произошло сегодня: все ставки с временной меткой, исходом, и нарастающий P&L.
+- `handleDaily(bcfg BotConfig) string` — фильтрует records по сегодняшней дате UTC
+- Таблица: Time | City/Sig | Side | Size | Entry | Outcome | RunningPnL
+- Нарастающий P&L по строкам (running total, + prefix для прибыли)
+- Если нет ставок — "📭 No bets today"
+- Итоговая строка: "Today: N bets | +X resolved | pnl=$Y.YY"
+- Добавить case "/daily" в switch поллера
+
+### [x] 2026-05-28 — TASK-191: `/forecast-quality` Telegram команда — средняя уверенность прогнозов по городам
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает насколько хорошие у нас сейчас прогнозы — помогает решить стоит ли запускать бота.
+- Загружает кэшированные FusedForecast для всех 9 городов через `collectors.LoadForecastCache`
+- Таблица: City | Confidence | Sources | Age | Status
+- Status: ✅ если confidence ≥ 0.5 и age < 3h; ⚠️ если confidence 0.35-0.5 или age 3-6h; ❌ иначе
+- Итог: "Ready: N/9 cities"
+- Добавить case "/forecast-quality" в switch поллера

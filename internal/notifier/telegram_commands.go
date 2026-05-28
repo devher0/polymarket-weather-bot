@@ -1,24 +1,27 @@
-// telegram_commands.go — TASK-111: Telegram bot command polling.
+// telegram_commands.go — Telegram bot command polling.
 //
 // Supported commands:
-//   /status         — Brier score, open positions, P&L for today
-//   /positions      — list of open (unresolved) bets
-//   /next           — top-3 best bets right now (dry-run, from cached forecasts)
+//   /help            — list all available commands
+//   /status          — Brier score, open positions, P&L for today
+//   /positions       — list of open (unresolved) bets
+//   /daily           — today's bets timeline with running P&L
+//   /next            — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
-//   /summary        — compact multi-section health overview (TASK-146)
-//   /signals        — per-signal win rate + Brier breakdown (TASK-151)
-//   /export [days]  — send CSV of resolved bets as file (TASK-154)
-//   /healthcheck    — data source status, calibration, risk state, signal kelly (TASK-157)
-//   /source-weights — current dynamic weights per data source vs static baseline (TASK-160)
-//   /pnl-city       — per-city P&L table: bets/wins/win%/pnl/roi (TASK-163)
-//   /winrate        — rolling win rate table per signal over last 20 bets (TASK-169)
-//   /explain <id>   — full strategy audit trail for a specific conditionID (TASK-167)
-//   /config         — show current bot configuration parameters (TASK-172)
-//   /markets        — top active weather markets: city/signal/prices/spread/expiry (TASK-179)
-//   /top-edge       — top markets ranked by edge×confidence score (TASK-182)
-//   /ev             — EV capture ratio: expected vs realized P&L last 50 bets (TASK-187)
-//   /pause          — suspend all trading
-//   /resume         — resume trading
+//   /forecast-quality — per-city forecast confidence + age
+//   /summary         — compact multi-section health overview
+//   /signals         — per-signal win rate + Brier breakdown
+//   /export [days]   — send CSV of resolved bets as file
+//   /healthcheck     — data source status, calibration, risk state, signal kelly
+//   /source-weights  — current dynamic weights per data source vs static baseline
+//   /pnl-city        — per-city P&L table: bets/wins/win%/pnl/roi
+//   /winrate         — rolling win rate table per signal over last 20 bets
+//   /explain <id>    — full strategy audit trail for a specific conditionID
+//   /config          — show current bot configuration parameters
+//   /markets         — top active weather markets: city/signal/prices/spread/expiry
+//   /top-edge        — top markets ranked by edge×confidence score
+//   /ev              — EV capture ratio: expected vs realized P&L last 50 bets
+//   /pause           — suspend all trading
+//   /resume          — resume trading
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -184,10 +187,14 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 
 				chatID := u.Message.Chat.ID
 				switch cmd {
+				case "/help":
+					sendReply(cfg, chatID, handleHelp())
 				case "/status":
 					sendReply(cfg, chatID, handleStatus(bcfg))
 				case "/positions":
 					sendReply(cfg, chatID, handlePositions(bcfg))
+				case "/daily":
+					sendReply(cfg, chatID, handleDaily(bcfg))
 				case "/next":
 					sendReply(cfg, chatID, handleNext(bcfg))
 				case "/forecast":
@@ -198,6 +205,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 						arg = strings.TrimSpace(parts[1])
 					}
 					sendReply(cfg, chatID, handleForecast(bcfg, arg))
+				case "/forecast-quality":
+					sendReply(cfg, chatID, handleForecastQuality(bcfg))
 				case "/pause":
 					paused.Store(1)
 					sendReply(cfg, chatID, "⏸ Trading <b>paused</b>. Send /resume to restart.")
@@ -1764,5 +1773,179 @@ func handleEV(bcfg BotConfig) string {
 	}
 
 	sb.WriteString(fmt.Sprintf("\n<i>✅≥70%% ⚠️≥50%% 🚨<50%% | %s UTC</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// handleHelp returns a formatted list of all available Telegram commands. (TASK-189)
+func handleHelp() string {
+	return `<b>🤖 Available Commands</b>
+
+<b>📊 Analytics</b>
+<pre>/status          Brier score, open positions, today P&L
+/summary         Multi-section health overview
+/signals         Per-signal win rate + Brier breakdown
+/winrate         Rolling win rate per signal (last 20)
+/pnl-city        P&L breakdown by city
+/ev              EV capture ratio (last 50 bets)
+/daily           Today's bets timeline + running P&L</pre>
+
+<b>🌤 Forecasts &amp; Markets</b>
+<pre>/forecast [city] Weather forecast (all cities or one)
+/forecast-quality Confidence + age for all city forecasts
+/next            Top-3 best bet opportunities right now
+/markets         Active weather markets (price/spread/expiry)
+/top-edge        Markets ranked by edge×confidence</pre>
+
+<b>📂 Positions &amp; History</b>
+<pre>/positions       Open (unresolved) bets
+/explain &lt;id&gt;   Strategy audit trail for a conditionID
+/export [days]   Send bet history CSV (default: 30 days)</pre>
+
+<b>🩺 System</b>
+<pre>/healthcheck     Data sources, calibration, risk state
+/source-weights  Dynamic source weights vs baseline
+/config          Current bot configuration
+/watchlist       Manage watchlisted markets</pre>
+
+<b>⚙️ Control</b>
+<pre>/pause           Suspend all trading
+/resume          Resume trading</pre>`
+}
+
+// handleDaily returns a chronological timeline of today's bets with running P&L. (TASK-190)
+func handleDaily(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	type dailyBet struct {
+		r          calibration.BetRecord
+		runningPnL float64
+	}
+	var bets []dailyBet
+	var running float64
+	for _, r := range records {
+		if r.Timestamp.UTC().Format("2006-01-02") != today {
+			continue
+		}
+		var delta float64
+		if r.Outcome != nil {
+			if *r.Outcome {
+				delta = r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+			} else {
+				delta = -r.SizeUSDC
+			}
+		}
+		running += delta
+		bets = append(bets, dailyBet{r, running})
+	}
+
+	if len(bets) == 0 {
+		return fmt.Sprintf("📭 No bets today (%s UTC).", today)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>📅 Today's Bets — %s UTC</b>\n\n", today))
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-5s %-16s %-4s %5s %5s %-7s %7s\n",
+		"Time", "City/Signal", "Side", "Size", "Entry", "Outcome", "RunPnL"))
+	sb.WriteString(strings.Repeat("─", 55) + "\n")
+
+	var resolvedCount int
+	for _, b := range bets {
+		r := b.r
+		timeStr := r.Timestamp.UTC().Format("15:04")
+		label := r.City + "/" + r.Signal
+		if len(label) > 15 {
+			label = label[:15]
+		}
+		outcomeStr := "open"
+		if r.Outcome != nil {
+			resolvedCount++
+			if *r.Outcome {
+				outcomeStr = "WIN ✅"
+			} else {
+				outcomeStr = "LOSS ❌"
+			}
+		}
+		pnlStr := fmt.Sprintf("%+.2f", b.runningPnL)
+		sb.WriteString(fmt.Sprintf("%-5s %-16s %-4s %5.2f %5.2f %-7s %7s\n",
+			timeStr, label, r.Side, r.SizeUSDC, r.MarketPrice, outcomeStr, pnlStr))
+	}
+
+	sb.WriteString(strings.Repeat("─", 55) + "\n")
+	sb.WriteString(fmt.Sprintf("Total: %d bets | %d resolved | P&L: %+.2f USDC",
+		len(bets), resolvedCount, running))
+	sb.WriteString("</pre>")
+	return sb.String()
+}
+
+// handleForecastQuality returns per-city forecast confidence and cache age. (TASK-191)
+func handleForecastQuality(bcfg BotConfig) string {
+	type cityRow struct {
+		city       string
+		confidence float64
+		sources    []string
+		age        time.Duration
+		found      bool
+	}
+
+	cities := make([]string, 0, len(weather.Cities))
+	for c := range weather.Cities {
+		cities = append(cities, c)
+	}
+	sort.Strings(cities)
+
+	rows := make([]cityRow, 0, len(cities))
+	const maxAge = 6 * time.Hour
+	for _, city := range cities {
+		ff, ok := collectors.LoadForecastCache(city, 0, bcfg.DataRoot, maxAge)
+		if !ok || ff == nil {
+			rows = append(rows, cityRow{city: city})
+			continue
+		}
+		rows = append(rows, cityRow{
+			city:       city,
+			confidence: ff.Confidence,
+			sources:    ff.Sources,
+			age:        time.Since(ff.FetchedAt),
+			found:      true,
+		})
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>🌤 Forecast Quality</b>\n\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-14s %5s %5s %-6s\n", "City", "Conf", "Age", "Status"))
+	sb.WriteString(strings.Repeat("─", 32) + "\n")
+
+	ready := 0
+	for _, row := range rows {
+		if !row.found {
+			sb.WriteString(fmt.Sprintf("%-14s  n/a   n/a ❌ no cache\n", row.city))
+			continue
+		}
+		ageStr := fmt.Sprintf("%.0fm", row.age.Minutes())
+		if row.age >= time.Hour {
+			ageStr = fmt.Sprintf("%.1fh", row.age.Hours())
+		}
+		status := "✅"
+		if row.confidence >= 0.5 && row.age < 3*time.Hour {
+			ready++
+		} else if row.confidence >= 0.35 && row.age < 6*time.Hour {
+			status = "⚠️"
+		} else {
+			status = "❌"
+		}
+		sb.WriteString(fmt.Sprintf("%-14s %4.0f%% %5s %s\n",
+			row.city, row.confidence*100, ageStr, status))
+	}
+	sb.WriteString(strings.Repeat("─", 32) + "\n")
+	sb.WriteString(fmt.Sprintf("Ready: %d/%d cities", ready, len(cities)))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>✅ conf≥50%% &amp; age<3h | ⚠️ marginal | ❌ stale/missing | %s UTC</i>",
+		time.Now().UTC().Format("15:04")))
 	return sb.String()
 }

@@ -1,5 +1,34 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 08:32 UTC — TASK-189 + TASK-190 + TASK-191
+
+**Задачи:** все предыдущие задачи (001–188) выполнены. Добавлены и реализованы 3 новые задачи.
+
+**TASK-189: `/help` Telegram команда**
+- `handleHelp()` — статическая строка с полным списком команд, сгруппированных по категориям
+- 4 группы: 📊 Аналитика, 🌤 Прогнозы, 📂 История, 🩺 Система, ⚙️ Управление
+- Добавлен `case "/help"` в switch поллера
+- Обновлен docstring файла с новыми командами
+
+**TASK-190: `/daily` Telegram команда**
+- `handleDaily(bcfg)` — фильтрует BetRecord по сегодняшней дате UTC
+- Таблица: Time | City/Signal | Side | Size | Entry | Outcome | RunPnL
+- Нарастающий P&L по строкам с `+` prefix
+- Итоговая строка: "N bets | K resolved | P&L: $X.XX USDC"
+- Добавлен `case "/daily"` в поллер
+
+**TASK-191: `/forecast-quality` Telegram команда**
+- `handleForecastQuality(bcfg)` — загружает FusedForecast кэш для всех 14 городов
+- Таблица: City | Conf% | Age | Status (✅/⚠️/❌)
+- Статусы: ✅ conf≥50% + age<3h; ⚠️ conf≥35% + age<6h; ❌ иначе
+- Итог: "Ready: N/14 cities" — быстрый индикатор перед запуском бота
+
+**Результат:** `go build ./...` ✅ | `go test ./internal/notifier/...` ✅
+**Строк кода:** ~155 (в telegram_commands.go)
+**Файлы изменены:** `internal/notifier/telegram_commands.go` (1 файл)
+
+---
+
 ## 2026-05-28 08:27 UTC — TASK-188
 
 **TASK-188: Market exit signal — рекомендации продать позицию при деградации прогноза**
