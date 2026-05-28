@@ -115,6 +115,10 @@ type Config struct {
 	// When a signal is listed here its threshold replaces MinEdge.
 	// Example: signal_min_edge: {rain: 0.06, heat: 0.04, snow: 0.08}
 	SignalMinEdge map[string]float64 `yaml:"signal_min_edge"`
+
+	// TASK-162: minimum bet size in USDC. Bets sized below this threshold after
+	// all Kelly/scaling adjustments are silently skipped. Default 0.50 USDC.
+	MinBetUSDC float64 `yaml:"min_bet_usdc"`
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -150,6 +154,7 @@ func defaults() Config {
 		AutoBlacklistDays:       3,
 		RollingWinRateWindow:    20,
 		RollingWinRateThreshold: 0.35,
+		MinBetUSDC:              0.50,
 	}
 }
 
@@ -306,6 +311,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("INITIAL_BANKROLL"); v != nil {
 		cfg.InitialBankroll = *v
+	}
+	if v := envFloat("MIN_BET_USDC"); v != nil {
+		cfg.MinBetUSDC = *v
 	}
 
 	// Telegram

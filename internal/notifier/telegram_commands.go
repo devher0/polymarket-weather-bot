@@ -10,6 +10,7 @@
 //   /export [days]  — send CSV of resolved bets as file (TASK-154)
 //   /healthcheck    — data source status, calibration, risk state, signal kelly (TASK-157)
 //   /source-weights — current dynamic weights per data source vs static baseline (TASK-160)
+//   /pnl-city       — per-city P&L table: bets/wins/win%/pnl/roi (TASK-163)
 //   /pause          — suspend all trading
 //   /resume         — resume trading
 //
@@ -221,6 +222,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleHealthcheck(bcfg))
 				case "/source-weights":
 					sendReply(cfg, chatID, handleSourceWeights(bcfg))
+				case "/pnl-city":
+					sendReply(cfg, chatID, handlePnLCity(bcfg))
 				}
 			}
 		}
@@ -1196,6 +1199,66 @@ func handleSourceWeights(bcfg BotConfig) string {
 
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04:05")))
+	return sb.String()
+}
+
+// ── /pnl-city handler (TASK-163) ─────────────────────────────────────────────
+
+// handlePnLCity returns a per-city P&L breakdown table for Telegram.
+// Rows are sorted by total profit descending; only cities with ≥1 resolved bet appear.
+func handlePnLCity(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return fmt.Sprintf("⚠️ Could not load history: %v", err)
+	}
+
+	stats := calibration.CityPnL(records)
+	if len(stats) == 0 {
+		return "No resolved bets with city data yet."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>🏙️ P&L by City</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-14s %4s %4s %5s %8s %6s\n",
+		"City", "Bets", "Wins", "Win%", "PnL", "ROI%"))
+	sb.WriteString(repeatDash(47) + "\n")
+
+	var totalBets, totalWins int
+	var totalPnL, totalRisked float64
+
+	for _, s := range stats {
+		sign := "+"
+		if s.PnLUSDC < 0 {
+			sign = ""
+		}
+		roi := 0.0
+		if s.TotalRisked > 0 {
+			roi = s.PnLUSDC / s.TotalRisked * 100
+		}
+		sb.WriteString(fmt.Sprintf("%-14s %4d %4d %4.0f%% %s%.2f %+5.1f%%\n",
+			s.City, s.Bets, s.Wins, s.WinRate(), sign, s.PnLUSDC, roi))
+		totalBets += s.Bets
+		totalWins += s.Wins
+		totalPnL += s.PnLUSDC
+		totalRisked += s.TotalRisked
+	}
+
+	sb.WriteString(repeatDash(47) + "\n")
+	overallROI := 0.0
+	if totalRisked > 0 {
+		overallROI = totalPnL / totalRisked * 100
+	}
+	sign := "+"
+	if totalPnL < 0 {
+		sign = ""
+	}
+	sb.WriteString(fmt.Sprintf("%-14s %4d %4d %4.0f%% %s%.2f %+5.1f%%\n",
+		"TOTAL", totalBets, totalWins,
+		float64(totalWins)/float64(totalBets)*100,
+		sign, totalPnL, overallROI))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()
 }
 

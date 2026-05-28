@@ -245,6 +245,8 @@ func main() {
 	strategy.MaxKellyFraction = cfg.MaxKellyFraction
 	// TASK-141: fee-adjusted Kelly — use real protocol fee rate.
 	strategy.ProtocolFeeRate = cfg.ProtocolFeeRate
+	// TASK-162: configurable minimum bet size.
+	strategy.MinBetUSDC = cfg.MinBetUSDC
 
 	// TASK-082: validate config at startup.
 	{

@@ -35,6 +35,11 @@ var MaxKellyFraction = 0.05
 // Set by cmd/bot at startup from config. Set to 0 to disable (e.g. back-tests).
 var ProtocolFeeRate = 0.02
 
+// MinBetUSDC is the minimum bet size after all Kelly/scaling adjustments.
+// Bets below this threshold are silently skipped (TASK-162).
+// Set by cmd/bot at startup from config.
+var MinBetUSDC = 0.50
+
 // ScoredMarket pairs a market with its pre-computed priority score
 // and the fused forecast used to compute it.
 type ScoredMarket struct {
@@ -554,7 +559,7 @@ func EvaluateFused(
 				"size_before", fmt.Sprintf("%.2f", originalSize),
 				"size_after", fmt.Sprintf("%.2f", d.SizeUSDC),
 			)
-			if d.SizeUSDC < 0.5 {
+			if d.SizeUSDC < MinBetUSDC {
 				slog.Info("skipped: size below minimum after OFI penalty",
 					"conditionID", m.ConditionID,
 					"ofi", fmt.Sprintf("%.3f", ofi.Imbalance),
@@ -600,7 +605,7 @@ func EvaluateFused(
 				"size_after", fmt.Sprintf("%.2f", d.SizeUSDC),
 			)
 			// Re-check minimum size after scaling.
-			if d.SizeUSDC < 0.5 {
+			if d.SizeUSDC < MinBetUSDC {
 				slog.Info("skipped: size below minimum after ensemble scaling",
 					"conditionID", m.ConditionID)
 				logPrediction("SKIP:min_size", 0, fmt.Sprintf("size_after_scale=%.2f unc=%.1f°C", d.SizeUSDC, ff.EnsembleUncertainty))
@@ -653,7 +658,7 @@ func EvaluateFused(
 				)
 			}
 			// Re-check minimum size.
-			if d.SizeUSDC < 0.5 {
+			if d.SizeUSDC < MinBetUSDC {
 				logPrediction("SKIP:min_size_consensus", 0, fmt.Sprintf("size_after_spread=%.2f", d.SizeUSDC))
 				return nil
 			}
@@ -843,7 +848,7 @@ func evaluate(
 		return nil
 	}
 
-	if size < 0.5 {
+	if size < MinBetUSDC {
 		return nil
 	}
 

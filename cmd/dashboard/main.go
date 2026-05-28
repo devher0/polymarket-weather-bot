@@ -582,6 +582,9 @@ func main() {
 	case "markets":
 		// TASK-159: live Polymarket weather market overview table.
 		cmdMarkets()
+	case "pnl-city":
+		// TASK-161: per-city P&L breakdown table.
+		cmdPnLCity(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -617,7 +620,76 @@ func printUsage() {
 	fmt.Println("  markets                           Live Polymarket weather market overview: price/spread/status (TASK-159)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
+	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
 	fmt.Println("  all                               Run all sub-commands")
+}
+
+// ── pnl-city (TASK-161) ───────────────────────────────────────────────────────
+
+// cmdPnLCity prints a table of per-city P&L stats sorted by total profit descending.
+func cmdPnLCity(dataRoot string) {
+	header("🏙️  P&L BY CITY")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+		return
+	}
+
+	stats := calibration.CityPnL(records)
+	if len(stats) == 0 {
+		fmt.Println("  No resolved bets with city data yet.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City", "Bets", "Wins", "Win%", "P&L (USDC)", "Risked", "ROI%"})
+
+	var totalBets, totalWins int
+	var totalPnL, totalRisked float64
+
+	for _, s := range stats {
+		winPct := fmt.Sprintf("%.1f%%", s.WinRate())
+		roi := fmt.Sprintf("%.1f%%", s.ROI())
+
+		pnlStr := fmt.Sprintf("%+.2f", s.PnLUSDC)
+		var pnlCell interface{}
+		if s.PnLUSDC >= 0 {
+			pnlCell = styleWin.Sprint(pnlStr)
+		} else {
+			pnlCell = styleLoss.Sprint(pnlStr)
+		}
+
+		t.AppendRow(table.Row{
+			s.City,
+			s.Bets,
+			s.Wins,
+			winPct,
+			pnlCell,
+			fmt.Sprintf("%.2f", s.TotalRisked),
+			roi,
+		})
+		totalBets += s.Bets
+		totalWins += s.Wins
+		totalPnL += s.PnLUSDC
+		totalRisked += s.TotalRisked
+	}
+
+	t.AppendSeparator()
+	overallROI := 0.0
+	if totalRisked > 0 {
+		overallROI = totalPnL / totalRisked * 100
+	}
+	t.AppendRow(table.Row{
+		"TOTAL",
+		totalBets,
+		totalWins,
+		fmt.Sprintf("%.1f%%", float64(totalWins)/float64(totalBets)*100),
+		fmt.Sprintf("%+.2f", totalPnL),
+		fmt.Sprintf("%.2f", totalRisked),
+		fmt.Sprintf("%.1f%%", overallROI),
+	})
+	t.Render()
 }
 
 // ── markets (TASK-159) ────────────────────────────────────────────────────────
