@@ -14,6 +14,7 @@
 //   /winrate        — rolling win rate table per signal over last 20 bets (TASK-169)
 //   /explain <id>   — full strategy audit trail for a specific conditionID (TASK-167)
 //   /config         — show current bot configuration parameters (TASK-172)
+//   /markets        — top active weather markets: city/signal/prices/spread/expiry (TASK-179)
 //   /pause          — suspend all trading
 //   /resume         — resume trading
 //
@@ -243,6 +244,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleExplainMarket(bcfg, arg))
 				case "/config":
 					sendReply(cfg, chatID, handleConfig(bcfg))
+				case "/markets":
+					sendReply(cfg, chatID, handleMarkets(bcfg))
 				}
 			}
 		}
@@ -1489,5 +1492,77 @@ func handleConfig(bcfg BotConfig) string {
 	sb.WriteString(fmt.Sprintf("%-22s %s\n", "data_root:", bcfg.DataRoot))
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// handleMarkets returns the top-5 active weather markets sorted by spread
+// (tightest first = best trading opportunity). (TASK-179)
+func handleMarkets(bcfg BotConfig) string {
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to fetch markets: %v", err)
+	}
+
+	// Enrich with live liquidity data (spread, thin flag, fair value).
+	markets.EnrichWithLiquidity(mks)
+
+	// Filter to markets with identified city+signal and not stale.
+	var active []markets.Market
+	for _, m := range mks {
+		if m.City == "" || m.Signal == "" {
+			continue
+		}
+		if m.Stale {
+			continue
+		}
+		active = append(active, m)
+	}
+
+	if len(active) == 0 {
+		return "📭 No active weather markets found."
+	}
+
+	// Sort by spread ascending (tightest = best opportunity).
+	sort.Slice(active, func(i, j int) bool {
+		return active[i].Spread < active[j].Spread
+	})
+
+	total := len(active)
+	const maxShow = 5
+	if len(active) > maxShow {
+		active = active[:maxShow]
+	}
+
+	now := time.Now().UTC()
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🌦 <b>Top %d Weather Markets</b> (of %d active)\n", len(active), total))
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-12s %-6s %5s %5s %5s %6s\n", "City", "Signal", "YES", "NO", "Spr", "Expiry"))
+	sb.WriteString(strings.Repeat("─", 47) + "\n")
+	for _, m := range active {
+		expiryStr := "?"
+		if !m.ExpiryUTC.IsZero() {
+			h := m.ExpiryUTC.Sub(now).Hours()
+			switch {
+			case h < 0:
+				expiryStr = "exp"
+			case h < 24:
+				expiryStr = fmt.Sprintf("%.0fh", h)
+			default:
+				expiryStr = fmt.Sprintf("%.0fd", h/24)
+			}
+		}
+		city := m.City
+		if len(city) > 12 {
+			city = city[:12]
+		}
+		sb.WriteString(fmt.Sprintf("%-12s %-6s %5.2f %5.2f %5.2f %6s\n",
+			city, m.Signal,
+			m.YesPrice, m.NoPrice,
+			m.Spread, expiryStr,
+		))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", now.Format("15:04")))
 	return sb.String()
 }

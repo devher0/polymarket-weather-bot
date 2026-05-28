@@ -643,6 +643,9 @@ func main() {
 	case "bias":
 		// TASK-174: per-(city,signal) probability bias summary.
 		cmdBias(dataRoot)
+	case "hourly-winrate":
+		// TASK-180: win rate breakdown by UTC hour of day.
+		cmdHourlyWinRate(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -682,6 +685,7 @@ func printUsage() {
 	fmt.Println("  week [N]                          N-day (default 7) daily P&L table with running total (TASK-164)")
 	fmt.Println("  signals-trend                     Rolling signal win rate trend: 7/14/30 days (TASK-168)")
 	fmt.Println("  bias                              Per-(city,signal) probability bias table (TASK-174)")
+	fmt.Println("  hourly-winrate                    Win rate & P&L breakdown by UTC hour of day (TASK-180)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -2531,4 +2535,108 @@ func cmdBias(dataRoot string) {
 	fmt.Println()
 	fmt.Println("  Bias = mean(ourP − outcome).  Positive → we overestimate this signal.")
 	fmt.Printf("  Correction applied automatically in bot when N ≥ %d.\n", calibration.BiasMinSamples)
+}
+
+// ── hourly-winrate (TASK-180) ────────────────────────────────────────────────
+
+// cmdHourlyWinRate prints a win rate and P&L breakdown by UTC hour of day.
+// Useful for detecting systematic timing patterns (e.g., morning bets perform better).
+func cmdHourlyWinRate(dataRoot string) {
+	header("⏰ WIN RATE BY UTC HOUR OF DAY")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Printf("  ❌ Failed to load bet history: %v\n", err)
+		return
+	}
+
+	stats := calibration.HourlyWinRate(records)
+
+	// Count total resolved bets for context.
+	totalBets := 0
+	for _, s := range stats {
+		totalBets += s.Bets
+	}
+	if totalBets == 0 {
+		fmt.Println("  No resolved bets yet.")
+		return
+	}
+
+	// Find best/worst hours (min 3 bets to qualify).
+	bestHour, worstHour := -1, -1
+	bestWR, worstWR := -1.0, 101.0
+	for _, s := range stats {
+		if s.Bets < 3 {
+			continue
+		}
+		wr := s.WinPct()
+		if wr > bestWR {
+			bestWR = wr
+			bestHour = s.Hour
+		}
+		if wr < worstWR {
+			worstWR = wr
+			worstHour = s.Hour
+		}
+	}
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetStyle(table.StyleLight)
+	t.AppendHeader(table.Row{"UTC Hour", "Bets", "Wins", "Win%", "P&L", "Bar"})
+
+	const barWidth = 20
+	for _, s := range stats {
+		if s.Bets == 0 {
+			t.AppendRow(table.Row{
+				fmt.Sprintf("%02d:00", s.Hour), "—", "—", "—", "—", "",
+			})
+			continue
+		}
+		wr := s.WinPct()
+		wrStr := fmt.Sprintf("%.0f%%", wr)
+		pnlStr := fmt.Sprintf("%+.2f", s.PnLUSDC)
+
+		// ASCII bar proportional to win rate (0–100%).
+		filled := int(wr / 100.0 * barWidth)
+		if filled > barWidth {
+			filled = barWidth
+		}
+		bar := repeatStr("█", filled) + repeatStr("░", barWidth-filled)
+
+		hourLabel := fmt.Sprintf("%02d:00", s.Hour)
+
+		if s.Hour == bestHour {
+			hourLabel = styleWin.Sprint(hourLabel)
+			wrStr = styleWin.Sprint(wrStr)
+			bar = styleWin.Sprint(bar)
+		} else if s.Hour == worstHour {
+			hourLabel = styleLoss.Sprint(hourLabel)
+			wrStr = styleLoss.Sprint(wrStr)
+			bar = styleLoss.Sprint(bar)
+		} else if wr >= 55 {
+			wrStr = styleWin.Sprint(wrStr)
+		} else if wr < 45 {
+			wrStr = styleLoss.Sprint(wrStr)
+		}
+
+		t.AppendRow(table.Row{
+			hourLabel,
+			s.Bets,
+			s.Wins,
+			wrStr,
+			pnlStr,
+			bar,
+		})
+	}
+
+	t.Render()
+	fmt.Println()
+	if bestHour >= 0 {
+		fmt.Printf("  Best hour:  %02d:00 UTC — %.0f%% win rate\n", bestHour, bestWR)
+	}
+	if worstHour >= 0 && worstHour != bestHour {
+		fmt.Printf("  Worst hour: %02d:00 UTC — %.0f%% win rate\n", worstHour, worstWR)
+	}
+	fmt.Printf("  Total resolved bets analysed: %d\n", totalBets)
 }

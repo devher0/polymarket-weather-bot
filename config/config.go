@@ -76,6 +76,10 @@ type Config struct {
 	// Kelly formula uses fee-adjusted odds so sizing accounts for the real payout.
 	ProtocolFeeRate float64 `yaml:"protocol_fee_rate"` // default 0.02 (2%)
 
+	// UseIsotonic (TASK-181): when true and ≥20 resolved bets are available,
+	// use isotonic regression calibration instead of Platt scaling.
+	UseIsotonic bool `yaml:"use_isotonic"` // default false
+
 	// Auto-blacklist (TASK-131): automatically suppress (city, signal) pairs that
 	// show systematic losses. 0/default values use the AutoBlacklistCfg defaults.
 	AutoBlacklistMinBets    int     `yaml:"auto_blacklist_min_bets"`    // min resolved bets before check (default 8)

@@ -167,6 +167,47 @@ func DailyPnLTable(records []BetRecord, nDays int) []DailyStats {
 	return rows
 }
 
+// HourlyStats holds aggregated resolved-bet metrics for one UTC hour of day.
+type HourlyStats struct {
+	Hour    int // 0–23 UTC
+	Bets    int
+	Wins    int
+	PnLUSDC float64
+}
+
+// WinPct returns win percentage (0–100), or -1 when no bets.
+func (h HourlyStats) WinPct() float64 {
+	if h.Bets == 0 {
+		return -1
+	}
+	return float64(h.Wins) / float64(h.Bets) * 100
+}
+
+// HourlyWinRate groups resolved bets by the UTC hour of their Timestamp and
+// returns a 24-element slice (index == hour). (TASK-180)
+func HourlyWinRate(records []BetRecord) [24]HourlyStats {
+	var stats [24]HourlyStats
+	for i := range stats {
+		stats[i].Hour = i
+	}
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue
+		}
+		h := r.Timestamp.UTC().Hour()
+		stats[h].Bets++
+		var pnl float64
+		if *r.Outcome {
+			stats[h].Wins++
+			pnl = r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			pnl = -r.SizeUSDC
+		}
+		stats[h].PnLUSDC += pnl
+	}
+	return stats
+}
+
 func max150(a, b int) int {
 	if a > b {
 		return a

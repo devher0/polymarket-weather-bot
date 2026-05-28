@@ -535,6 +535,9 @@ func main() {
 		// When active (N >= 20 resolved bets), it corrects systematic over/under-confidence.
 		plattCal := calibration.LoadCalibrator(cfg.DataRoot)
 
+		// TASK-181: optionally use isotonic regression calibration instead of Platt scaling.
+		isoCal := calibration.LoadIsotonic(cfg.DataRoot)
+
 		// TASK-156: per-signal adaptive Kelly multiplier based on historical Brier performance.
 		// Computed once per cycle from resolved history; applied per-bet below.
 		signalKellyMults := calibration.SignalKellyMultipliers(history)
@@ -942,8 +945,12 @@ func main() {
 				continue
 			}
 
-			// TASK-122: apply Platt calibration to adjust OurProbability and Kelly size.
-			d = applyPlattCalibration(d, plattCal, adaptedSignalMinEdge, effectiveBankroll)
+			// TASK-122/181: apply probability calibration (isotonic or Platt).
+			if cfg.UseIsotonic && isoCal.IsActive() {
+				d = applyIsotonicCalibration(d, isoCal, adaptedSignalMinEdge, effectiveBankroll)
+			} else {
+				d = applyPlattCalibration(d, plattCal, adaptedSignalMinEdge, effectiveBankroll)
+			}
 			if d == nil {
 				continue
 			}
@@ -1374,6 +1381,10 @@ func main() {
 				slog.Warn("calibration drift", "message", msg)
 				_ = notifier.NotifyError("calibration drift", fmt.Errorf("%s", msg))
 			}
+			// TASK-181: keep the isotonic calibrator up to date after each resolve.
+			if _, err := calibration.UpdateAndSaveIsotonic(dataRoot, records); err != nil {
+				slog.Warn("isotonic calibrator save failed", "err", err)
+			}
 		})
 
 		// TASK-111: start Telegram command poller (/status /positions /next /pause /resume).
@@ -1663,6 +1674,49 @@ func applyPlattCalibration(
 	out.Edge = newEdge
 	out.Reason = fmt.Sprintf("%s [platt:%.3f→%.3f]", d.Reason, rawP, calP)
 	slog.Debug("platt calibration applied",
+		"city", d.Market.City, "signal", d.Market.Signal,
+		"raw_p", fmt.Sprintf("%.3f", rawP), "cal_p", fmt.Sprintf("%.3f", calP),
+	)
+	return &out
+}
+
+// applyIsotonicCalibration adjusts d.OurProbability using the fitted isotonic
+// regression calibrator and recomputes Kelly sizing. (TASK-181)
+// Returns nil if calibrated edge < minEdge. Returns d unchanged when
+// the calibrator is not active.
+func applyIsotonicCalibration(
+	d *strategy.Decision,
+	ic *calibration.IsotonicCalibrator,
+	minEdge float64,
+	bankroll float64,
+) *strategy.Decision {
+	if d == nil || ic == nil || !ic.IsActive() {
+		return d
+	}
+	rawP := d.OurProbability
+	calP := ic.Predict(rawP)
+	if math.Abs(calP-rawP) < 1e-6 {
+		return d
+	}
+	price := d.MarketPrice
+	if price <= 0 || price >= 1 {
+		return d
+	}
+	newEdge := calP - price
+	if newEdge < minEdge {
+		slog.Debug("isotonic: edge below threshold after calibration — skipping",
+			"city", d.Market.City, "signal", d.Market.Signal,
+			"raw_p", fmt.Sprintf("%.3f", rawP),
+			"cal_p", fmt.Sprintf("%.3f", calP),
+			"edge", fmt.Sprintf("%.3f", newEdge),
+		)
+		return nil
+	}
+	out := *d
+	out.OurProbability = calP
+	out.Edge = newEdge
+	out.Reason = fmt.Sprintf("%s [isotonic:%.3f→%.3f]", d.Reason, rawP, calP)
+	slog.Debug("isotonic calibration applied",
 		"city", d.Market.City, "signal", d.Market.Signal,
 		"raw_p", fmt.Sprintf("%.3f", rawP), "cal_p", fmt.Sprintf("%.3f", calP),
 	)

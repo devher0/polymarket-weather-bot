@@ -1722,3 +1722,34 @@ Telegram команда `/winrate` показывает rolling win rate за п
 - Минимум 3 недели с хотя бы 5 бетами каждая
 - Проверять при старте бота (после PrintBrierScore)
 - 4 unit-теста: пусто, нет тренда, улучшение, ухудшение
+
+---
+
+## 🔴 ПРИОРИТЕТ 120 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-179: `/markets` Telegram команда — топ активных рынков в чате
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Оператор пишет `/markets` и видит топ-5 активных погодных рынков: город, сигнал, цены YES/NO, спред, часы до истечения.
+- `handleMarkets(bcfg BotConfig) string` — вызывает `markets.GetWeatherMarkets()`, фильтрует non-empty City+Signal, сортирует по spread ASC (лучшие возможности первыми), берёт top-5
+- Колонки в `<pre>`: City | Signal | YES | NO | Spr | Expiry
+- Если рынков нет → "No active weather markets found"
+- Добавить `/markets` в docstring и поллер switch
+
+### [x] 2026-05-28 — TASK-180: Hour-of-day win rate — анализ когда мы ставим лучше
+**Файлы:** `internal/calibration/pnlchart.go` (добавить), `cmd/dashboard/main.go` (добавить `cmdHourlyWinRate`)
+Анализ побед по часу размещения ставки: в какое UTC время суток стратегия точнее?
+- `HourlyStats{Hour int, Bets int, Wins int, PnLUSDC float64}`
+- `HourlyWinRate(records []BetRecord) [24]HourlyStats` — группировка resolved бетов по UTC часу Timestamp
+- `cmdHourlyWinRate(dataRoot)` — bar-таблица 0..23, █ пропорционально win rate, цвет зелёный/красный
+- Итог: best hour, worst hour, summary
+- `go run ./cmd/dashboard hourly-winrate`
+
+### [x] 2026-05-28 — TASK-181: Isotonic regression calibration — монотонная калибровка вместо Platt scaling
+**Файлы:** `internal/calibration/isotonic.go` (новый), `internal/calibration/isotonic_test.go` (новый), `cmd/bot/main.go` (добавить опциональный выбор калибратора)
+Platt scaling (sigmoid) предполагает гладкую S-кривую. Isotonic regression не делает допущений о форме и часто точнее.
+- Pool adjacent violators algorithm: `IsotonicRegression(x, y []float64) []float64`
+- `FitIsotonic(records []BetRecord) *IsotonicCalibrator` — обучает на resolved бетах
+- `IsotonicCalibrator.Predict(rawP float64) float64` — кусочно-линейная интерполяция
+- `UseIsotonicCalibration bool` в Config (yaml: `use_isotonic`, default: false)
+- В bot/main.go: если включено и данных ≥ 20 → `applyIsotonicCalibration` вместо Platt
+- 5 unit-тестов: пустой список, уже монотонный, нарушение монотонности, интерполяция, клампинг
