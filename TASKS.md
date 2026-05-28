@@ -1753,3 +1753,38 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `UseIsotonicCalibration bool` в Config (yaml: `use_isotonic`, default: false)
 - В bot/main.go: если включено и данных ≥ 20 → `applyIsotonicCalibration` вместо Platt
 - 5 unit-тестов: пустой список, уже монотонный, нарушение монотонности, интерполяция, клампинг
+
+---
+
+## 🔴 ПРИОРИТЕТ 130 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-182: `/top-edge` Telegram команда — рынки по edge×confidence
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+`/markets` сортирует по spread, но лучшие возможности — по edge×confidence.
+- `handleTopEdge(bcfg BotConfig) string` — получает рынки, агрегирует прогноз для каждого, вычисляет edge×confidence score, top-5
+- Запускает `collectors.AggregateForCity()` из кэша (ForecastCache, не живой запрос)
+- Колонки в `<pre>`: City | Signal | Side | Edge | Conf | Score | Price
+- Score = bestEdge × confidence (честная мера качества возможности)
+- Добавить `/top-edge` в docstring и поллер switch
+
+### [x] 2026-05-28 — TASK-183: Kelly fraction auto-tuner — эмпирический оптимальный Kelly из истории
+**Файл:** `internal/calibration/kelly_opt.go` (новый), `cmd/dashboard/main.go` (обновить)
+Текущий KellyFraction=0.5 фиксирован. Оптимальный можно найти эмпирически по истории ставок.
+- `OptimalKelly(records []BetRecord, start, end float64, steps int) (bestK float64, bestEV float64)`
+  - Grid search: simulate каждый исторический бет с Kelly k → cumulative log-EV
+  - Вернуть k с максимальным geometric growth rate
+- `KellyOptResult{BestK, BestEV, BestPnL, Steps []KellyStep}` для вывода
+- `cmdKellyOpt(dataRoot)` в dashboard: таблица k | sim_pnl | log_ev, лучший выделен
+- Минимум 10 resolved бетов для запуска, иначе "insufficient data"
+- `go run ./cmd/dashboard kelly-opt`
+
+### [x] 2026-05-28 — TASK-184: Forecast stability tracker — обнаружение flip-flop прогнозов
+**Файл:** `internal/collectors/stability.go` (новый), `internal/collectors/aggregator.go` (обновить), `cmd/dashboard/main.go` (обновить)
+Если наша вероятность для рынка скачет между циклами (0.7→0.3→0.7), сигнал ненадёжен.
+- `StabilityRecord{ConditionID, City, Signal string, OurP float64, Timestamp time.Time}`
+- `StabilityTracker` — rolling window 10 последних оценок на conditionID, хранит в памяти (sync.Map)
+- `Track(conditionID, city, signal string, ourP float64)` — добавляет запись
+- `Stability(conditionID string) float64` — stddev последних N оценок (0=стабильно, 0.5=хаос)
+- `IsUnstable(conditionID string) bool` — stddev > 0.15
+- В `EvaluateFused`: если `IsUnstable(conditionID)` → добавить `"SKIP:unstable"` или снизить confidence на 20%
+- `dashboard stability` — таблица conditionID | city | signal | stability | N | last_p

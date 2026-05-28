@@ -272,6 +272,18 @@ func EvaluateFused(
 	yesEdge := ourP - m.YesPrice
 	noEdge := (1 - ourP) - m.NoPrice
 
+	// TASK-184: track probability stability and penalise flip-flopping markets.
+	collectors.GlobalStability.Track(m.ConditionID, m.City, m.Signal, ourP)
+	if collectors.GlobalStability.IsUnstable(m.ConditionID) {
+		slog.Info("stability: unstable forecast, penalising confidence",
+			"conditionID", m.ConditionID,
+			"city", m.City,
+			"signal", m.Signal,
+			"stddev", collectors.GlobalStability.Stability(m.ConditionID),
+		)
+		ff.Confidence *= 0.80
+	}
+
 	// ofiImbalance is set after FetchOrderFlow; the closure captures it by reference
 	// so later calls to logPrediction (for BET decisions) will include the OFI value.
 	var ofiImbalance float64

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -646,6 +647,12 @@ func main() {
 	case "hourly-winrate":
 		// TASK-180: win rate breakdown by UTC hour of day.
 		cmdHourlyWinRate(dataRoot)
+	case "kelly-opt":
+		// TASK-183: empirical Kelly fraction optimizer.
+		cmdKellyOpt(dataRoot)
+	case "stability":
+		// TASK-184: forecast stability tracker.
+		cmdStability(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -686,6 +693,8 @@ func printUsage() {
 	fmt.Println("  signals-trend                     Rolling signal win rate trend: 7/14/30 days (TASK-168)")
 	fmt.Println("  bias                              Per-(city,signal) probability bias table (TASK-174)")
 	fmt.Println("  hourly-winrate                    Win rate & P&L breakdown by UTC hour of day (TASK-180)")
+	fmt.Println("  kelly-opt                         Empirical optimal Kelly fraction via grid search (TASK-183)")
+	fmt.Println("  stability                         Forecast probability stability tracker per market (TASK-184)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -2639,4 +2648,152 @@ func cmdHourlyWinRate(dataRoot string) {
 		fmt.Printf("  Worst hour: %02d:00 UTC — %.0f%% win rate\n", worstHour, worstWR)
 	}
 	fmt.Printf("  Total resolved bets analysed: %d\n", totalBets)
+}
+
+// ── kelly-opt (TASK-183) ─────────────────────────────────────────────────────
+
+// cmdKellyOpt runs an empirical Kelly fraction optimizer on historical bets
+// and prints a grid-search table showing simulated P&L for each fraction.
+func cmdKellyOpt(dataRoot string) {
+	header("📐  KELLY FRACTION OPTIMIZER")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error loading history: %v\n", err)
+		return
+	}
+
+	result, err := calibration.OptimalKelly(records, 0.05, 1.0, 20)
+	if err != nil {
+		fmt.Printf("  ⚠️  %v\n", err)
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Kelly K", "Sim P&L (USDC)", "Log Growth", "Quality"})
+
+	for _, step := range result.Steps {
+		pnlStr := fmt.Sprintf("%+.2f", step.SimPnL)
+		logStr := fmt.Sprintf("%.4f", step.LogGrowth)
+		quality := ""
+
+		var pnlColor text.Colors
+		if step.K == result.BestK {
+			quality = "← optimal"
+			pnlColor = styleWin
+		} else if step.SimPnL > 0 {
+			pnlColor = styleWin
+		} else {
+			pnlColor = styleLoss
+		}
+		t.AppendRow(table.Row{
+			fmt.Sprintf("%.2f", step.K),
+			pnlColor.Sprint(pnlStr),
+			logStr,
+			quality,
+		})
+	}
+
+	t.Render()
+	fmt.Println()
+	fmt.Printf("  Optimal Kelly fraction: %.2f  →  simulated P&L: %+.2f USDC\n",
+		result.BestK, result.BestPnL)
+	fmt.Println()
+	fmt.Println("  Note: this is a backtest simulation starting from 100 USDC.")
+	fmt.Println("  Current config KellyFraction may differ. Use as a reference only.")
+}
+
+// ── stability (TASK-184) ─────────────────────────────────────────────────────
+
+// cmdStability shows the in-memory forecast stability tracker state.
+// Since the tracker lives in-process only, the dashboard reads prediction logs
+// and computes probability variance per (city, signal) across today's records.
+func cmdStability(dataRoot string) {
+	header("📊  FORECAST STABILITY (today's prediction log)")
+
+	date := time.Now().UTC().Format("2006-01-02")
+	records, err := strategy.LoadPredictions(date, dataRoot)
+	if err != nil || len(records) == 0 {
+		fmt.Println("  No prediction log entries for today yet.")
+		return
+	}
+
+	// Group OurP values by (city, signal).
+	type key struct{ city, signal string }
+	grouped := map[key][]float64{}
+	for _, r := range records {
+		if r.City == "" || r.Signal == "" {
+			continue
+		}
+		k := key{r.City, r.Signal}
+		grouped[k] = append(grouped[k], r.OurP)
+	}
+
+	type row struct {
+		city, signal string
+		n            int
+		mean, stddev float64
+		lastP        float64
+		unstable     bool
+	}
+	var rows []row
+	for k, ps := range grouped {
+		if len(ps) < 2 {
+			continue
+		}
+		mean := 0.0
+		for _, p := range ps {
+			mean += p
+		}
+		mean /= float64(len(ps))
+		variance := 0.0
+		for _, p := range ps {
+			variance += (p - mean) * (p - mean)
+		}
+		stddev := math.Sqrt(variance / float64(len(ps)))
+		rows = append(rows, row{
+			city:     k.city,
+			signal:   k.signal,
+			n:        len(ps),
+			mean:     mean,
+			stddev:   stddev,
+			lastP:    ps[len(ps)-1],
+			unstable: stddev > 0.15,
+		})
+	}
+
+	if len(rows) == 0 {
+		fmt.Println("  Not enough repeated evaluations to compute stability.")
+		return
+	}
+
+	// Sort by stddev descending (most unstable first).
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].stddev > rows[j].stddev
+	})
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City", "Signal", "N", "Mean P", "StdDev", "Last P", "Status"})
+
+	for _, r := range rows {
+		statusStr := "stable"
+		statusColor := styleWin
+		if r.unstable {
+			statusStr = "⚠️ unstable"
+			statusColor = styleLoss
+		}
+		t.AppendRow(table.Row{
+			r.city,
+			r.signal,
+			r.n,
+			fmt.Sprintf("%.3f", r.mean),
+			statusColor.Sprint(fmt.Sprintf("%.3f", r.stddev)),
+			fmt.Sprintf("%.3f", r.lastP),
+			statusColor.Sprint(statusStr),
+		})
+	}
+	t.Render()
+	fmt.Println()
+	fmt.Println("  Unstable = stddev > 0.15 across today's evaluation cycles.")
+	fmt.Println("  High instability suggests disagreement between data sources or stale cache.")
 }

@@ -15,6 +15,7 @@
 //   /explain <id>   — full strategy audit trail for a specific conditionID (TASK-167)
 //   /config         — show current bot configuration parameters (TASK-172)
 //   /markets        — top active weather markets: city/signal/prices/spread/expiry (TASK-179)
+//   /top-edge       — top markets ranked by edge×confidence score (TASK-182)
 //   /pause          — suspend all trading
 //   /resume         — resume trading
 //
@@ -30,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"sort"
@@ -246,6 +248,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleConfig(bcfg))
 				case "/markets":
 					sendReply(cfg, chatID, handleMarkets(bcfg))
+				case "/top-edge":
+					sendReply(cfg, chatID, handleTopEdge(bcfg))
 				}
 			}
 		}
@@ -1564,5 +1568,134 @@ func handleMarkets(bcfg BotConfig) string {
 	}
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", now.Format("15:04")))
+	return sb.String()
+}
+
+// ── TASK-182: /top-edge command ───────────────────────────────────────────
+
+// handleTopEdge returns the top markets ranked by edge×confidence score.
+// Unlike /markets (sorted by spread), this ranks by true opportunity quality:
+// a wide edge on a high-confidence forecast beats a tight spread on shaky data.
+func handleTopEdge(bcfg BotConfig) string {
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		return fmt.Sprintf("❌ Failed to fetch markets: %v", err)
+	}
+
+	type scoredEntry struct {
+		m     markets.Market
+		side  string
+		edge  float64
+		conf  float64
+		score float64
+		ourP  float64
+	}
+
+	var entries []scoredEntry
+
+	for _, m := range mks {
+		if m.City == "" || m.Signal == "" {
+			continue
+		}
+
+		// Load from disk cache (up to 3h stale is fine here).
+		ff, ok := collectors.LoadForecastCache(m.City, m.DaysUntilExpiry(), bcfg.DataRoot, 3*time.Hour)
+		if !ok || ff == nil {
+			// fallback to day 0
+			ff, ok = collectors.LoadForecastCache(m.City, 0, bcfg.DataRoot, 3*time.Hour)
+		}
+		if !ok || ff == nil {
+			continue
+		}
+
+		// Compute raw signal probability (same logic as ScoreMarket).
+		heatThreshold := 35.0
+		if m.ThresholdC != 0 {
+			heatThreshold = m.ThresholdC
+		}
+		var ourP float64
+		switch m.Signal {
+		case "heat":
+			ourP = weather.HeatProbability(ff.Forecast, heatThreshold)
+		case "cold":
+			ourP = 1 - weather.HeatProbability(ff.Forecast, heatThreshold)
+		case "rain":
+			ourP = weather.RainProbability(ff.Forecast)
+		case "sunny":
+			ourP = weather.SunnyProbability(ff.Forecast)
+		case "wind":
+			ourP = math.Min(0.95, ff.WindSpeedKMH/80.0)
+		case "snow":
+			ourP = weather.SnowProbability(ff.Forecast)
+		case "fog":
+			ourP = weather.FogProbability(ff.Forecast)
+		case "humid":
+			ourP = weather.HumidProbability(ff.Forecast, m.ThresholdC)
+		case "dry":
+			ourP = weather.DryProbability(ff.Forecast)
+		default:
+			ourP = 0.5
+		}
+
+		yesEdge := ourP - m.YesPrice
+		noEdge := (1 - ourP) - m.NoPrice
+
+		var side string
+		var bestEdge float64
+		if yesEdge > noEdge && yesEdge > 0 {
+			side, bestEdge = "YES", yesEdge
+		} else if noEdge > 0 {
+			side, bestEdge = "NO", noEdge
+		} else {
+			continue // no positive edge on either side
+		}
+
+		score := bestEdge * ff.Confidence
+		entries = append(entries, scoredEntry{
+			m:     m,
+			side:  side,
+			edge:  bestEdge,
+			conf:  ff.Confidence,
+			score: score,
+			ourP:  ourP,
+		})
+	}
+
+	if len(entries) == 0 {
+		return "📭 No markets with positive edge found in forecast cache."
+	}
+
+	// Sort by score descending.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].score > entries[j].score
+	})
+
+	const maxShow = 5
+	if len(entries) > maxShow {
+		entries = entries[:maxShow]
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🎯 <b>Top %d Markets by Edge×Confidence</b>\n", len(entries)))
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-12s %-6s %-4s %5s %5s %6s %5s\n",
+		"City", "Signal", "Side", "Edge", "Conf", "Score", "Price"))
+	sb.WriteString(strings.Repeat("─", 51) + "\n")
+	for _, e := range entries {
+		price := e.m.YesPrice
+		if e.side == "NO" {
+			price = e.m.NoPrice
+		}
+		city := e.m.City
+		if len(city) > 12 {
+			city = city[:12]
+		}
+		sb.WriteString(fmt.Sprintf("%-12s %-6s %-4s %5.2f %4.0f%% %6.4f %5.2f\n",
+			city, e.m.Signal, e.side,
+			e.edge, e.conf*100, e.score, price))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>Score = edge × confidence | %s UTC</i>",
+		time.Now().UTC().Format("15:04")))
 	return sb.String()
 }
