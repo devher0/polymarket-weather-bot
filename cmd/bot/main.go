@@ -38,15 +38,6 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
 
-// maxForecastAge converts MaxForecastAgeHours from config to a Duration.
-// Returns 0 (no limit) when cfg.MaxForecastAgeHours is 0.
-func maxForecastAge(cfg *config.Config) time.Duration {
-	if cfg.MaxForecastAgeHours <= 0 {
-		return 0
-	}
-	return time.Duration(cfg.MaxForecastAgeHours * float64(time.Hour))
-}
-
 // sessionStats tracks cumulative statistics for the current process run.
 type sessionStats struct {
 	startTime    time.Time
@@ -720,8 +711,6 @@ func main() {
 		}
 		scoredList := make([]scored, 0, len(mkt))
 
-		staleThreshold := maxForecastAge(cfg)
-
 		for _, m := range mkt {
 			if m.City != "" && !configuredCities[m.City] {
 				continue
@@ -748,17 +737,16 @@ func main() {
 				}
 			}
 
-			// TASK-029: skip stale forecasts.
-			if ff != nil && staleThreshold > 0 && !ff.FetchedAt.IsZero() {
-				age := time.Since(ff.FetchedAt)
-				if age > staleThreshold {
-					slog.Info("stale forecast, skipping market",
-						"city", m.City,
-						"age", age.Round(time.Minute).String(),
-						"max_age", staleThreshold.String(),
-					)
-					ff = nil
-				}
+			// TASK-029 / TASK-155: skip stale forecasts.
+			if ff != nil && collectors.IsForecastStale(ff, cfg.MaxForecastAgeHours) {
+				age := collectors.ForecastAge(ff)
+				slog.Warn("stale forecast, skipping market",
+					"city", m.City,
+					"age", age.Round(time.Minute).String(),
+					"max_age_hours", cfg.MaxForecastAgeHours,
+				)
+				metrics.IncStaleForecastSkipped()
+				ff = nil
 			}
 
 			sc := strategy.ScoreMarket(m, ff)

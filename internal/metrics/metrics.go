@@ -38,11 +38,12 @@ import (
 // All fields are updated atomically so the HTTP handler can read them
 // without taking a lock.
 type botState struct {
-	startTime    time.Time
-	lastCycleAt  atomic.Int64 // Unix timestamp (0 = never)
-	cycleCount   atomic.Int64
-	betsPlaced   atomic.Int64
-	loopSec      atomic.Int64 // base loop interval for "degraded" detection
+	startTime             time.Time
+	lastCycleAt           atomic.Int64 // Unix timestamp (0 = never)
+	cycleCount            atomic.Int64
+	betsPlaced            atomic.Int64
+	loopSec               atomic.Int64 // base loop interval for "degraded" detection
+	staleForecastsSkipped atomic.Int64 // incremented by TASK-155 stale-forecast guard
 }
 
 // global singleton — initialised when the package is first imported.
@@ -54,6 +55,12 @@ func UpdateCycle(betsPlacedThisCycle int) {
 	state.lastCycleAt.Store(time.Now().Unix())
 	state.cycleCount.Add(1)
 	state.betsPlaced.Add(int64(betsPlacedThisCycle))
+}
+
+// IncStaleForecastSkipped increments the stale_forecasts_skipped counter.
+// Call this each time a bet is skipped due to an outdated forecast (TASK-155).
+func IncStaleForecastSkipped() {
+	state.staleForecastsSkipped.Add(1)
 }
 
 // SetLoopSec stores the configured base loop interval so /healthz can compute
@@ -166,6 +173,10 @@ func metricsHandler(dataRoot string) http.HandlerFunc {
 				}
 				return fmt.Sprintf("sharpe_ratio_30d %g", sh)
 			}(),
+
+			"# HELP stale_forecasts_skipped_total Bets skipped because the forecast exceeded MaxForecastAgeHours",
+			"# TYPE stale_forecasts_skipped_total counter",
+			fmt.Sprintf("stale_forecasts_skipped_total %d", state.staleForecastsSkipped.Load()),
 		}
 
 		for _, l := range lines {

@@ -6,6 +6,7 @@
 //   /next     — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
 //   /summary  — compact multi-section health overview (TASK-146)
+//   /export [days] — send CSV of resolved bets as file (TASK-154)
 //   /pause    — suspend all trading
 //   /resume   — resume trading
 //
@@ -14,12 +15,16 @@
 package notifier
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -186,6 +191,19 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleSummary(bcfg))
 				case "/signals":
 					sendReply(cfg, chatID, handleSignals(bcfg))
+				case "/export":
+					arg := ""
+					parts := strings.SplitN(text, " ", 2)
+					if len(parts) == 2 {
+						arg = strings.TrimSpace(parts[1])
+					}
+					days := 30
+					if arg != "" {
+						if n, err := strconv.Atoi(arg); err == nil && n > 0 {
+							days = n
+						}
+					}
+					handleExport(bcfg, chatID, days, cfg)
 				case "/watchlist":
 					arg := ""
 					parts := strings.SplitN(text, " ", 2)
@@ -811,4 +829,140 @@ func handleSignals(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString("\n🟢≥55% 🟡45-55% 🔴&lt;45% (min 3 bets)")
 	return sb.String()
+}
+
+// ── TASK-154: /export command ─────────────────────────────────────────────
+
+// handleExport sends a CSV of resolved bets for the last `days` days as a
+// Telegram document.  If the file has ≥ 50 rows it is gzip-compressed first.
+func handleExport(bcfg BotConfig, chatID int64, days int, cfg *telegramConfig) {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		sendReply(cfg, chatID, "❌ Could not load bet history.")
+		return
+	}
+
+	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+	csvHeader := "timestamp,condition_id,city,signal,side,size_usdc,market_price,our_probability,outcome,resolved_at,pnl_usdc\n"
+
+	var rows []string
+	for _, r := range records {
+		if r.Outcome == nil {
+			continue // only resolved bets
+		}
+		if r.Timestamp.Before(cutoff) {
+			continue
+		}
+		outcomeStr := "true"
+		if !*r.Outcome {
+			outcomeStr = "false"
+		}
+		var pnl float64
+		if *r.Outcome {
+			pnl = r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			pnl = -r.SizeUSDC
+		}
+		resolvedStr := ""
+		if !r.ResolvedAt.IsZero() {
+			resolvedStr = r.ResolvedAt.UTC().Format(time.RFC3339)
+		}
+		rows = append(rows, fmt.Sprintf(
+			"%s,%s,%s,%s,%s,%.2f,%.6f,%.6f,%s,%s,%.4f\n",
+			r.Timestamp.UTC().Format(time.RFC3339),
+			r.ConditionID,
+			r.City,
+			r.Signal,
+			r.Side,
+			r.SizeUSDC,
+			r.MarketPrice,
+			r.OurProbability,
+			outcomeStr,
+			resolvedStr,
+			pnl,
+		))
+	}
+
+	if len(rows) == 0 {
+		sendReply(cfg, chatID, fmt.Sprintf("📭 No resolved bets in the last %d days.", days))
+		return
+	}
+
+	// Build raw CSV bytes.
+	var buf bytes.Buffer
+	buf.WriteString(csvHeader)
+	for _, row := range rows {
+		buf.WriteString(row)
+	}
+
+	var (
+		fileBytes    []byte
+		fileName     string
+		mimeType     string
+	)
+
+	if len(rows) >= 50 {
+		// Compress when the file is large.
+		var gz bytes.Buffer
+		w := gzip.NewWriter(&gz)
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			sendReply(cfg, chatID, "❌ Compression error: "+err.Error())
+			return
+		}
+		w.Close()
+		fileBytes = gz.Bytes()
+		fileName = fmt.Sprintf("bets_export_%dd.csv.gz", days)
+		mimeType = "application/gzip"
+	} else {
+		fileBytes = buf.Bytes()
+		fileName = fmt.Sprintf("bets_export_%dd.csv", days)
+		mimeType = "text/csv"
+	}
+
+	if err := sendDocument(cfg, chatID, fileName, mimeType, fileBytes); err != nil {
+		slog.Warn("telegram export: sendDocument failed", "err", err)
+		sendReply(cfg, chatID, "❌ Failed to send file: "+err.Error())
+		return
+	}
+	slog.Info("telegram export: sent bet history", "rows", len(rows), "days", days, "compressed", len(rows) >= 50)
+}
+
+// sendDocument uploads a file to a Telegram chat using the sendDocument API.
+func sendDocument(cfg *telegramConfig, chatID int64, fileName, mimeType string, data []byte) error {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+
+	// chat_id field
+	if err := w.WriteField("chat_id", fmt.Sprint(chatID)); err != nil {
+		return err
+	}
+
+	// document field (binary file)
+	part, err := w.CreateFormFile("document", fileName)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(data); err != nil {
+		return err
+	}
+	w.Close()
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", cfg.token)
+	req, err := http.NewRequest(http.MethodPost, url, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram sendDocument HTTP %d: %s", resp.StatusCode, raw)
+	}
+	return nil
 }
