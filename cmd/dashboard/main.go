@@ -704,6 +704,9 @@ func main() {
 	case "leaderboard":
 		// TASK-217: top city+signal combos by ROI%.
 		cmdLeaderboard(dataRoot)
+	case "calibration-curve":
+		// TASK-218: per-signal calibration error curves (ECE).
+		cmdCalibrationCurve(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -757,6 +760,7 @@ func printUsage() {
 	fmt.Println("  cycles                            Per-cycle performance journal: duration/bets/edge (TASK-199)")
 	fmt.Println("  entropy                           Source disagreement analysis: per-city entropy (TASK-202)")
 	fmt.Println("  leaderboard                       Top city+signal combos by all-time ROI%% (TASK-217)")
+	fmt.Println("  calibration-curve                 Per-signal calibration error curves + ECE (TASK-218)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -3874,4 +3878,136 @@ func min217(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ── calibration-curve (TASK-218) ─────────────────────────────────────────────
+
+// cmdCalibrationCurve prints per-signal calibration error curves and ECE.
+func cmdCalibrationCurve(dataRoot string) {
+	header("📐  CALIBRATION CURVES BY SIGNAL")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error loading history: %v\n", err)
+		return
+	}
+
+	curvesMap := calibration.AllSignalCalibrations(records, 3)
+	if len(curvesMap) == 0 {
+		fmt.Println("  Not enough resolved bets yet (need ≥3 per signal).")
+		return
+	}
+
+	// Collect and sort signal names; put "" (all) last.
+	signals := make([]string, 0, len(curvesMap))
+	for sig := range curvesMap {
+		signals = append(signals, sig)
+	}
+	sort.Slice(signals, func(i, j int) bool {
+		if signals[i] == "" {
+			return false
+		}
+		if signals[j] == "" {
+			return true
+		}
+		return signals[i] < signals[j]
+	})
+
+	for _, sig := range signals {
+		curve := curvesMap[sig]
+		ece := calibration.CalibrationError(curve)
+		diag := calibration.CalibrationDiagnosis(curve, ece)
+
+		label := sig
+		if label == "" {
+			label = "ALL"
+		}
+
+		var eceColor text.Colors
+		switch {
+		case ece < 0.03:
+			eceColor = text.Colors{text.FgGreen}
+		case ece < 0.07:
+			eceColor = text.Colors{text.FgYellow}
+		default:
+			eceColor = text.Colors{text.FgRed}
+		}
+
+		fmt.Printf("\n  Signal: %s  ECE = %s  (%s)\n",
+			styleHeader.Sprint(strings.ToUpper(label)),
+			eceColor.Sprintf("%.3f", ece),
+			diag,
+		)
+
+		t := newTable()
+		t.AppendHeader(table.Row{"Bucket", "Bets", "AvgPred", "ActualRate", "Error", "Bar"})
+
+		for _, b := range curve {
+			if b.Count == 0 {
+				continue
+			}
+			errVal := b.AvgPred - b.ActualRate
+			errStr := fmt.Sprintf("%+.3f", errVal)
+			var errColor text.Colors
+			switch {
+			case math.Abs(errVal) < 0.05:
+				errColor = text.Colors{text.FgGreen}
+			case math.Abs(errVal) < 0.10:
+				errColor = text.Colors{text.FgYellow}
+			default:
+				errColor = text.Colors{text.FgRed}
+			}
+
+			// ASCII bar: actual rate vs predicted.
+			bar := calibrationBar(b.ActualRate, b.AvgPred)
+
+			bucketLabel := fmt.Sprintf("[%.1f, %.1f)", b.PredMid-0.1, b.PredMid+0.1)
+			if b.PredMid == 0.9 {
+				bucketLabel = "[0.8, 1.0]"
+			}
+			t.AppendRow(table.Row{
+				bucketLabel,
+				b.Count,
+				fmt.Sprintf("%.3f", b.AvgPred),
+				fmt.Sprintf("%.3f", b.ActualRate),
+				errColor.Sprint(errStr),
+				bar,
+			})
+		}
+		t.Render()
+	}
+
+	fmt.Println("\n  ECE interpretation: < 0.03 well-calibrated | 0.03–0.07 minor | ≥ 0.07 needs recalibration")
+	fmt.Println("  Positive error = overconfident (predicted > actual). Negative = underconfident.")
+}
+
+// calibrationBar returns a small ASCII bar visualising predicted vs actual rate.
+// Predicted shown as '|', actual as '*'; 20 chars wide.
+func calibrationBar(actual, predicted float64) string {
+	const width = 20
+	bar := make([]byte, width)
+	for i := range bar {
+		bar[i] = '.'
+	}
+	actualPos := int(math.Round(actual * float64(width-1)))
+	predPos := int(math.Round(predicted * float64(width-1)))
+	if actualPos < 0 {
+		actualPos = 0
+	}
+	if actualPos >= width {
+		actualPos = width - 1
+	}
+	if predPos < 0 {
+		predPos = 0
+	}
+	if predPos >= width {
+		predPos = width - 1
+	}
+	bar[actualPos] = '*'
+	if predPos != actualPos {
+		bar[predPos] = '|'
+	} else {
+		bar[actualPos] = 'X' // overlap
+	}
+	return string(bar)
 }

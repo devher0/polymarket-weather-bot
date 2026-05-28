@@ -2179,7 +2179,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Медаль: 🥇🥈🥉 для топ-3; цвет зелёный (ROI>15%), жёлтый (0-15%), красный (<0%)
 - `go run ./cmd/dashboard leaderboard`
 
-### [ ] TASK-218: Per-signal calibration error tracker — кривые калибровки по сигналам
+### [x] 2026-05-28 — TASK-218: Per-signal calibration error tracker — кривые калибровки по сигналам
 **Файлы:** `internal/calibration/calibration_curve.go` (новый), `internal/calibration/calibration_curve_test.go` (новый), `cmd/dashboard/main.go` (обновить)
 Плохо откалиброванная вероятность — root cause многих потерь. Показываем гистограмму deviation: насколько наши predicted P совпадают с реальными исходами по сигналу.
 - Разбить [0,1] на 5 бакетов: [0,0.2), [0.2,0.4), [0.4,0.6), [0.6,0.8), [0.8,1.0]
