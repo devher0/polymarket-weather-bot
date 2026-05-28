@@ -340,6 +340,12 @@ func main() {
 
 	// Print Brier score from past bets at startup
 	calibration.PrintBrierScore(cfg.DataRoot)
+	// TASK-147: log calibration drift status at startup.
+	if startupDriftRecords, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
+		if line := calibration.DriftStatusLine(startupDriftRecords); line != "" {
+			slog.Info("calibration drift status", "status", line)
+		}
+	}
 
 	// TASK-072: weak signal alert — warn if any signal type has <40% win rate (≥10 samples).
 	// TASK-074: export calibration snapshot at startup.
@@ -1175,6 +1181,11 @@ func main() {
 			if alert, msg := calibration.StreakAlert(records, 4); alert {
 				slog.Warn("streak alert", "message", msg)
 				_ = notifier.NotifyError("streak alert", fmt.Errorf("%s", msg))
+			}
+			// TASK-147: check for Brier score drift after each resolve cycle.
+			if alert, msg := calibration.DriftAlert(records, 14, 30, 0.15); alert {
+				slog.Warn("calibration drift", "message", msg)
+				_ = notifier.NotifyError("calibration drift", fmt.Errorf("%s", msg))
 			}
 		})
 

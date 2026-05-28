@@ -251,6 +251,12 @@ func handleStatus(bcfg BotConfig) string {
 		plattStr = fmt.Sprintf("\nCalibrator: <code>A=%.3f B=%.3f N=%d</code>", pc.A, pc.B, pc.N)
 	}
 
+	// TASK-147: calibration drift indicator.
+	driftStr := ""
+	if line := calibration.DriftStatusLine(records); line != "" {
+		driftStr = "\n" + line
+	}
+
 	return fmt.Sprintf(
 		"📊 <b>Bot Status</b>\n"+
 			"State: %s\n"+
@@ -258,8 +264,8 @@ func handleStatus(bcfg BotConfig) string {
 			"Sharpe (30d): <code>%s</code>\n"+
 			"Streak: <code>%s</code>\n"+
 			"Open positions: <b>%d</b>\n"+
-			"Today P&amp;L: <b>%+.2f USDC</b>%s%s",
-		pauseState, brierStr, sharpeStr, streakStr, open, pnlToday, sparkStr, plattStr,
+			"Today P&amp;L: <b>%+.2f USDC</b>%s%s%s",
+		pauseState, brierStr, sharpeStr, streakStr, open, pnlToday, sparkStr, plattStr, driftStr,
 	)
 }
 
