@@ -3076,3 +3076,31 @@ Rationale: Polymarket order flow и liquidity существенно меняю�
 **Тесты**: all PASS
 **Строк кода:** ~80 (handleCompareSignals) + ~5 wiring
 **Файлы:** `internal/notifier/telegram_commands.go`
+
+---
+
+## 2026-05-28 08:58 UTC — TASK-221
+
+### TASK-221: Polymarket volume tracker
+
+**Что сделано:**
+- `internal/markets/volume_tracker.go` (новый):
+  - `VolumeSnapshot` struct: ConditionID, Question, Volume24h, TotalVolume, UpdatedAt
+  - `FetchVolume(conditionID)` — GET Gamma API `/markets?condition_id=...` → parsed volume
+  - `SaveVolumeSnapshots(snaps, dataRoot)` — persist to `data/volume/{date}.json` (merge + dedup)
+  - `LoadTodayVolumeSnapshots(dataRoot)` — load today's snapshot file (nil if missing)
+  - `SnapshotsFromMarkets(mks)` — convert []Market → []VolumeSnapshot, sets HighVolume flag in-place
+- `internal/markets/markets.go` (обновлён):
+  - Добавлен `HighVolume bool` в Market struct (true when VolumeUSDC ≥ 10 000 USDC)
+  - В `GetWeatherMarkets()`: устанавливать `HighVolume: volumeUSDC >= 10_000`
+- `internal/strategy/strategy.go` (обновлён):
+  - `m.HighVolume` → +0.06 confidence boost (вместо +0.04); прежняя >5k логика остаётся для промежуточных значений
+- `internal/notifier/telegram_commands.go` (обновлён):
+  - `handleVolume(bcfg)` — топ-5 рынков по TotalVolume; 🔥 badge при HighVolume; fallback на live fetch
+  - `formatVolume()` helper: "12.3k", "1.5M"
+  - `/volume` добавлен в dispatch + header + /help
+
+**go build ./...**: ✅
+**Тесты**: all PASS
+**Строк кода:** ~110 (volume_tracker.go) + ~65 (handleVolume/formatVolume) + ~10 wiring
+**Файлы:** `internal/markets/volume_tracker.go`, `internal/markets/markets.go`, `internal/strategy/strategy.go`, `internal/notifier/telegram_commands.go`

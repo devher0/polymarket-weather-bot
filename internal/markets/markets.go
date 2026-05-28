@@ -43,6 +43,8 @@ type Market struct {
 	// TASK-175: total traded volume in USDC parsed from the API response.
 	// Zero means the field was absent in the response (not necessarily zero volume).
 	VolumeUSDC float64
+	// TASK-221: true when VolumeUSDC > 10 000 USDC — signals reliable price discovery.
+	HighVolume bool
 }
 
 type signal struct {
@@ -373,6 +375,7 @@ func GetWeatherMarkets() ([]Market, error) {
 				LastTradeTime: lastTrade,
 				ExpiryUTC:     expiryUTC,
 				VolumeUSDC:    volumeUSDC,
+				HighVolume:    volumeUSDC >= 10_000,
 			})
 		}
 

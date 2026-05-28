@@ -288,7 +288,12 @@ func EvaluateFused(
 	// High market volume signals better price discovery (smarter money active);
 	// thin markets (<50 USDC) suggest unreliable pricing.
 	// Only applied when VolumeUSDC is available (> 0).
-	if m.VolumeUSDC > 5000 {
+	if m.HighVolume {
+		// TASK-221: high-volume markets (>10k USDC) signal deep liquidity and
+		// reliable price discovery; apply an extra +0.02 boost on top of TASK-204.
+		ff.Confidence = math.Min(0.97, ff.Confidence+0.06)
+		slog.Debug("volume confidence boost", "volume_usdc", fmt.Sprintf("%.0f", m.VolumeUSDC), "boost", "+0.06 (high_volume)")
+	} else if m.VolumeUSDC > 5000 {
 		ff.Confidence = math.Min(0.97, ff.Confidence+0.04)
 		slog.Debug("volume confidence boost", "volume_usdc", fmt.Sprintf("%.0f", m.VolumeUSDC), "boost", "+0.04")
 	} else if m.VolumeUSDC > 1000 {

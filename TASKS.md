@@ -2216,7 +2216,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Минимум 3 ставки в каждом периоде для сравнения; иначе "N/A"
 - Добавить case "/compare-signals" + строку в /help секция "Analytics"
 
-### [ ] TASK-221: Polymarket volume tracker — отслеживать объём торгов на рынках
+### [x] 2026-05-28 — TASK-221: Polymarket volume tracker — отслеживать объём торгов на рынках
 **Файл:** `internal/markets/volume_tracker.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
 Добавить `/volume` команду: топ рынков по объёму торгов за последние 24ч.
 - `FetchVolume(conditionID string) (float64, error)` — GET Gamma API `/markets?condition_id=...` → поле `volume`

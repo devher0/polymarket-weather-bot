@@ -35,6 +35,7 @@
 //   /weekly          — 4-week P&L table with best/worst week (TASK-214)
 //   /roi             — cumulative ROI% from starting bankroll with weekly sparkline (TASK-215)
 //   /compare-signals — compare per-signal win rate: last 30d vs previous 30d (TASK-220)
+//   /volume          — top markets by volume: total + 24h with HighVolume badge (TASK-221)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -309,6 +310,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleROI(bcfg))
 				case "/compare-signals":
 					sendReply(cfg, chatID, handleCompareSignals(bcfg))
+				case "/volume":
+					sendReply(cfg, chatID, handleVolume(bcfg))
 				}
 			}
 		}
@@ -1865,7 +1868,8 @@ func handleHelp() string {
 /streak          Current win/loss streak + historical best/worst
 /weekly          4-week P&L table with best/worst week
 /roi             Cumulative ROI% from start with weekly sparkline
-/compare-signals Compare per-signal win rate: last 30d vs prev 30d</pre>
+/compare-signals Compare per-signal win rate: last 30d vs prev 30d
+/volume          Top markets by traded volume (24h + total)</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -3240,4 +3244,82 @@ func handleCompareSignals(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()
+}
+
+// handleVolume returns top active weather markets sorted by traded volume.
+// Shows total volume, HighVolume badge, and today's snapshot data. (TASK-221)
+func handleVolume(bcfg BotConfig) string {
+	// Load today's cached snapshots first; supplement with live markets if empty.
+	snaps, _ := markets.LoadTodayVolumeSnapshots(bcfg.DataRoot)
+
+	if len(snaps) == 0 {
+		// Attempt live fetch.
+		mks, err := markets.GetWeatherMarkets()
+		if err != nil {
+			return "❌ Could not fetch market data: " + err.Error()
+		}
+		if len(mks) == 0 {
+			return "📭 No active weather markets found."
+		}
+		snaps = markets.SnapshotsFromMarkets(mks)
+		// Persist for future calls.
+		_ = markets.SaveVolumeSnapshots(snaps, bcfg.DataRoot)
+	}
+
+	if len(snaps) == 0 {
+		return "📭 No volume data available."
+	}
+
+	// Sort by TotalVolume desc.
+	sorted := make([]markets.VolumeSnapshot, len(snaps))
+	copy(sorted, snaps)
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].TotalVolume > sorted[i].TotalVolume {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	top := sorted
+	if len(top) > 5 {
+		top = top[:5]
+	}
+
+	var sb strings.Builder
+	sb.WriteString("💰 <b>Top Markets by Volume</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-32s %10s  %s\n", "Market", "Vol USDC", ""))
+	sb.WriteString(strings.Repeat("─", 50) + "\n")
+
+	for _, s := range top {
+		q := s.Question
+		if len(q) > 30 {
+			q = q[:29] + "…"
+		}
+		badge := ""
+		if s.TotalVolume >= 10_000 {
+			badge = "🔥"
+		}
+		volStr := formatVolume(s.TotalVolume)
+		sb.WriteString(fmt.Sprintf("%-32s %10s %s\n", q, volStr, badge))
+	}
+
+	sb.WriteString(strings.Repeat("─", 50) + "\n")
+	sb.WriteString(fmt.Sprintf("Total markets tracked: %d\n", len(snaps)))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// formatVolume renders a USDC volume as a compact string (e.g. "12.3k", "1.5M").
+func formatVolume(v float64) string {
+	switch {
+	case v >= 1_000_000:
+		return fmt.Sprintf("%.1fM", v/1_000_000)
+	case v >= 1_000:
+		return fmt.Sprintf("%.1fk", v/1_000)
+	default:
+		return fmt.Sprintf("%.0f", v)
+	}
 }
