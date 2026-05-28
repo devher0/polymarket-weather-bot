@@ -21,11 +21,13 @@ import (
 
 const hourlyWinRateFile = "data/hourly_winrate.json"
 
-// HourBucket holds win/loss counts for one UTC hour (0–23).
+// HourBucket holds win/loss counts and horizon tracking for one UTC hour (0–23).
 type HourBucket struct {
-	Hour   int `json:"hour"`   // 0–23 UTC
-	Wins   int `json:"wins"`   // resolved bets we won
-	Losses int `json:"losses"` // resolved bets we lost
+	Hour         int     `json:"hour"`          // 0–23 UTC
+	Wins         int     `json:"wins"`          // resolved bets we won
+	Losses       int     `json:"losses"`        // resolved bets we lost
+	HorizonSum   float64 `json:"horizon_sum"`   // sum of horizonHours for all tracked bets
+	HorizonCount int     `json:"horizon_count"` // number of bets with horizon recorded
 }
 
 // WinRate returns the win fraction for this bucket, or -1 if no data.
@@ -189,28 +191,49 @@ func TimingMultiplierNow(dataRoot string) float64 {
 }
 
 // HourlyTable returns a formatted summary of win rates per hour for display.
-// Format: hour, wins, losses, total, win_rate, multiplier.
+// Format: hour, wins, losses, total, win_rate, multiplier, avg_horizon, horizon_decay.
 func HourlyTable(buckets [24]HourBucket) []HourlyRow {
 	rows := make([]HourlyRow, 24)
 	for i, b := range buckets {
 		wr := b.WinRate()
 		m := TimingMultiplier(buckets, i)
+
+		var avgHorizon float64
+		if b.HorizonCount > 0 {
+			avgHorizon = b.HorizonSum / float64(b.HorizonCount)
+		}
+
 		rows[i] = HourlyRow{
-			Hour:       i,
-			Wins:       b.Wins,
-			Losses:     b.Losses,
-			WinRate:    wr,
-			Multiplier: m,
+			Hour:            i,
+			Wins:            b.Wins,
+			Losses:          b.Losses,
+			WinRate:         wr,
+			Multiplier:      m,
+			AvgHorizonHours: avgHorizon,
+			HorizonDecay:    horizonDecayLinear(avgHorizon),
 		}
 	}
 	return rows
 }
 
+// horizonDecayLinear returns the confidence decay factor for a given forecast
+// horizon in hours.  Formula: max(0.65, 1.0 - h/400).
+// Mirrors collectors.HorizonDecayLinear without creating an import dependency.
+func horizonDecayLinear(h float64) float64 {
+	if h < 0 {
+		h = 0
+	}
+	v := 1.0 - h/400.0
+	return math.Max(0.65, v)
+}
+
 // HourlyRow is one display row in the hourly timing table.
 type HourlyRow struct {
-	Hour       int
-	Wins       int
-	Losses     int
-	WinRate    float64 // -1 = no data
-	Multiplier float64
+	Hour            int
+	Wins            int
+	Losses          int
+	WinRate         float64 // -1 = no data
+	Multiplier      float64
+	AvgHorizonHours float64 // mean forecast horizon for bets placed this hour (0 = no data)
+	HorizonDecay    float64 // horizonDecayLinear(AvgHorizonHours), range [0.65,1.0]
 }

@@ -372,6 +372,10 @@ func main() {
 
 	sess := &sessionStats{startTime: time.Now()}
 
+	// TASK-136: track when we last sent a duplicate-market Telegram alert.
+	// We only send one alert per 24 hours to avoid spamming.
+	var lastDuplicateAlert time.Time
+
 	// TASK-119: track consecutive Polymarket API failures across cycles.
 	// A Telegram alert is sent when the streak transitions from 2 → 3 failures.
 	consecutiveAPIFails := 0
@@ -519,6 +523,18 @@ func main() {
 		}
 		consecutiveAPIFails = 0 // reset streak on success
 		slog.Info("weather markets found", "count", len(mkt))
+
+		// TASK-136: detect duplicate-market fingerprints and alert once per day.
+		if dupes := markets.FindDuplicates(mkt); len(dupes) > 0 {
+			slog.Info("duplicate markets detected", "groups", len(dupes))
+			if time.Since(lastDuplicateAlert) > 24*time.Hour {
+				if err := notifier.NotifyDuplicates(dupes); err != nil {
+					slog.Warn("duplicate markets alert failed", "err", err)
+				} else {
+					lastDuplicateAlert = time.Now()
+				}
+			}
+		}
 
 		if len(mkt) == 0 {
 			slog.Warn("no weather markets found on Polymarket right now")

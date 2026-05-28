@@ -118,6 +118,64 @@ func TestFindDuplicates_DifferentSignal(t *testing.T) {
 	}
 }
 
+// ── BuildDuplicateAlertText (TASK-136) ───────────────────────────────────────
+
+func TestBuildDuplicateAlertText_NoDuplicates(t *testing.T) {
+	text := BuildDuplicateAlertText(nil)
+	if text != "" {
+		t.Errorf("expected empty string for nil dupes, got %q", text)
+	}
+
+	text = BuildDuplicateAlertText(map[string][]string{})
+	if text != "" {
+		t.Errorf("expected empty string for empty dupes, got %q", text)
+	}
+}
+
+func TestBuildDuplicateAlertText_HasDuplicates(t *testing.T) {
+	dupes := map[string][]string{
+		"new_york/heat/2026-07-04": {"c1", "c2"},
+		"miami/rain/2026-08-01":    {"c3", "c4", "c5"},
+	}
+	text := BuildDuplicateAlertText(dupes)
+	if text == "" {
+		t.Fatal("expected non-empty alert text for duplicate groups")
+	}
+	// Must mention number of groups.
+	if !containsStr(text, "2 group") {
+		t.Errorf("expected text to mention 2 groups, got:\n%s", text)
+	}
+	// Must include both fingerprints.
+	if !containsStr(text, "new_york/heat/2026-07-04") {
+		t.Errorf("expected fingerprint new_york/heat/2026-07-04 in text:\n%s", text)
+	}
+	if !containsStr(text, "miami/rain/2026-08-01") {
+		t.Errorf("expected fingerprint miami/rain/2026-08-01 in text:\n%s", text)
+	}
+	// Must list condition IDs.
+	if !containsStr(text, "c1") || !containsStr(text, "c2") {
+		t.Errorf("expected condition IDs c1, c2 in text:\n%s", text)
+	}
+	if !containsStr(text, "c3") || !containsStr(text, "c4") || !containsStr(text, "c5") {
+		t.Errorf("expected condition IDs c3, c4, c5 in text:\n%s", text)
+	}
+}
+
+// containsStr is a helper to avoid importing strings in test.
+func containsStr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+			return false
+		}())
+}
+
+// ── IsDuplicateOf ────────────────────────────────────────────────────────────
+
 func TestIsDuplicateOf_NoBets(t *testing.T) {
 	m := makeMarket("c1", "new_york", "heat", "", time.Now().UTC().Add(24*time.Hour))
 	if IsDuplicateOf(m, nil) {

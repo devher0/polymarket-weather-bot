@@ -596,6 +596,41 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// NotifyDuplicates sends a Telegram alert listing duplicate market fingerprints
+// (TASK-136).  No-op if dupes is empty or Telegram is not configured.
+func NotifyDuplicates(dupes map[string][]string) error {
+	if len(dupes) == 0 {
+		return nil
+	}
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	// Import cycle prevention: build the text here instead of calling
+	// markets.BuildDuplicateAlertText so that the notifier package does not
+	// depend on the markets package.
+	lines := make([]string, 0, len(dupes)+1)
+	lines = append(lines, fmt.Sprintf("⚠️ <b>Duplicate markets detected (%d group(s)):</b>", len(dupes)))
+
+	// Sort fingerprints for deterministic output.
+	fps := make([]string, 0, len(dupes))
+	for fp := range dupes {
+		fps = append(fps, fp)
+	}
+	for i := 1; i < len(fps); i++ {
+		for j := i; j > 0 && fps[j] < fps[j-1]; j-- {
+			fps[j], fps[j-1] = fps[j-1], fps[j]
+		}
+	}
+	for _, fp := range fps {
+		ids := dupes[fp]
+		lines = append(lines, fmt.Sprintf("• <code>%s</code> — %d markets", fp, len(ids)))
+	}
+
+	return cfg.send(strings.Join(lines, "\n"))
+}
+
 // Abs returns the absolute value of a float64 (avoids importing math for one call).
 func absF(v float64) float64 {
 	return math.Abs(v)

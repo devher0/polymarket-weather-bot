@@ -1374,14 +1374,15 @@ func cmdTiming(dataRoot string) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.SetStyle(table.StyleLight)
-	t.AppendHeader(table.Row{"Hour (UTC)", "Wins", "Losses", "Total", "Win Rate", "Multiplier", "Signal"})
+	t.AppendHeader(table.Row{"Hour (UTC)", "Wins", "Losses", "Total", "Win Rate", "Multiplier", "HorizonDecay", "Signal"})
 
 	for _, r := range rows {
-		var wrStr, multStr, signal string
+		var wrStr, multStr, decayStr, signal string
 
 		if r.WinRate < 0 {
 			wrStr = "—"
 			multStr = "—"
+			decayStr = "—"
 			signal = "no data"
 		} else {
 			wrStr = fmt.Sprintf("%.0f%%", r.WinRate*100)
@@ -1398,6 +1399,21 @@ func cmdTiming(dataRoot string) {
 			default:
 				signal = "→ neutral"
 			}
+
+			// TASK-137: horizon decay column with colour coding.
+			// Green ≥ 0.90, Yellow 0.75–0.90, Red < 0.75.
+			decay := r.HorizonDecay
+			switch {
+			case decay >= 0.90:
+				decayStr = fmt.Sprintf("🟢 %.3f", decay)
+			case decay >= 0.75:
+				decayStr = fmt.Sprintf("🟡 %.3f", decay)
+			default:
+				decayStr = fmt.Sprintf("🔴 %.3f", decay)
+			}
+			if r.AvgHorizonHours > 0 {
+				decayStr += fmt.Sprintf(" (%.0fh)", r.AvgHorizonHours)
+			}
 		}
 
 		marker := "  "
@@ -1412,6 +1428,7 @@ func cmdTiming(dataRoot string) {
 			r.Wins + r.Losses,
 			wrStr,
 			multStr,
+			decayStr,
 			signal,
 		})
 	}
@@ -1420,6 +1437,7 @@ func cmdTiming(dataRoot string) {
 		{Name: "Hour (UTC)", Align: text.AlignLeft},
 		{Name: "Win Rate", Align: text.AlignRight},
 		{Name: "Multiplier", Align: text.AlignRight},
+		{Name: "HorizonDecay", Align: text.AlignRight},
 		{Name: "Signal", Align: text.AlignLeft},
 	})
 	t.Render()
@@ -1427,5 +1445,6 @@ func cmdTiming(dataRoot string) {
 	fmt.Println()
 	fmt.Printf("  Hours with data: %d/24\n", dataHours)
 	fmt.Println("  Multiplier range: 0.50 (worst) → 1.20 (best)  |  1.000 = neutral (< 5 bets)")
+	fmt.Println("  HorizonDecay: 🟢 ≥0.90 (fresh)  🟡 0.75–0.90  🔴 <0.75 (stale)  |  — = no horizon data yet")
 	fmt.Println("  Source: data/hourly_winrate.json")
 }

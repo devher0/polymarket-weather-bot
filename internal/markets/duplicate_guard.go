@@ -8,6 +8,7 @@
 package markets
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -77,6 +78,41 @@ type OpenBetInfo struct {
 	Signal    string
 	PlacedAt  time.Time
 	Resolved  bool // true when the bet has already been resolved
+}
+
+// BuildDuplicateAlertText formats a human-readable summary of duplicate markets
+// suitable for a Telegram notification.  Returns "" when dupes is empty.
+//
+// Example output:
+//
+//	⚠️ Duplicate markets detected (3 groups):
+//	• new_york/heat/2026-07-04 — 2 markets [c1, c2]
+//	• miami/rain/2026-08-01 — 3 markets [c3, c4, c5]
+func BuildDuplicateAlertText(dupes map[string][]string) string {
+	if len(dupes) == 0 {
+		return ""
+	}
+
+	// Sort fingerprints for deterministic output.
+	fps := make([]string, 0, len(dupes))
+	for fp := range dupes {
+		fps = append(fps, fp)
+	}
+	// Simple insertion sort — map is small (typically < 10 entries).
+	for i := 1; i < len(fps); i++ {
+		for j := i; j > 0 && fps[j] < fps[j-1]; j-- {
+			fps[j], fps[j-1] = fps[j-1], fps[j]
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("⚠️ Duplicate markets detected (%d group(s)):\n", len(dupes)))
+	for _, fp := range fps {
+		ids := dupes[fp]
+		sb.WriteString(fmt.Sprintf("• %s — %d markets [%s]\n",
+			fp, len(ids), strings.Join(ids, ", ")))
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // IsDuplicateOf returns true when there is already an open (unresolved) bet

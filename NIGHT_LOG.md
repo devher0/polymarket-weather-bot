@@ -1,5 +1,21 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 02:42 UTC — TASK-136 / TASK-137
+
+**TASK-136: Duplicate-market Telegram alert**
+- `internal/markets/duplicate_guard.go` (+35 строк) — `BuildDuplicateAlertText(dupes)` → форматирует список дублей для Telegram, детерминированная сортировка fingerprints
+- `internal/markets/duplicate_guard_test.go` (+55 строк) — `TestBuildDuplicateAlertText_NoDuplicates`, `TestBuildDuplicateAlertText_HasDuplicates` + helper `containsStr`
+- `internal/notifier/telegram.go` (+35 строк) — `NotifyDuplicates(dupes)` — HTML Telegram alert без import-cycle (текст формируется inline)
+- `cmd/bot/main.go` (+15 строк) — `lastDuplicateAlert time.Time` в сессии; после `GetWeatherMarkets()` вызов `FindDuplicates` + throttle 24h
+
+**TASK-137: Horizon decay в dashboard timing table**
+- `internal/calibration/timing.go` (+20 строк) — `HourBucket` расширен полями `HorizonSum`, `HorizonCount`; `horizonDecayLinear(h)` (inline, без import коллекторов); `HourlyRow` + `AvgHorizonHours` + `HorizonDecay`; `HourlyTable` обновлён для заполнения новых полей
+- `cmd/dashboard/main.go` (+15 строк) — `cmdTiming` добавлена колонка HorizonDecay с цветовой кодировкой (🟢 ≥0.90, 🟡 0.75–0.90, 🔴 <0.75) и горизонтом в часах
+
+**go build ./...** — OK, все тесты зелёные (markets + calibration)
+
+---
+
 ## 2026-05-28 02:14 UTC — TASK-131 / TASK-132
 
 **Файлы изменены:**
