@@ -1,16 +1,17 @@
 // telegram_commands.go — TASK-111: Telegram bot command polling.
 //
 // Supported commands:
-//   /status      — Brier score, open positions, P&L for today
-//   /positions   — list of open (unresolved) bets
-//   /next        — top-3 best bets right now (dry-run, from cached forecasts)
+//   /status         — Brier score, open positions, P&L for today
+//   /positions      — list of open (unresolved) bets
+//   /next           — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
-//   /summary     — compact multi-section health overview (TASK-146)
-//   /signals     — per-signal win rate + Brier breakdown (TASK-151)
-//   /export [days] — send CSV of resolved bets as file (TASK-154)
-//   /healthcheck — data source status, calibration, risk state, signal kelly (TASK-157)
-//   /pause       — suspend all trading
-//   /resume      — resume trading
+//   /summary        — compact multi-section health overview (TASK-146)
+//   /signals        — per-signal win rate + Brier breakdown (TASK-151)
+//   /export [days]  — send CSV of resolved bets as file (TASK-154)
+//   /healthcheck    — data source status, calibration, risk state, signal kelly (TASK-157)
+//   /source-weights — current dynamic weights per data source vs static baseline (TASK-160)
+//   /pause          — suspend all trading
+//   /resume         — resume trading
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -218,6 +219,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleWatchlist(bcfg, arg))
 				case "/healthcheck":
 					sendReply(cfg, chatID, handleHealthcheck(bcfg))
+				case "/source-weights":
+					sendReply(cfg, chatID, handleSourceWeights(bcfg))
 				}
 			}
 		}
@@ -1117,4 +1120,90 @@ func handleHealthcheck(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04:05")))
 	return sb.String()
+}
+
+// ── /source-weights handler (TASK-160) ────────────────────────────────────
+
+// handleSourceWeights returns a table of current source weights (dynamic when
+// enough data exists, static otherwise) compared to the static baseline.
+func handleSourceWeights(bcfg BotConfig) string {
+	accuracy := collectors.LoadSourceAccuracy(bcfg.DataRoot)
+
+	static := map[string]float64{
+		"ecmwf":     0.25,
+		"openmeteo": 0.20,
+		"nasa":      0.17,
+		"noaa":      0.13,
+		"goes":      0.08,
+		"hrrr":      0.12,
+		"gfs":       0.10,
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>⚖️ Source Weights</b>\n")
+	sb.WriteString("<pre>")
+
+	if len(accuracy) == 0 {
+		sb.WriteString("Using static weights (no accuracy data yet).\n\n")
+		sources := make([]string, 0, len(static))
+		for s := range static {
+			sources = append(sources, s)
+		}
+		sort.Strings(sources)
+		sb.WriteString(fmt.Sprintf("%-12s  %6s\n", "Source", "Weight"))
+		sb.WriteString(fmt.Sprintf("%s\n", repeatDash(22)))
+		for _, src := range sources {
+			sb.WriteString(fmt.Sprintf("%-12s  %5.1f%%\n", src, static[src]*100))
+		}
+		sb.WriteString("</pre>")
+		return sb.String()
+	}
+
+	dynamic := collectors.DynamicWeights(accuracy)
+
+	// Collect all known sources from both maps.
+	seen := make(map[string]bool)
+	for s := range static {
+		seen[s] = true
+	}
+	for s := range accuracy {
+		seen[s] = true
+	}
+	sources := make([]string, 0, len(seen))
+	for s := range seen {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+
+	sb.WriteString(fmt.Sprintf("%-12s  %7s  %7s  %6s  %5s\n",
+		"Source", "Dynamic", "Static", "Brier", "N"))
+	sb.WriteString(fmt.Sprintf("%s\n", repeatDash(48)))
+
+	for _, src := range sources {
+		dw := dynamic[src]
+		sw := static[src]
+		brierStr := "  —  "
+		nStr := "—"
+		if st, ok := accuracy[src]; ok && st.Count > 0 {
+			brierStr = fmt.Sprintf("%.3f", st.BrierScore())
+			nStr = fmt.Sprintf("%d", st.Count)
+		}
+		delta := dw - sw
+		deltaStr := fmt.Sprintf("%+.1f%%", delta*100)
+		sb.WriteString(fmt.Sprintf("%-12s  %6.1f%%  %6.1f%%  %s  %5s  %s\n",
+			src, dw*100, sw*100, brierStr, nStr, deltaStr))
+	}
+
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04:05")))
+	return sb.String()
+}
+
+// repeatDash returns a string of n dashes.
+func repeatDash(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = '-'
+	}
+	return string(b)
 }

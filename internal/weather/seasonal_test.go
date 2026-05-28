@@ -1,7 +1,10 @@
 package weather
 
 import (
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -134,4 +137,82 @@ func TestSeasonalSummary(t *testing.T) {
 // todayPlusN returns the date string for today + n days in "2006-01-02" format.
 func todayPlusN(n int) string {
 	return time.Now().UTC().AddDate(0, 0, n).Format("2006-01-02")
+}
+
+// ── TASK-158: PrecipitationZScore tests ──────────────────────────────────
+
+// writePrecipHistFile writes a minimal historical JSON file for testing.
+func writePrecipHistFile(t *testing.T, dir, city string, values []float64) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "data", "historical"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	type rec struct {
+		PrecipitationMM float64 `json:"PrecipitationMM"`
+	}
+	type file struct {
+		Records []rec `json:"records"`
+	}
+	recs := make([]rec, len(values))
+	for i, v := range values {
+		recs[i] = rec{PrecipitationMM: v}
+	}
+	data, _ := json.Marshal(file{Records: recs})
+	path := filepath.Join(dir, "data", "historical", city+".json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrecipitationZScore_MissingFile(t *testing.T) {
+	tmp := t.TempDir()
+	z := PrecipitationZScore("new_york", 10.0, tmp)
+	if z != 0 {
+		t.Errorf("expected 0 for missing file, got %.2f", z)
+	}
+}
+
+func TestPrecipitationZScore_TooFewRecords(t *testing.T) {
+	tmp := t.TempDir()
+	writePrecipHistFile(t, tmp, "london", []float64{1, 2, 3, 4, 5})
+	z := PrecipitationZScore("london", 20.0, tmp)
+	if z != 0 {
+		t.Errorf("expected 0 for < 7 records, got %.2f", z)
+	}
+}
+
+func TestPrecipitationZScore_ArideCity_SmallSigma(t *testing.T) {
+	tmp := t.TempDir()
+	// Dubai summer: near-zero precipitation every day → sigma ≈ 0
+	vals := make([]float64, 10) // all zeros
+	writePrecipHistFile(t, tmp, "dubai", vals)
+	z := PrecipitationZScore("dubai", 5.0, tmp)
+	if z != 0 {
+		t.Errorf("expected 0 for arid city (sigma < 0.5), got %.2f", z)
+	}
+}
+
+func TestPrecipitationZScore_HeavyRainAnomaly(t *testing.T) {
+	tmp := t.TempDir()
+	// 10 days with realistic variability (σ ≈ 2.7 mm); today forecast = 30 mm.
+	vals := []float64{0, 5, 1, 8, 2, 6, 0, 4, 1, 3}
+	writePrecipHistFile(t, tmp, "miami", vals)
+	z := PrecipitationZScore("miami", 30.0, tmp)
+	if z <= 2.0 {
+		t.Errorf("expected z > 2 for heavy rain anomaly, got %.2f", z)
+	}
+	if z > 5 {
+		t.Errorf("expected z clamped to 5, got %.2f", z)
+	}
+}
+
+func TestPrecipitationZScore_DryAnomaly(t *testing.T) {
+	tmp := t.TempDir()
+	// 10 days of ~10 mm baseline; today = 0 mm → negative z
+	vals := []float64{9, 10, 11, 10, 9, 10, 11, 10, 9, 10}
+	writePrecipHistFile(t, tmp, "london", vals)
+	z := PrecipitationZScore("london", 0.0, tmp)
+	if z >= 0 {
+		t.Errorf("expected negative z for dry anomaly, got %.2f", z)
+	}
 }

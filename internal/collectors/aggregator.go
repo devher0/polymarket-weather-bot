@@ -40,6 +40,10 @@ type FusedForecast struct {
 	// TASK-134: hours between forecast assembly and target date (e.g. 36 for a
 	// day-1.5 forecast). Used to apply HorizonDecayLinear confidence penalty.
 	ForecastHorizonHours float64
+	// TASK-158: signed z-score measuring how anomalous the precipitation forecast
+	// is versus the city's 30-day historical baseline. +2 = major wet event.
+	// 0 when historical data unavailable.
+	PrecipZScore float64
 }
 
 // staticSourceWeights defines the base weight for each data source.
@@ -638,6 +642,25 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 				"new_confidence", fmt.Sprintf("%.2f", anomalyConfidenceFloor),
 			)
 			ff.Confidence = anomalyConfidenceFloor
+		}
+	}
+
+	// TASK-158: boost confidence when the precipitation forecast is a strong
+	// positive anomaly (z > 2.0 = more than 2σ above the 30-day mean).
+	// Heavy rain events are typically well-resolved by NWP models, so this
+	// mirrors the temperature anomaly boost above.
+	ff.PrecipZScore = weather.PrecipitationZScore(city, ff.Forecast.PrecipitationMM, dataRoot)
+	if ff.PrecipZScore > 2.0 {
+		const precipAnomalyFloor = 0.72
+		if ff.Confidence < precipAnomalyFloor {
+			slog.Info("precipitation anomaly: confidence boosted",
+				"city", city,
+				"precip_mm", fmt.Sprintf("%.1f", ff.Forecast.PrecipitationMM),
+				"precip_z", fmt.Sprintf("%.2f", ff.PrecipZScore),
+				"old_confidence", fmt.Sprintf("%.2f", ff.Confidence),
+				"new_confidence", fmt.Sprintf("%.2f", precipAnomalyFloor),
+			)
+			ff.Confidence = precipAnomalyFloor
 		}
 	}
 

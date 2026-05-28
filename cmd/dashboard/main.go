@@ -579,6 +579,9 @@ func main() {
 		cmpDays := cmpFlags.Int("days", 7, "Length of each comparison period in days")
 		_ = cmpFlags.Parse(os.Args[2:])
 		cmdCompare(dataRoot, *cmpDays)
+	case "markets":
+		// TASK-159: live Polymarket weather market overview table.
+		cmdMarkets()
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -611,9 +614,140 @@ func printUsage() {
 	fmt.Println("  health                            Per-source data availability stats (TASK-081)")
 	fmt.Println("  timing                            Hourly win-rate and bet-size timing multiplier (TASK-133)")
 	fmt.Println("  freshness                         Forecast freshness table: age/status per city (TASK-140)")
+	fmt.Println("  markets                           Live Polymarket weather market overview: price/spread/status (TASK-159)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  all                               Run all sub-commands")
+}
+
+// ── markets (TASK-159) ────────────────────────────────────────────────────────
+
+// cmdMarkets fetches live Polymarket weather markets and renders a summary table
+// showing price, spread, liquidity status, and time-to-expiry for each market.
+func cmdMarkets() {
+	header("🎯  LIVE POLYMARKET WEATHER MARKETS")
+
+	fmt.Print("  Fetching markets…")
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n  error: %v\n", err)
+		return
+	}
+	fmt.Printf(" %d found\n", len(mks))
+
+	if len(mks) == 0 {
+		fmt.Println("  No weather markets found.")
+		return
+	}
+
+	fmt.Print("  Enriching with order-book depth…")
+	markets.EnrichWithLiquidity(mks)
+	fmt.Println(" done")
+
+	// Sort: active first, then thin, then stale; within group by city+signal.
+	sort.Slice(mks, func(i, j int) bool {
+		si := marketStatusRank(mks[i])
+		sj := marketStatusRank(mks[j])
+		if si != sj {
+			return si < sj
+		}
+		if mks[i].City != mks[j].City {
+			return mks[i].City < mks[j].City
+		}
+		return mks[i].Signal < mks[j].Signal
+	})
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"City", "Signal", "YES", "NO", "Spread", "Status", "Expires in",
+	})
+
+	now := time.Now().UTC()
+	var nActive, nThin, nStale int
+
+	for _, m := range mks {
+		cityDisplay := m.City
+		if m.City == "" {
+			cityDisplay = "(unknown)"
+		}
+		sigDisplay := m.Signal
+		if m.Signal == "" {
+			sigDisplay = "(unknown)"
+		}
+
+		statusStr, statusNum := marketStatusLabel(m)
+		switch statusNum {
+		case 0:
+			nActive++
+		case 1:
+			nThin++
+		case 2:
+			nStale++
+		}
+
+		spreadStr := fmt.Sprintf("%.3f", m.Spread)
+		yesStr := fmt.Sprintf("%.3f", m.YesPrice)
+		noStr := fmt.Sprintf("%.3f", m.NoPrice)
+
+		expiryStr := "—"
+		if !m.ExpiryUTC.IsZero() {
+			remaining := m.ExpiryUTC.Sub(now)
+			if remaining < 0 {
+				expiryStr = styleLoss.Sprint("expired")
+			} else if remaining < 6*time.Hour {
+				expiryStr = styleLoss.Sprint(formatDuration(remaining))
+			} else if remaining < 24*time.Hour {
+				expiryStr = styleNeutral.Sprint(formatDuration(remaining))
+			} else {
+				expiryStr = formatDuration(remaining)
+			}
+		}
+
+		t.AppendRow(table.Row{
+			cityDisplay, sigDisplay, yesStr, noStr, spreadStr, statusStr, expiryStr,
+		})
+	}
+	t.Render()
+
+	fmt.Printf("\n  Total: %d  |  🟢 Active: %d  |  🟡 Thin: %d  |  🔴 Stale: %d\n",
+		len(mks), nActive, nThin, nStale)
+}
+
+// marketStatusRank returns a sort priority: 0=active, 1=thin, 2=stale.
+func marketStatusRank(m markets.Market) int {
+	if m.Stale {
+		return 2
+	}
+	if m.ThinLiquidity {
+		return 1
+	}
+	return 0
+}
+
+// marketStatusLabel returns a coloured status string and numeric rank.
+func marketStatusLabel(m markets.Market) (string, int) {
+	if m.Stale {
+		return styleLoss.Sprint("🔴 Stale"), 2
+	}
+	if m.ThinLiquidity {
+		return styleNeutral.Sprint("🟡 Thin"), 1
+	}
+	return styleWin.Sprint("🟢 Active"), 0
+}
+
+// formatDuration formats a duration as "Xd Yh" or "Yh Zm" for display.
+func formatDuration(d time.Duration) string {
+	d = d.Truncate(time.Minute)
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm", minutes)
 }
 
 // ── export-predictions (TASK-059) ─────────────────────────────────────────────

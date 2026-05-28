@@ -290,3 +290,74 @@ func ClimateAnomalyScore(city string, maxTemp float64, dataRoot string) float64 
 	}
 	return score
 }
+
+// ── TASK-158: Precipitation climatological z-score ────────────────────────
+
+// precipHistShape is a minimal struct for reading precipitation from
+// data/historical/{city}.json. The JSON keys are PascalCase because
+// weather.Forecast embeds without json tags.
+type precipHistShape struct {
+	Records []struct {
+		PrecipitationMM float64 `json:"PrecipitationMM"`
+	} `json:"records"`
+}
+
+// PrecipitationZScore returns a signed z-score measuring how anomalous the
+// given precipitation forecast is versus the city's 30-day historical baseline.
+//
+// Positive → wetter than normal (e.g. +2.5 = major rain event).
+// Negative → drier than normal.
+// Clamped to [−5, +5] to suppress noise from extreme outlier records.
+//
+// Returns 0 when data is unavailable, fewer than 7 records exist, or the
+// historical standard deviation is < 0.5 mm (arid cities where day-to-day
+// precipitation variance is negligible and z-scores are unstable).
+func PrecipitationZScore(city string, precipMM float64, dataRoot string) float64 {
+	if dataRoot == "" {
+		dataRoot = "."
+	}
+	path := filepath.Join(dataRoot, "data", "historical", city+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var hf precipHistShape
+	if err := json.Unmarshal(data, &hf); err != nil {
+		return 0
+	}
+	recs := hf.Records
+	if len(recs) == 0 {
+		return 0
+	}
+	const window = 30
+	const minRecs = 7
+	const minSigma = 0.5
+	if len(recs) > window {
+		recs = recs[len(recs)-window:]
+	}
+	if len(recs) < minRecs {
+		return 0
+	}
+	sum := 0.0
+	for _, r := range recs {
+		sum += r.PrecipitationMM
+	}
+	mu := sum / float64(len(recs))
+	varSum := 0.0
+	for _, r := range recs {
+		d := r.PrecipitationMM - mu
+		varSum += d * d
+	}
+	sigma := math.Sqrt(varSum / float64(len(recs)))
+	if sigma < minSigma {
+		return 0
+	}
+	z := (precipMM - mu) / sigma
+	if z > 5 {
+		return 5
+	}
+	if z < -5 {
+		return -5
+	}
+	return math.Round(z*100) / 100
+}
