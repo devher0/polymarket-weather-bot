@@ -1,5 +1,26 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 09:18 UTC — TASK-193
+
+**Задача:** Реализовать визуализацию вероятностей сигналов в виде матрицы город × сигнал.
+
+**Реализация:**
+- `cmdSignalHeatmap(dataRoot)` в dashboard — загружает кэшированные прогнозы для всех городов
+- Матрица 9 городов × 9 сигналов (rain, heat, cold, snow, wind, hail, storm, sunny, fog)
+- Вероятности вычисляются из weather пакета функций (RainProbability, HeatProbability, SnowProbability, SunnyProbability, FogProbability)
+- Для отсутствующих функций (wind, cold) — простые heuristic оценки из TempMaxC и WindSpeedKMH
+- Цветовая кодировка вероятностей: 🟢 >60% | 🟡 40-60% | 🟠 20-40% | 🔴 <20% | ⚫ нет данных
+- ASCII таблица с сокращенными названиями сигналов (3 буквы)
+- Итоговая статистика: Ready (высокие/средние вероятности), Warning (низкие), No data (отсутствуют)
+- Helper функция `padRight()` для форматирования таблицы
+- Добавлен case `heatmap-signals` в switch statement main() и printUsage()
+
+**Результат:** `go build ./...` ✅
+**Строк кода:** ~130 в cmdSignalHeatmap() + helper
+**Файлы изменены:** `cmd/dashboard/main.go` (1 файл)
+
+---
+
 ## 2026-05-28 09:10 UTC — TASK-197
 
 **Задача:** Реализовать отслеживание bankroll и отображение графика баланса по дням.

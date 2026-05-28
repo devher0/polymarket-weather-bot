@@ -1893,7 +1893,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Если одного дня нет → "insufficient data for X"
 - Добавить case "/compare" в switch поллера
 
-### [ ] TASK-193: Signal heatmap в dashboard — матрица вероятностей по городам и сигналам
+### [x] 2026-05-28 — TASK-193: Signal heatmap в dashboard — матрица вероятностей по городам и сигналам
 **Файлы:** `cmd/dashboard/main.go` (добавить `cmdHeatmap`), `internal/collectors/aggregator.go` (утилита)
 Визуализация: какие города×сигналы сейчас наиболее вероятны для нашей стратегии.
 - `LoadForecastCache()` → загружает кэшированные FusedForecast для всех 9 городов

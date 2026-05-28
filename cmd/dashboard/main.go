@@ -652,6 +652,9 @@ func main() {
 	case "bankroll":
 		// TASK-197: bankroll history and balance chart.
 		cmdBankrollChart(dataRoot)
+	case "heatmap-signals":
+		// TASK-193: signal probability heatmap across cities.
+		cmdSignalHeatmap(dataRoot)
 	case "pnl-city":
 		// TASK-161: per-city P&L breakdown table.
 		cmdPnLCity(dataRoot)
@@ -724,6 +727,7 @@ func printUsage() {
 	fmt.Println("  spread-analysis                   Market spread distribution & liquidity stats per city (TASK-195)")
 	fmt.Println("  city-accuracy                     Per-city forecast accuracy (Brier score breakdown) (TASK-196)")
 	fmt.Println("  bankroll                          Bankroll history, balance, and chart (last 30 days) (TASK-197)")
+	fmt.Println("  heatmap-signals                   Signal probability matrix across all cities and signals (TASK-193)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
@@ -3092,6 +3096,168 @@ func cmdExitSignals(dataRoot string) {
 	fmt.Printf("\n  %d open positions  |  %s suggested SELL\n",
 		len(signals), styleLoss.Sprintf("%d", sellCount))
 	fmt.Println("  SELL: forecast dropped >0.20 from entry  |  HOLD/REDUCE_SIZE: improved >0.15")
+}
+
+// padRight pads a string to n characters with spaces on the right.
+func padRight(s string, n int) string {
+	if len(s) >= n {
+		return s[:n]
+	}
+	return s + repeatStr(" ", n-len(s))
+}
+
+// cmdSignalHeatmap displays probability matrix across cities and signals. (TASK-193)
+func cmdSignalHeatmap(dataRoot string) {
+	header("🔥 SIGNAL HEATMAP")
+
+	// Define signals to track.
+	signals := []string{"rain", "heat", "cold", "snow", "wind", "hail", "storm", "sunny", "fog"}
+
+	// Load all cities and their forecasts.
+	type cellValue struct {
+		probability float64
+		sources     int // number of data sources agreeing
+		status      string
+		emoji       string
+	}
+	matrix := make(map[string]map[string]cellValue) // matrix[city][signal]
+
+	cities := make([]string, 0)
+	for city := range weather.Cities {
+		cities = append(cities, city)
+	}
+	sort.Strings(cities)
+
+	fmt.Println("  Loading forecasts for " + strconv.Itoa(len(cities)) + " cities…")
+
+	for _, city := range cities {
+		row := make(map[string]cellValue)
+
+		// Load forecast cache for this city.
+		ff, ok := collectors.LoadForecastCache(city, 0, dataRoot, 6*time.Hour)
+		if !ok || ff == nil {
+			for _, sig := range signals {
+				row[sig] = cellValue{emoji: "⚫"}
+			}
+			matrix[city] = row
+			continue
+		}
+
+		// For each signal, determine probability.
+		for _, sig := range signals {
+			var prob float64
+			f := ff.Forecast // Extract embedded Forecast
+			switch sig {
+			case "rain":
+				prob = weather.RainProbability(f)
+			case "heat":
+				prob = weather.HeatProbability(f, 35.0)
+			case "cold":
+				// No ColdProbability function, estimate from temp
+				if f.MaxTempC < 0 {
+					prob = 0.8
+				} else if f.MaxTempC < 5 {
+					prob = 0.5
+				} else {
+					prob = 0.1
+				}
+			case "snow":
+				prob = weather.SnowProbability(f)
+			case "wind":
+				// No WindProbability function, estimate from wind speed
+				if f.WindSpeedKMH > 40 {
+					prob = 0.8
+				} else if f.WindSpeedKMH > 25 {
+					prob = 0.5
+				} else {
+					prob = 0.2
+				}
+			case "hail":
+				// Hail probability derived from rain + cold
+				prob = weather.RainProbability(f) * 0.3 // Hail is subset of rain
+			case "storm":
+				// Storm probability from rain intensity
+				prob = math.Max(weather.RainProbability(f)*0.6, 0.0)
+			case "sunny":
+				prob = weather.SunnyProbability(f)
+			case "fog":
+				prob = weather.FogProbability(f)
+			default:
+				prob = 0
+			}
+
+			// Classify and assign emoji.
+			emoji := ""
+			status := "low"
+			switch {
+			case prob > 0.6:
+				emoji = "🟢"
+				status = "high"
+			case prob > 0.4:
+				emoji = "🟡"
+				status = "medium"
+			case prob > 0.2:
+				emoji = "🟠"
+				status = "low-medium"
+			default:
+				emoji = "🔴"
+				status = "low"
+			}
+
+			row[sig] = cellValue{
+				probability: prob,
+				status:      status,
+				emoji:       emoji,
+				sources:     len(ff.Sources),
+			}
+		}
+
+		matrix[city] = row
+	}
+
+	// Print heatmap.
+	fmt.Println()
+	fmt.Print("  " + padRight("City", 14))
+	for _, sig := range signals {
+		fmt.Print(padRight(sig[:3], 5)) // 3-letter abbr
+	}
+	fmt.Println()
+	fmt.Println("  " + repeatStr("─", 14+len(signals)*5))
+
+	for _, city := range cities {
+		fmt.Print("  " + padRight(city, 14))
+		for _, sig := range signals {
+			cell := matrix[city][sig]
+			fmt.Print(cell.emoji + fmt.Sprintf(" %3.0f%%", cell.probability*100))
+		}
+		fmt.Println()
+	}
+
+	fmt.Println()
+	fmt.Println("  Legend: 🟢 high (>60%) | 🟡 medium (40-60%) | 🟠 low-medium (20-40%) | 🔴 low (<20%) | ⚫ no data")
+
+	// Statistics.
+	var readyCount, warningCount, noDataCount int
+	for _, city := range cities {
+		noData := true
+		for _, sig := range signals {
+			if cell, ok := matrix[city][sig]; ok && cell.emoji != "⚫" {
+				noData = false
+				if cell.emoji == "🟢" || cell.emoji == "🟡" {
+					readyCount++
+				} else {
+					warningCount++
+				}
+			}
+		}
+		if noData {
+			noDataCount++
+		}
+	}
+
+	totalSignals := len(cities) * len(signals)
+	fmt.Printf("\n  Ready (high/med): %d/%d  | Warning (low): %d | No data: %d\n",
+		readyCount, totalSignals, warningCount, noDataCount)
 }
 
 // cmdBankrollChart displays bankroll history and balance over time. (TASK-197)
