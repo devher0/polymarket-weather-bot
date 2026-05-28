@@ -2018,3 +2018,29 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - VolumeUSDC > 1000: confidence +0.02
 - VolumeUSDC < 50 (non-zero): confidence -0.03 (floor at minConfidence)
 - VolumeUSDC == 0: без изменений (данные не загружены)
+
+---
+
+## 🔴 ПРИОРИТЕТ 500 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-205: Source circuit breaker — пропускать сбойные источники данных
+**Файлы:** `internal/collectors/source_health.go` (обновить), `internal/collectors/aggregator.go` (обновить), `internal/collectors/super_aggregator.go` (обновить)
+Если источник падает ≥3 раза подряд — помечать его как "tripped" на 15 минут. В этот период aggregator пропускает горутину для данного источника, ускоряя цикл и не тратя timeout на заведомо нерабочий источник.
+- Добавить `TripUntil time.Time` в `SourceHealth` (json:"trip_until,omitempty")
+- Константы `TripThreshold = 3`, `TripDuration = 15 * time.Minute` в source_health.go
+- `IsTripped(source, dataRoot string) bool` — возвращает true когда `time.Now().Before(TripUntil)`
+- В `RecordSourceCall`: при `ConsecFails >= TripThreshold` → `h.TripUntil = now.Add(TripDuration)`; при успехе → `h.TripUntil = time.Time{}`
+- В `aggregator.go` collectSources: перед запуском каждой горутины проверять `IsTripped(source, dataRoot)` — если tripped, уменьшать `numSources` и не запускать горутину; логировать `slog.Debug("source tripped, skipping", "source", name)`
+- То же в `super_aggregator.go` для общего цикла
+- Не трипать GOES и HRRR отдельно (они итак условные), только core 5 (openmeteo, nasa, noaa, ecmwf, gfs)
+
+### [x] 2026-05-28 — TASK-206: `/sources` Telegram команда — живой статус источников данных
+**Файл:** `internal/notifier/telegram_commands.go` (обновить), `cmd/bot/main.go` (обновить)
+Оператор хочет видеть состояние каждого источника данных без захода на сервер.
+- `handleSources(bcfg BotConfig) string` — загружает `LoadSourceHealth(bcfg.DataRoot)`, форматирует таблицу
+- Колонки: Source | Status | Last OK | Up% | Fails | Tripped Until
+- Status emoji: ✅ ok, ⚠️ degraded, ❌ down, 🔴 tripped
+- Если `IsTripped` → показать "🔴 tripped (Xm left)" вместо обычного статуса
+- Сортировка: tripped → down → degraded → ok (проблемные первыми)
+- Итог строка: "X/7 sources healthy"
+- Добавить case "/sources" в switch поллера в cmd/bot/main.go и в /help раздел "Data"

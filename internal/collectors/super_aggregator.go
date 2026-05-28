@@ -298,7 +298,16 @@ func AggregateSuperForecast(city string, dayOffset int, dataRoot string) (*Super
 	}
 
 	// Count goroutines we will launch so we can drain exactly that many.
-	numFetch := 5 // openmeteo + nasa + noaa + ecmwf + gfs
+	// TASK-205: skip circuit-tripped core sources.
+	coreSourceNames := []string{"openmeteo", "nasa", "noaa", "ecmwf", "gfs"}
+	numFetch := 0
+	for _, s := range coreSourceNames {
+		if IsTripped(s, dataRoot) {
+			slog.Debug("super_aggregator: source circuit-tripped, skipping", "source", s, "city", city)
+		} else {
+			numFetch++
+		}
+	}
 	if isUS {
 		numFetch++ // hrrr
 	}
@@ -306,7 +315,7 @@ func AggregateSuperForecast(city string, dayOffset int, dataRoot string) (*Super
 		numFetch++ // goes (today only)
 	}
 
-	ch := make(chan rawItem, numFetch)
+	ch := make(chan rawItem, numFetch+1) // +1 for safety
 
 	// Helper: fetch a []weather.Forecast slice and send the dayOffset element.
 	fetch := func(name string, fn func() ([]weather.Forecast, error)) {
@@ -338,11 +347,21 @@ func AggregateSuperForecast(city string, dayOffset int, dataRoot string) (*Super
 		}
 	}
 
-	go fetch("openmeteo", func() ([]weather.Forecast, error) { return weather.GetForecast(city, days) })
-	go fetch("nasa", func() ([]weather.Forecast, error) { return NASAGetForecast(city, days) })
-	go fetch("noaa", func() ([]weather.Forecast, error) { return NOAAGetForecast(city, days) })
-	go fetch("ecmwf", func() ([]weather.Forecast, error) { return ECMWFGetForecast(city, days) })
-	go fetch("gfs", func() ([]weather.Forecast, error) { return GFSGetForecast(city, days) })
+	if !IsTripped("openmeteo", dataRoot) {
+		go fetch("openmeteo", func() ([]weather.Forecast, error) { return weather.GetForecast(city, days) })
+	}
+	if !IsTripped("nasa", dataRoot) {
+		go fetch("nasa", func() ([]weather.Forecast, error) { return NASAGetForecast(city, days) })
+	}
+	if !IsTripped("noaa", dataRoot) {
+		go fetch("noaa", func() ([]weather.Forecast, error) { return NOAAGetForecast(city, days) })
+	}
+	if !IsTripped("ecmwf", dataRoot) {
+		go fetch("ecmwf", func() ([]weather.Forecast, error) { return ECMWFGetForecast(city, days) })
+	}
+	if !IsTripped("gfs", dataRoot) {
+		go fetch("gfs", func() ([]weather.Forecast, error) { return GFSGetForecast(city, days) })
+	}
 	if isUS {
 		go fetch("hrrr", func() ([]weather.Forecast, error) { return HRRRGetForecast(city, days) })
 	}

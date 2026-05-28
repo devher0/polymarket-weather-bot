@@ -3,6 +3,9 @@
 // Records each data source fetch attempt (success or failure) and persists
 // a health summary to data/source_health.json so the dashboard can display
 // real-time availability stats.
+//
+// TASK-205: circuit breaker — sources with ≥TripThreshold consecutive failures
+// are "tripped" and skipped by the aggregator until TripUntil elapses.
 package collectors
 
 import (
@@ -14,6 +17,12 @@ import (
 	"sync"
 	"time"
 )
+
+// TripThreshold is the number of consecutive failures before a source is tripped.
+const TripThreshold = 3
+
+// TripDuration is how long a tripped source is skipped before being retried.
+const TripDuration = 15 * time.Minute
 
 // SourceHealth holds aggregate statistics for one data source.
 type SourceHealth struct {
@@ -29,6 +38,8 @@ type SourceHealth struct {
 	TotalCalls int64 `json:"total_calls"`
 	// TotalSuccess is the total number of successful fetches ever recorded.
 	TotalSuccess int64 `json:"total_success"`
+	// TripUntil is the time until which this source is circuit-broken (zero = not tripped).
+	TripUntil time.Time `json:"trip_until,omitempty"`
 }
 
 // UpRatePct returns the overall success percentage (0-100).
@@ -128,9 +139,23 @@ func loadCache(dataRoot string) {
 	}
 }
 
+// IsTripped reports whether the given source is currently circuit-broken.
+// Returns false for unknown sources or when no dataRoot is available.
+func IsTripped(source, dataRoot string) bool {
+	healthMu.Lock()
+	defer healthMu.Unlock()
+	loadCache(dataRoot)
+	h, ok := healthCache[source]
+	if !ok {
+		return false
+	}
+	return !h.TripUntil.IsZero() && time.Now().UTC().Before(h.TripUntil)
+}
+
 // RecordSourceCall updates health stats for the given source name.
 // Pass err=nil for a successful fetch, non-nil for a failure.
 // dataRoot is the bot's data directory (may be empty → ".").
+// TASK-205: sets TripUntil when ConsecFails reaches TripThreshold.
 func RecordSourceCall(source string, err error, dataRoot string) {
 	healthMu.Lock()
 	defer healthMu.Unlock()
@@ -148,10 +173,15 @@ func RecordSourceCall(source string, err error, dataRoot string) {
 		h.LastSuccess = now
 		h.ConsecFails = 0
 		h.TotalSuccess++
+		h.TripUntil = time.Time{} // clear any active trip on recovery
 	} else {
 		h.LastError = now
 		h.LastErrorMsg = fmt.Sprintf("%.200s", err.Error())
 		h.ConsecFails++
+		if h.ConsecFails >= TripThreshold {
+			h.TripUntil = now.Add(TripDuration)
+			slog.Warn("source circuit-broken", "source", source, "consec_fails", h.ConsecFails, "trip_until", h.TripUntil.Format(time.RFC3339))
+		}
 	}
 
 	saveHealth(dataRoot)

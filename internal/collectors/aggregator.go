@@ -154,7 +154,16 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 
 	// TASK-091: ECMWF AIFS is available globally (all cities).
 	// TASK-092: GFS is available globally (all cities).
-	numSources := 5 // openmeteo + nasa + noaa + ecmwf + gfs
+	// TASK-205: core sources that support circuit-breaking.
+	coreSources := []string{"openmeteo", "nasa", "noaa", "ecmwf", "gfs"}
+	numSources := 0
+	for _, s := range coreSources {
+		if !IsTripped(s, dataRoot) {
+			numSources++
+		} else {
+			slog.Debug("source circuit-tripped, skipping", "source", s, "city", city)
+		}
+	}
 	if includeGOES {
 		numSources++
 	}
@@ -162,7 +171,7 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 		numSources++
 	}
 
-	ch := make(chan item, numSources)
+	ch := make(chan item, numSources+1) // +1 for safety
 
 	// srcCtx creates a child context for a named source, respecting both the
 	// global deadline and the per-source timeout from sourceTimeoutsMap.
@@ -172,114 +181,124 @@ func collectSources(ctx context.Context, city string, days int, dayOffset int, d
 	}
 
 	// --- OpenMeteo ---
-	go func() {
-		sCtx, cancel := srcCtx("openmeteo")
-		defer cancel()
-		_ = sCtx // GetForecast does not yet accept context; timeout applies globally
-		fc, err := weather.GetForecast(city, days)
-		if err != nil || len(fc) == 0 {
-			if err == nil {
-				err = fmt.Errorf("empty forecast")
+	if !IsTripped("openmeteo", dataRoot) {
+		go func() {
+			sCtx, cancel := srcCtx("openmeteo")
+			defer cancel()
+			_ = sCtx // GetForecast does not yet accept context; timeout applies globally
+			fc, err := weather.GetForecast(city, days)
+			if err != nil || len(fc) == 0 {
+				if err == nil {
+					err = fmt.Errorf("empty forecast")
+				}
+				RecordSourceCall("openmeteo", err, dataRoot)
+				ch <- item{}
+				return
 			}
-			RecordSourceCall("openmeteo", err, dataRoot)
-			ch <- item{}
-			return
-		}
-		RecordSourceCall("openmeteo", nil, dataRoot)
-		idx := dayOffset
-		if idx >= len(fc) {
-			idx = len(fc) - 1
-		}
-		ch <- item{r: sourceResult{name: "openmeteo", forecast: fc[idx], weight: weights["openmeteo"]}, ok: true}
-	}()
+			RecordSourceCall("openmeteo", nil, dataRoot)
+			idx := dayOffset
+			if idx >= len(fc) {
+				idx = len(fc) - 1
+			}
+			ch <- item{r: sourceResult{name: "openmeteo", forecast: fc[idx], weight: weights["openmeteo"]}, ok: true}
+		}()
+	}
 
 	// --- NASA POWER ---
-	go func() {
-		sCtx, cancel := srcCtx("nasa")
-		defer cancel()
-		_ = sCtx
-		fc, err := NASAGetForecast(city, days)
-		if err != nil || len(fc) == 0 {
-			if err == nil {
-				err = fmt.Errorf("empty forecast")
+	if !IsTripped("nasa", dataRoot) {
+		go func() {
+			sCtx, cancel := srcCtx("nasa")
+			defer cancel()
+			_ = sCtx
+			fc, err := NASAGetForecast(city, days)
+			if err != nil || len(fc) == 0 {
+				if err == nil {
+					err = fmt.Errorf("empty forecast")
+				}
+				RecordSourceCall("nasa", err, dataRoot)
+				ch <- item{}
+				return
 			}
-			RecordSourceCall("nasa", err, dataRoot)
-			ch <- item{}
-			return
-		}
-		RecordSourceCall("nasa", nil, dataRoot)
-		idx := dayOffset
-		if idx >= len(fc) {
-			idx = len(fc) - 1
-		}
-		ch <- item{r: sourceResult{name: "nasa", forecast: fc[idx], weight: weights["nasa"]}, ok: true}
-	}()
+			RecordSourceCall("nasa", nil, dataRoot)
+			idx := dayOffset
+			if idx >= len(fc) {
+				idx = len(fc) - 1
+			}
+			ch <- item{r: sourceResult{name: "nasa", forecast: fc[idx], weight: weights["nasa"]}, ok: true}
+		}()
+	}
 
 	// --- NOAA NWS (US only) ---
-	go func() {
-		sCtx, cancel := srcCtx("noaa")
-		defer cancel()
-		_ = sCtx
-		fc, err := NOAAGetForecast(city, days)
-		if err != nil || len(fc) == 0 {
-			if err == nil {
-				err = fmt.Errorf("empty forecast")
+	if !IsTripped("noaa", dataRoot) {
+		go func() {
+			sCtx, cancel := srcCtx("noaa")
+			defer cancel()
+			_ = sCtx
+			fc, err := NOAAGetForecast(city, days)
+			if err != nil || len(fc) == 0 {
+				if err == nil {
+					err = fmt.Errorf("empty forecast")
+				}
+				RecordSourceCall("noaa", err, dataRoot)
+				ch <- item{}
+				return
 			}
-			RecordSourceCall("noaa", err, dataRoot)
-			ch <- item{}
-			return
-		}
-		RecordSourceCall("noaa", nil, dataRoot)
-		idx := dayOffset
-		if idx >= len(fc) {
-			idx = len(fc) - 1
-		}
-		ch <- item{r: sourceResult{name: "noaa", forecast: fc[idx], weight: weights["noaa"]}, ok: true}
-	}()
+			RecordSourceCall("noaa", nil, dataRoot)
+			idx := dayOffset
+			if idx >= len(fc) {
+				idx = len(fc) - 1
+			}
+			ch <- item{r: sourceResult{name: "noaa", forecast: fc[idx], weight: weights["noaa"]}, ok: true}
+		}()
+	}
 
 	// --- ECMWF AIFS (global AI forecast model, TASK-091) ---
-	go func() {
-		sCtx, cancel := srcCtx("ecmwf")
-		defer cancel()
-		_ = sCtx
-		fc, err := ECMWFGetForecast(city, days)
-		if err != nil || len(fc) == 0 {
-			if err == nil {
-				err = fmt.Errorf("empty forecast")
+	if !IsTripped("ecmwf", dataRoot) {
+		go func() {
+			sCtx, cancel := srcCtx("ecmwf")
+			defer cancel()
+			_ = sCtx
+			fc, err := ECMWFGetForecast(city, days)
+			if err != nil || len(fc) == 0 {
+				if err == nil {
+					err = fmt.Errorf("empty forecast")
+				}
+				RecordSourceCall("ecmwf", err, dataRoot)
+				ch <- item{}
+				return
 			}
-			RecordSourceCall("ecmwf", err, dataRoot)
-			ch <- item{}
-			return
-		}
-		RecordSourceCall("ecmwf", nil, dataRoot)
-		idx := dayOffset
-		if idx >= len(fc) {
-			idx = len(fc) - 1
-		}
-		ch <- item{r: sourceResult{name: "ecmwf", forecast: fc[idx], weight: weights["ecmwf"]}, ok: true}
-	}()
+			RecordSourceCall("ecmwf", nil, dataRoot)
+			idx := dayOffset
+			if idx >= len(fc) {
+				idx = len(fc) - 1
+			}
+			ch <- item{r: sourceResult{name: "ecmwf", forecast: fc[idx], weight: weights["ecmwf"]}, ok: true}
+		}()
+	}
 
 	// --- NOAA GFS (global 16-day model, TASK-092) ---
-	go func() {
-		sCtx, cancel := srcCtx("gfs")
-		defer cancel()
-		_ = sCtx
-		fc, err := GFSGetForecast(city, days)
-		if err != nil || len(fc) == 0 {
-			if err == nil {
-				err = fmt.Errorf("empty forecast")
+	if !IsTripped("gfs", dataRoot) {
+		go func() {
+			sCtx, cancel := srcCtx("gfs")
+			defer cancel()
+			_ = sCtx
+			fc, err := GFSGetForecast(city, days)
+			if err != nil || len(fc) == 0 {
+				if err == nil {
+					err = fmt.Errorf("empty forecast")
+				}
+				RecordSourceCall("gfs", err, dataRoot)
+				ch <- item{}
+				return
 			}
-			RecordSourceCall("gfs", err, dataRoot)
-			ch <- item{}
-			return
-		}
-		RecordSourceCall("gfs", nil, dataRoot)
-		idx := dayOffset
-		if idx >= len(fc) {
-			idx = len(fc) - 1
-		}
-		ch <- item{r: sourceResult{name: "gfs", forecast: fc[idx], weight: weights["gfs"]}, ok: true}
-	}()
+			RecordSourceCall("gfs", nil, dataRoot)
+			idx := dayOffset
+			if idx >= len(fc) {
+				idx = len(fc) - 1
+			}
+			ch <- item{r: sourceResult{name: "gfs", forecast: fc[idx], weight: weights["gfs"]}, ok: true}
+		}()
+	}
 
 	// --- NOAA HRRR (high-resolution US-only model, TASK-086) ---
 	if includeHRRR {

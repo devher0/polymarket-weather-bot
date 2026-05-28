@@ -280,6 +280,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleWatchdog(bcfg))
 				case "/countdown":
 					sendReply(cfg, chatID, handleCountdown(bcfg))
+				case "/sources":
+					sendReply(cfg, chatID, handleSources(bcfg))
 				}
 			}
 		}
@@ -1840,6 +1842,7 @@ func handleHelp() string {
 <b>🩺 System</b>
 <pre>/healthcheck     Data sources, calibration, risk state
 /source-weights  Dynamic source weights vs baseline
+/sources         Live status of all data collectors
 /config          Current bot configuration
 /watchlist       Manage watchlisted markets
 /watchdog        Last cycle time + delay status</pre>
@@ -2431,5 +2434,84 @@ func handleCountdown(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("Closing soon (≤6h): <b>%d</b> market(s)\n", soonCount))
 	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", now.Format("15:04")))
+	return sb.String()
+}
+
+// handleSources returns a formatted table of data source health and circuit-breaker state. (TASK-206)
+func handleSources(bcfg BotConfig) string {
+	health := collectors.LoadSourceHealth(bcfg.DataRoot)
+
+	type row struct {
+		name      string
+		h         collectors.SourceHealth
+		statusStr string
+		sortKey   int // lower = show first (problems first)
+	}
+
+	now := time.Now().UTC()
+	var rows []row
+	for name, h := range health {
+		var statusStr string
+		key := 0
+		switch {
+		case !h.TripUntil.IsZero() && now.Before(h.TripUntil):
+			left := time.Until(h.TripUntil)
+			mins := int(left.Minutes()) + 1
+			statusStr = fmt.Sprintf("🔴 tripped (%dm left)", mins)
+			key = 0
+		case h.Status(now) == "down":
+			statusStr = "❌ down"
+			key = 1
+		case h.Status(now) == "degraded":
+			statusStr = "⚠️ degraded"
+			key = 2
+		default:
+			statusStr = "✅ ok"
+			key = 3
+		}
+		rows = append(rows, row{name: name, h: h, statusStr: statusStr, sortKey: key})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].sortKey != rows[j].sortKey {
+			return rows[i].sortKey < rows[j].sortKey
+		}
+		return rows[i].name < rows[j].name
+	})
+
+	var sb strings.Builder
+	sb.WriteString("<b>📡 Data Source Status</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("%-12s %-22s %-8s %5s %s\n", "Source", "Status", "Last OK", "Up%", "Fails"))
+	sb.WriteString(strings.Repeat("─", 62) + "\n")
+
+	healthy := 0
+	for _, r := range rows {
+		lastOK := "-"
+		if !r.h.LastSuccess.IsZero() {
+			age := now.Sub(r.h.LastSuccess)
+			switch {
+			case age < time.Minute:
+				lastOK = fmt.Sprintf("%ds", int(age.Seconds()))
+			case age < time.Hour:
+				lastOK = fmt.Sprintf("%dm", int(age.Minutes()))
+			default:
+				lastOK = fmt.Sprintf("%.1fh", age.Hours())
+			}
+		}
+		upPct := r.h.UpRatePct()
+		sb.WriteString(fmt.Sprintf("%-12s %-22s %-8s %4.0f%% %d\n",
+			r.name, r.statusStr, lastOK, upPct, r.h.ConsecFails))
+		if r.h.Status(now) == "ok" {
+			healthy++
+		}
+	}
+	sb.WriteString("</pre>")
+
+	total := len(rows)
+	sb.WriteString(fmt.Sprintf("<b>%d/%d</b> sources healthy", healthy, total))
+	if total == 0 {
+		sb.WriteString("\n<i>No health data yet — starts accumulating on first cycle.</i>")
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", now.Format("15:04")))
 	return sb.String()
 }
