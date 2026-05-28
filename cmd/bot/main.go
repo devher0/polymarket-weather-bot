@@ -945,6 +945,13 @@ func main() {
 				continue
 			}
 
+			// TASK-203: skip if same city has an anti-correlated signal already placed
+			// (e.g. rain vs sunny in New York — betting both is internally inconsistent).
+			if conflict, reason := risk.IntraCitySignalConflict(m, placedThisCycle); conflict {
+				slog.Info("skipped: "+reason, "conditionID", m.ConditionID)
+				continue
+			}
+
 			// TASK-030: enforce MaxBetsPerCycle hard cap.
 			if maxCycle > 0 && placed >= maxCycle {
 				slog.Info("max_bets_per_cycle reached, stopping",

@@ -1994,3 +1994,27 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
   - Label: "consensus" (<0.15), "moderate" (0.15-0.35), "disputed" (>0.35)
 - В `cmd/dashboard/main.go`: subcommand `entropy` — таблица городов с entropy metrics
 - В `handleForecastQuality`: добавить колонку "Agr" (agreement = 1 - OverallScore × 100) рядом с Confidence
+
+---
+
+## 🔴 ПРИОРИТЕТ 400 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-203: Intra-city signal anti-correlation guard
+**Файлы:** `internal/risk/signal_correlation.go` (новый), `internal/risk/signal_correlation_test.go` (новый), `cmd/bot/main.go` (обновить)
+
+Предотвращает одновременную ставку на взаимоисключающие сигналы в одном городе.
+Примеры: rain↔sunny, heat↔cold, snow↔heat, fog↔sunny, rain↔dry.
+- `SignalsAntiCorrelated(s1, s2 string) bool` — проверяет пару сигналов
+- `IntraCitySignalConflict(m, placed []Market) (bool, string)` — возвращает конфликт если та же city + анти-коррелированный сигнал
+- В `cmd/bot/main.go`: проверка после `CorrelatedCitiesOpen` перед каждой ставкой
+- 6 unit-тестов (все pass)
+
+### [x] 2026-05-28 — TASK-204: Volume-weighted confidence adjustment
+**Файл:** `internal/strategy/strategy.go` (обновить)
+
+Корректирует confidence на основе торгового объёма рынка.
+Высокий объём = надёжный price discovery = более точная цена.
+- VolumeUSDC > 5000: confidence +0.04 (capped at 0.97)
+- VolumeUSDC > 1000: confidence +0.02
+- VolumeUSDC < 50 (non-zero): confidence -0.03 (floor at minConfidence)
+- VolumeUSDC == 0: без изменений (данные не загружены)
