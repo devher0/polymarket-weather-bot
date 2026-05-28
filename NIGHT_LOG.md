@@ -1,5 +1,28 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 04:47 UTC — TASK-142 + TASK-143
+
+**TASK-142: OpenMeteo snowfall direct signal**
+
+До: snow probability вычислялась как `(1 - HeatProbability(2°C)) × RainProbability × 0.8` — прокси через температуру и осадки. Open-Meteo API уже возвращает `snowfall_sum` (cm/day) напрямую, но не использовался.
+
+**Изменения TASK-142:**
+- `internal/weather/weather.go` (+22 строки) — поле `SnowfallCM float64` в `Forecast`; поле `SnowfallSum []float64` в `openMeteoResp`; добавлен `snowfall_sum` в URL запроса; парсинг и запись в Forecast; новая функция `SnowProbability(f Forecast) float64` с таблицей: 0→0.02 (fallback), 0-2cm→0.25, 2-5cm→0.60, 5-10cm→0.85, >10cm→0.95; fallback на старую формулу когда SnowfallCM==0
+- `internal/strategy/strategy.go` (+3, -5 строк) — все 4 snow case обновлены: `coldP*rainP*0.8` → `weather.SnowProbability(f)`
+- `internal/strategy/explain.go` (+1, -2 строки) — snow case обновлён
+- `internal/weather/snow_test.go` (+75 строк) — 11 тестов: NoSnowfall, TraceSnow, LightSnow, ModerateSnow, HeavySnow, VeryHeavySnow, Boundary5cm, Boundary10cm, FallbackColdRain, FallbackWarmNoRain, InRange
+
+**TASK-143: `bot --validate` флаг**
+
+Операторы тратили время на debug запусков из-за неправильного конфига или недоступных API. `--validate` проверяет всё это за 3 секунды.
+
+**Изменения TASK-143:**
+- `cmd/bot/main.go` (+75 строк) — флаг `--validate bool`; функция `runValidate(cfg)` с 5 проверками: (1) config.Validate, (2) Open-Meteo HTTP GET для первого города (3s timeout), (3) Gamma API GET /markets?limit=1 (3s timeout), (4) Telegram /getMe если токен есть, (5) private key hex length check; вывод `[OK]` / `[FAIL]` для каждой проверки; exit 0 или 1; подходит как Docker HEALTHCHECK
+
+**Файлов:** 5 | **Строк:** ~175 | `go build ./...` ✅ | `go test ./internal/weather/ ./internal/strategy/ ./internal/calibration/` ✅ (11 новых PASS)
+
+---
+
 ## 2026-05-28 04:37 UTC — TASK-141
 
 **Fee-adjusted Kelly sizing**

@@ -72,7 +72,7 @@ func ScoreMarket(m markets.Market, ff *collectors.FusedForecast) float64 {
 	case "wind":
 		roughP = math.Min(0.95, ff.Forecast.WindSpeedKMH/80.0)
 	case "snow":
-		roughP = (1 - weather.HeatProbability(ff.Forecast, 2.0)) * weather.RainProbability(ff.Forecast) * 0.8
+		roughP = weather.SnowProbability(ff.Forecast) // TASK-142: direct snowfall_sum when available
 	case "uv": // TASK-083
 		uvThreshold := 8.0
 		if m.ThresholdC != 0 {
@@ -222,7 +222,7 @@ func ComputeOurP(m markets.Market, f weather.Forecast) float64 {
 		}
 		p = 1 - weather.HeatProbability(coldF, coldThreshold)
 	case "snow":
-		p = (1 - weather.HeatProbability(f, 2.0)) * weather.RainProbability(f) * 0.8
+		p = weather.SnowProbability(f) // TASK-142: direct snowfall_sum when available
 	case "wind":
 		p = math.Min(0.95, f.WindSpeedKMH/80.0)
 	case "sunny":
@@ -754,8 +754,7 @@ func evaluate(
 		}
 		ourP = 1 - weather.HeatProbability(coldF, coldThreshold)
 	case "snow":
-		coldP := 1 - weather.HeatProbability(f, 2.0)
-		ourP = coldP * weather.RainProbability(f) * 0.8
+		ourP = weather.SnowProbability(f) // TASK-142: direct snowfall_sum when available
 	case "wind":
 		ourP = math.Min(0.95, f.WindSpeedKMH/80.0)
 	case "sunny":
@@ -903,7 +902,7 @@ func computePerSourceProbs(m markets.Market, perSource map[string]weather.Foreca
 		case "cold":
 			p = 1 - weather.HeatProbability(f, heatThreshold)
 		case "snow":
-			p = (1 - weather.HeatProbability(f, 2.0)) * weather.RainProbability(f) * 0.8
+			p = weather.SnowProbability(f) // TASK-142: direct snowfall_sum when available
 		case "wind":
 			p = math.Min(0.95, f.WindSpeedKMH/80.0)
 		case "sunny":

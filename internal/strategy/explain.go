@@ -99,8 +99,7 @@ func ExplainEvaluate(
 	case "cold":
 		rawP = 1 - weather.HeatProbability(ff.Forecast, heatThreshold)
 	case "snow":
-		rawP = (1 - weather.HeatProbability(ff.Forecast, 2.0)) *
-			weather.RainProbability(ff.Forecast) * 0.8
+		rawP = weather.SnowProbability(ff.Forecast) // TASK-142: direct snowfall_sum when available
 	case "wind":
 		rawP = math.Min(0.95, ff.Forecast.WindSpeedKMH/80.0)
 	case "sunny":

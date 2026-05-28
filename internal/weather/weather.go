@@ -22,6 +22,7 @@ type Forecast struct {
 	HumidityPct              float64 // TASK-084: relative humidity 0–100; populated from NASA POWER (RH2M) when available
 	ApparentMaxTempC         float64 // TASK-084: apparent ("feels like") max temp; heat index when humid, wind chill when cold+windy
 	CapeJkg                  float64 // TASK-089: convective available potential energy (J/kg); 0 if unavailable
+	SnowfallCM               float64 // TASK-142: daily snowfall sum in cm; 0 if not available or no snow
 }
 
 type City struct {
@@ -62,8 +63,9 @@ type openMeteoResp struct {
 		PrecipitationProbabilityMax []float64 `json:"precipitation_probability_max"`
 		WindSpeed10MMax             []float64 `json:"wind_speed_10m_max"`
 		WeatherCode                 []int     `json:"weather_code"`
-		UVIndexMax                  []float64 `json:"uv_index_max"`           // TASK-083
+		UVIndexMax                  []float64 `json:"uv_index_max"`            // TASK-083
 		ApparentTempMax             []float64 `json:"apparent_temperature_max"` // TASK-098
+		SnowfallSum                 []float64 `json:"snowfall_sum"`             // TASK-142
 	} `json:"daily"`
 }
 
@@ -86,7 +88,7 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 		"%s/v1/forecast?latitude=%.4f&longitude=%.4f"+
 			"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,"+
 			"precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max,"+
-			"apparent_temperature_max"+ // TASK-098: feels-like max temperature
+			"apparent_temperature_max,snowfall_sum"+ // TASK-098: feels-like; TASK-142: snowfall
 			"&forecast_days=%d&timezone=UTC",
 		openMeteoBase, c.Lat, c.Lon, days,
 	)
@@ -113,6 +115,10 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 		if i < len(m.Daily.ApparentTempMax) {
 			apparentMax = m.Daily.ApparentTempMax[i]
 		}
+		var snowfallCM float64
+		if i < len(m.Daily.SnowfallSum) {
+			snowfallCM = m.Daily.SnowfallSum[i]
+		}
 		out = append(out, Forecast{
 			City:                     city,
 			Date:                     date,
@@ -124,6 +130,7 @@ func GetForecast(city string, days int) ([]Forecast, error) {
 			WeatherCode:              m.Daily.WeatherCode[i],
 			UVIndexMax:               uvMax,
 			ApparentMaxTempC:         apparentMax, // TASK-098: from Open-Meteo directly
+			SnowfallCM:               snowfallCM,  // TASK-142: direct snowfall measurement
 		})
 	}
 	return out, nil
@@ -299,6 +306,38 @@ func DryProbability(f Forecast) float64 {
 		p = clamp(p-0.20, 0.02, 1)
 	}
 	return clamp(p, 0.02, 0.97)
+}
+
+// SnowProbability returns 0–1 probability of measurable snowfall.
+//
+// When SnowfallCM > 0 (Open-Meteo snowfall_sum is populated) the function uses
+// direct snowfall thresholds for best accuracy. When the field is zero or absent
+// (older cached data, non-Open-Meteo sources) it falls back to the original
+// cold × rain proxy formula so callers always get a valid estimate.
+//
+// TASK-142 thresholds:
+//
+//	0 cm      → 0.02  (no snowfall in model)
+//	0–2 cm    → 0.25  (trace to light)
+//	2–5 cm    → 0.60  (moderate)
+//	5–10 cm   → 0.85  (heavy)
+//	> 10 cm   → 0.95  (very heavy / blizzard)
+func SnowProbability(f Forecast) float64 {
+	if f.SnowfallCM > 0 {
+		switch {
+		case f.SnowfallCM >= 10:
+			return 0.95
+		case f.SnowfallCM >= 5:
+			return 0.85
+		case f.SnowfallCM >= 2:
+			return 0.60
+		default: // 0 < cm < 2
+			return 0.25
+		}
+	}
+	// Fallback: cold-and-rain proxy (original pre-TASK-142 formula).
+	// Used when snowfall_sum is unavailable (e.g. non-Open-Meteo sources).
+	return (1 - HeatProbability(f, 2.0)) * RainProbability(f) * 0.8
 }
 
 func clamp(v, lo, hi float64) float64 {

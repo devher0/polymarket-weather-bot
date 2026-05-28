@@ -209,6 +209,7 @@ func main() {
 	metricsPortFlag := flag.Int("metrics-port", -1, "Prometheus /metrics port (0=disabled; overrides config)")
 	configFile      := flag.String("config", "", "Path to config.yaml (default: config/config.yaml)")
 	dryRunFile      := flag.String("dry-run-file", "", "Write cycle results to this JSON file (TASK-049)")
+	validateFlag    := flag.Bool("validate", false, "Check config and API connectivity then exit (0=ok, 1=errors)")
 	flag.Parse()
 
 	// Set up graceful shutdown context — cancelled on SIGTERM or SIGINT.
@@ -303,6 +304,11 @@ func main() {
 		}
 		slog.Info("historical data collection complete")
 		return
+	}
+
+	// --- Validate mode (TASK-143) ---
+	if *validateFlag {
+		runValidate(cfg)
 	}
 
 	dryRun := !*live
@@ -1457,4 +1463,134 @@ func applyPlattCalibration(
 		"raw_p", fmt.Sprintf("%.3f", rawP), "cal_p", fmt.Sprintf("%.3f", calP),
 	)
 	return &out
+}
+
+// runValidate performs pre-flight checks on config and external APIs, prints a
+// status table, and exits 0 (all ok) or 1 (one or more failures). Designed for
+// use as a Docker HEALTHCHECK: `./bot --validate` (TASK-143).
+//
+// Checks performed:
+//  1. config.Validate — errors are fatal, warnings are informational.
+//  2. Open-Meteo HTTP GET for the first configured city (3 s timeout).
+//  3. Gamma API GET /markets?limit=1 (3 s timeout).
+//  4. Telegram GET /getMe — only when TelegramBotToken is set.
+//  5. Private key parse — only when PolyPrivateKey is set (no network call).
+func runValidate(cfg *config.Config) {
+	type check struct {
+		name string
+		ok   bool
+		msg  string
+	}
+	var checks []check
+
+	pass := func(name, msg string) { checks = append(checks, check{name, true, msg}) }
+	fail := func(name, msg string) { checks = append(checks, check{name, false, msg}) }
+
+	// ── 1. Config validation ─────────────────────────────────────────────────
+	vr := config.Validate(cfg)
+	if len(vr.Errors) > 0 {
+		fail("config", strings.Join(vr.Errors, "; "))
+	} else if len(vr.Warnings) > 0 {
+		pass("config", "warnings: "+strings.Join(vr.Warnings, "; "))
+	} else {
+		pass("config", fmt.Sprintf("ok (cities=%d min_edge=%.3f)", len(cfg.Cities), cfg.MinEdge))
+	}
+
+	// ── 2. Open-Meteo connectivity ───────────────────────────────────────────
+	{
+		city := "new_york"
+		if len(cfg.Cities) > 0 {
+			city = cfg.Cities[0]
+		}
+		client := &http.Client{Timeout: 3 * time.Second}
+		c, ok := weather.Cities[city]
+		if !ok {
+			fail("openmeteo", fmt.Sprintf("city %q not registered", city))
+		} else {
+			url := fmt.Sprintf(
+				"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"+
+					"&daily=temperature_2m_max&forecast_days=1&timezone=UTC",
+				c.Lat, c.Lon,
+			)
+			resp, err := client.Get(url)
+			if err != nil {
+				fail("openmeteo", err.Error())
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == 200 {
+					pass("openmeteo", fmt.Sprintf("HTTP %d for city=%s", resp.StatusCode, city))
+				} else {
+					fail("openmeteo", fmt.Sprintf("HTTP %d for city=%s", resp.StatusCode, city))
+				}
+			}
+		}
+	}
+
+	// ── 3. Gamma API connectivity ────────────────────────────────────────────
+	{
+		client := &http.Client{Timeout: 3 * time.Second}
+		req, _ := http.NewRequest("GET", "https://gamma-api.polymarket.com/markets?limit=1", nil)
+		req.Header.Set("User-Agent", "polymarket-weather-bot/validate")
+		resp, err := client.Do(req)
+		if err != nil {
+			fail("gamma_api", err.Error())
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				pass("gamma_api", fmt.Sprintf("HTTP %d", resp.StatusCode))
+			} else {
+				fail("gamma_api", fmt.Sprintf("HTTP %d", resp.StatusCode))
+			}
+		}
+	}
+
+	// ── 4. Telegram bot token ────────────────────────────────────────────────
+	if cfg.TelegramBotToken != "" {
+		client := &http.Client{Timeout: 3 * time.Second}
+		url := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", cfg.TelegramBotToken)
+		resp, err := client.Get(url)
+		if err != nil {
+			fail("telegram", err.Error())
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				pass("telegram", "bot token valid")
+			} else {
+				fail("telegram", fmt.Sprintf("HTTP %d — token may be invalid", resp.StatusCode))
+			}
+		}
+	} else {
+		pass("telegram", "skipped (TELEGRAM_BOT_TOKEN not set)")
+	}
+
+	// ── 5. Private key parse ─────────────────────────────────────────────────
+	if cfg.PolyPrivateKey != "" {
+		key := strings.TrimPrefix(cfg.PolyPrivateKey, "0x")
+		if len(key) != 64 {
+			fail("private_key", fmt.Sprintf("unexpected length %d (expected 64 hex chars)", len(key)))
+		} else {
+			pass("private_key", "format ok (64 hex chars)")
+		}
+	} else {
+		pass("private_key", "skipped (POLYMARKET_PRIVATE_KEY not set)")
+	}
+
+	// ── Print results ────────────────────────────────────────────────────────
+	allOK := true
+	for _, c := range checks {
+		icon := "[OK]  "
+		if !c.ok {
+			icon = "[FAIL]"
+			allOK = false
+		}
+		fmt.Printf("%s %s: %s\n", icon, c.name, c.msg)
+	}
+
+	if allOK {
+		fmt.Println("\nAll checks passed.")
+		os.Exit(0)
+	} else {
+		fmt.Println("\nOne or more checks failed.")
+		os.Exit(1)
+	}
 }
