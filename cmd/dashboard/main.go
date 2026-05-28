@@ -552,6 +552,9 @@ func main() {
 	case "timing":
 		// TASK-133: hourly win-rate and timing multiplier table.
 		cmdTiming(dataRoot)
+	case "freshness":
+		// TASK-140: forecast freshness table.
+		cmdFreshness(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -583,6 +586,7 @@ func printUsage() {
 	fmt.Println("  hourly <city>                     Hourly weather table for city (today + tomorrow) (TASK-078)")
 	fmt.Println("  health                            Per-source data availability stats (TASK-081)")
 	fmt.Println("  timing                            Hourly win-rate and bet-size timing multiplier (TASK-133)")
+	fmt.Println("  freshness                         Forecast freshness table: age/status per city (TASK-140)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -1447,4 +1451,64 @@ func cmdTiming(dataRoot string) {
 	fmt.Println("  Multiplier range: 0.50 (worst) → 1.20 (best)  |  1.000 = neutral (< 5 bets)")
 	fmt.Println("  HorizonDecay: 🟢 ≥0.90 (fresh)  🟡 0.75–0.90  🔴 <0.75 (stale)  |  — = no horizon data yet")
 	fmt.Println("  Source: data/hourly_winrate.json")
+}
+
+// ── freshness (TASK-140) ───────────────────────────────────────────────────
+
+// cmdFreshness shows a per-city freshness table for cached forecasts.
+// Status thresholds: fresh (<1h), ok (1–3h), stale (>3h), missing (no file).
+func cmdFreshness(dataRoot string) {
+	header("FORECAST FRESHNESS")
+
+	// Load all cached ages from disk.
+	ages := collectors.ForecastCacheStats(dataRoot)
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City+Day", "Age", "Status"})
+
+	// Collect all keys: known cities × day0, plus any extra keys from cache.
+	allKeys := make(map[string]bool)
+	for city := range weather.Cities {
+		key := city + "_d0"
+		allKeys[key] = true
+	}
+	for k := range ages {
+		allKeys[k] = true
+	}
+
+	// Sort keys for stable output.
+	sorted := make([]string, 0, len(allKeys))
+	for k := range allKeys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+
+	fresh, ok, stale, missing := 0, 0, 0, 0
+	for _, k := range sorted {
+		age, cached := ages[k]
+		if !cached {
+			t.AppendRow(table.Row{k, "—", styleLoss.Sprint("missing")})
+			missing++
+			continue
+		}
+		ageStr := age.Round(time.Second).String()
+		var status string
+		switch {
+		case age < time.Hour:
+			status = styleWin.Sprint("fresh")
+			fresh++
+		case age <= 3*time.Hour:
+			status = styleNeutral.Sprint("ok")
+			ok++
+		default:
+			status = styleLoss.Sprint("stale")
+			stale++
+		}
+		t.AppendRow(table.Row{k, ageStr, status})
+	}
+	t.Render()
+
+	fmt.Printf("\n  %d fresh  |  %d ok  |  %d stale  |  %d missing\n",
+		fresh, ok, stale, missing)
+	fmt.Printf("  Cache directory: %s/data/forecasts/\n", dataRoot)
 }

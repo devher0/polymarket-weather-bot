@@ -1158,7 +1158,17 @@ func main() {
 		metrics.SetLoopSec(cfg.LoopSec)
 
 		// Start the auto-resolver goroutine: checks resolved markets every hour.
-		calibration.StartResolver(cfg.DataRoot, ctx)
+		// TASK-139: pass a callback that checks for losing streaks after each resolve cycle.
+		calibration.StartResolver(cfg.DataRoot, ctx, func(dataRoot string) {
+			records, err := calibration.LoadHistory(dataRoot)
+			if err != nil {
+				return
+			}
+			if alert, msg := calibration.StreakAlert(records, 4); alert {
+				slog.Warn("streak alert", "message", msg)
+				_ = notifier.NotifyError("streak alert", fmt.Errorf("%s", msg))
+			}
+		})
 
 		// TASK-111: start Telegram command poller (/status /positions /next /pause /resume).
 		notifier.StartCommandPoller(ctx, notifier.BotConfig{

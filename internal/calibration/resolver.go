@@ -187,7 +187,11 @@ func ResolveOpenBets(dataRoot string) (int, error) {
 // It logs but does not propagate errors.  dataRoot is typically ".".
 // The goroutine exits cleanly when ctx is cancelled (e.g. on SIGTERM/SIGINT).
 // After each successful resolution cycle it re-fits the Platt calibrator (TASK-122).
-func StartResolver(dataRoot string, ctx context.Context) {
+//
+// onResolved is an optional variadic callback invoked (with dataRoot) after each
+// cycle that resolved at least one bet.  Callers use this to trigger streak checks
+// or other post-resolution work without creating import cycles.
+func StartResolver(dataRoot string, ctx context.Context, onResolved ...func(string)) {
 	go func() {
 		slog.Info("resolver: started background goroutine (runs every hour)")
 		// Run immediately at startup, then every hour.
@@ -208,6 +212,12 @@ func StartResolver(dataRoot string, ctx context.Context) {
 						)
 					} else {
 						slog.Warn("platt calibrator save failed", "err", cErr)
+					}
+				}
+				// TASK-139: notify callers (e.g. for streak checks).
+				for _, cb := range onResolved {
+					if cb != nil {
+						cb(dataRoot)
 					}
 				}
 			}
