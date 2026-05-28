@@ -71,6 +71,24 @@ func TotalUnrealizedPnL(positions []UnrealizedPosition) float64 {
 	return total
 }
 
+// FetchMarketEndDate returns the end/expiry time for the given market from the
+// Gamma API. Returns zero time if the market is not found or has no end date.
+func FetchMarketEndDate(conditionID string) (time.Time, error) {
+	m, err := queryGammaMarket(conditionID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if m.EndDate == "" {
+		return time.Time{}, fmt.Errorf("no end date for %s", conditionID)
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02"} {
+		if t, parseErr := time.Parse(layout, m.EndDate); parseErr == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unparseable end date %q", m.EndDate)
+}
+
 // fetchCurrentSidePrice queries the Polymarket Gamma API for the current price
 // of the given side ("YES" or "NO") in the given market.
 // Reuses resolverClient (15 s timeout) from resolver.go (same package).

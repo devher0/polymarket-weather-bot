@@ -1310,11 +1310,16 @@ func main() {
 
 		// TASK-111: start Telegram command poller (/status /positions /next /pause /resume).
 		notifier.StartCommandPoller(ctx, notifier.BotConfig{
-			DataRoot:  cfg.DataRoot,
-			Bankroll:  calibration.LoadBankroll(cfg.DataRoot),
-			MinEdge:   cfg.MinEdge,
-			MaxBet:    cfg.MaxBet,
-			StartTime: sess.startTime,
+			DataRoot:         cfg.DataRoot,
+			Bankroll:         calibration.LoadBankroll(cfg.DataRoot),
+			MinEdge:          cfg.MinEdge,
+			MaxBet:           cfg.MaxBet,
+			StartTime:        sess.startTime,
+			DryRun:           dryRun,
+			KellyFraction:    cfg.KellyFraction,
+			MaxKellyFraction: cfg.MaxKellyFraction,
+			LoopSec:          cfg.LoopSec,
+			ProtocolFeeRate:  cfg.ProtocolFeeRate,
 		})
 
 		// TASK-047: adaptive loop interval.

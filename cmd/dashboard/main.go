@@ -68,6 +68,14 @@ func repeatStr(s string, n int) string {
 
 // ── positions ──────────────────────────────────────────────────────────────
 
+// positionEntry holds an open bet enriched with expiry and unrealized data.
+type positionEntry struct {
+	rec       calibration.BetRecord
+	expiry    time.Time // zero when unavailable
+	currentP  float64
+	fetchErr  string
+}
+
 func cmdPositions(dataRoot string) {
 	header("📋 OPEN POSITIONS")
 
@@ -77,7 +85,7 @@ func cmdPositions(dataRoot string) {
 		return
 	}
 
-	open := make([]calibration.BetRecord, 0)
+	var open []calibration.BetRecord
 	for _, r := range records {
 		if r.Outcome == nil {
 			open = append(open, r)
@@ -89,53 +97,87 @@ func cmdPositions(dataRoot string) {
 		return
 	}
 
-	fmt.Println("  Fetching live prices...")
-	positions := calibration.FetchUnrealizedPnL(records)
+	fmt.Printf("  Fetching live data for %d position(s)...\n", len(open))
 
-	// Build map conditionID -> position for quick lookup.
-	posMap := make(map[string]calibration.UnrealizedPosition, len(positions))
-	for _, p := range positions {
-		posMap[p.ConditionID] = p
+	// Build live positions map for current prices.
+	liveMap := make(map[string]calibration.UnrealizedPosition)
+	for _, p := range calibration.FetchUnrealizedPnL(records) {
+		liveMap[p.ConditionID] = p
 	}
 
-	t := newTable()
-	t.AppendHeader(table.Row{
-		"Condition ID", "Side", "Entry P", "Current P", "Size", "Unreal PnL", "Opened",
+	// Enrich each open bet with expiry and current price.
+	entries := make([]positionEntry, 0, len(open))
+	for _, r := range open {
+		e := positionEntry{rec: r}
+		if live, ok := liveMap[r.ConditionID]; ok {
+			e.currentP = live.CurrentPrice
+			e.fetchErr = live.FetchError
+		}
+		if exp, err := calibration.FetchMarketEndDate(r.ConditionID); err == nil {
+			e.expiry = exp
+		}
+		entries = append(entries, e)
+	}
+
+	// Sort by expiry ascending; positions without expiry go last.
+	sort.Slice(entries, func(i, j int) bool {
+		zi, zj := entries[i].expiry.IsZero(), entries[j].expiry.IsZero()
+		if zi != zj {
+			return !zi // entries with expiry come first
+		}
+		if zi {
+			return false
+		}
+		return entries[i].expiry.Before(entries[j].expiry)
 	})
 
-	var totalUnreal float64
-	for _, r := range open {
-		age := time.Since(r.Timestamp).Round(time.Hour)
+	t := newTable()
+	t.AppendHeader(table.Row{"Time", "City/Signal", "Side", "Size", "Price", "Hours Left"})
 
-		curStr := "N/A"
-		pnlStr := "N/A"
-		if pos, ok := posMap[r.ConditionID]; ok && pos.FetchError == "" {
-			curStr = fmt.Sprintf("%.3f", pos.CurrentPrice)
-			if pos.UnrealizedPnL >= 0 {
-				pnlStr = styleWin.Sprintf("+$%.2f", pos.UnrealizedPnL)
+	var totalExposure float64
+	for _, e := range entries {
+		r := e.rec
+		totalExposure += r.SizeUSDC
+
+		citySignal := r.City
+		if r.Signal != "" {
+			citySignal += "/" + r.Signal
+		}
+		if citySignal == "" {
+			citySignal = truncate(r.ConditionID, 16)
+		}
+
+		priceStr := fmt.Sprintf("%.3f", r.MarketPrice)
+		if e.currentP > 0 {
+			priceStr = fmt.Sprintf("%.3f→%.3f", r.MarketPrice, e.currentP)
+		}
+
+		hoursLeft := "N/A"
+		if !e.expiry.IsZero() {
+			h := time.Until(e.expiry).Hours()
+			if h <= 0 {
+				hoursLeft = styleLoss.Sprint("expired")
+			} else if h < 6 {
+				hoursLeft = styleLoss.Sprintf("%.1fh", h)
+			} else if h < 24 {
+				hoursLeft = fmt.Sprintf("%.1fh", h)
 			} else {
-				pnlStr = styleLoss.Sprintf("-$%.2f", -pos.UnrealizedPnL)
+				hoursLeft = fmt.Sprintf("%.0fd %.0fh", h/24, float64(int(h)%24))
 			}
-			totalUnreal += pos.UnrealizedPnL
 		}
 
 		t.AppendRow(table.Row{
-			truncate(r.ConditionID, 16),
+			r.Timestamp.Format("01-02 15:04"),
+			citySignal,
 			r.Side,
-			fmt.Sprintf("%.3f", r.MarketPrice),
-			curStr,
 			fmt.Sprintf("$%.2f", r.SizeUSDC),
-			pnlStr,
-			fmt.Sprintf("%s ago", age),
+			priceStr,
+			hoursLeft,
 		})
 	}
 
 	t.Render()
-	totalStr := fmt.Sprintf("+$%.2f", totalUnreal)
-	if totalUnreal < 0 {
-		totalStr = fmt.Sprintf("-$%.2f", -totalUnreal)
-	}
-	fmt.Printf("\n  Total open: %d position(s)  |  Unrealized PnL: %s\n", len(open), totalStr)
+	fmt.Printf("\n  %d open position(s)  |  Total exposure: $%.2f USDC\n", len(entries), totalExposure)
 }
 
 // ── PnL summary ────────────────────────────────────────────────────────────

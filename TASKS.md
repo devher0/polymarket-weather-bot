@@ -1661,13 +1661,13 @@ Telegram команда `/winrate` показывает rolling win rate за п
 - В `cmd/bot/main.go`: применять `streakKelly * strategy.KellyFraction` аналогично drawdownMult
 - 5 unit-тестов: пустая история, одна победа, 2 поражения, 3 поражения, сброс после победы
 
-### [ ] TASK-172: `/config` Telegram команда — показать текущий конфиг бота
+### [x] 2026-05-28 — TASK-172: `/config` Telegram команда — показать текущий конфиг бота
 **Файл:** `internal/notifier/telegram_commands.go` (обновить)
 Оператор отправляет `/config` и видит ключевые параметры текущего запущенного бота: min_edge, max_bet, kelly, bankroll, dry_run и пр.
 - `handleConfig(bcfg BotConfig) string` — форматирует `<pre>` таблицу с ключевыми полями из BotConfig
 - Добавить `/config` в docstring и поллер
 
-### [ ] TASK-173: `dashboard positions` — таблица открытых позиций
+### [x] 2026-05-28 — TASK-173: `dashboard positions` — таблица открытых позиций
 **Файл:** `cmd/dashboard/main.go` (обновить)
 `go run ./cmd/dashboard positions` — показать все открытые (unresolved) ставки из истории.
 - `cmdPositions(dataRoot)` — фильтрует `calibration.LoadHistory()` где Resolved=false

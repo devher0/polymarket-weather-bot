@@ -13,6 +13,7 @@
 //   /pnl-city       — per-city P&L table: bets/wins/win%/pnl/roi (TASK-163)
 //   /winrate        — rolling win rate table per signal over last 20 bets (TASK-169)
 //   /explain <id>   — full strategy audit trail for a specific conditionID (TASK-167)
+//   /config         — show current bot configuration parameters (TASK-172)
 //   /pause          — suspend all trading
 //   /resume         — resume trading
 //
@@ -86,11 +87,16 @@ type tgUpdatesResp struct {
 
 // BotConfig is passed to StartCommandPoller so handlers can inspect live state.
 type BotConfig struct {
-	DataRoot  string
-	Bankroll  float64
-	MinEdge   float64
-	MaxBet    float64
-	StartTime time.Time // when the bot process started (for uptime display in /healthcheck)
+	DataRoot         string
+	Bankroll         float64
+	MinEdge          float64
+	MaxBet           float64
+	StartTime        time.Time // when the bot process started (for uptime display in /healthcheck)
+	DryRun           bool
+	KellyFraction    float64
+	MaxKellyFraction float64
+	LoopSec          int
+	ProtocolFeeRate  float64
 }
 
 // ── long-poll loop ────────────────────────────────────────────────────────
@@ -235,6 +241,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 						arg = strings.TrimSpace(parts[1])
 					}
 					sendReply(cfg, chatID, handleExplainMarket(bcfg, arg))
+				case "/config":
+					sendReply(cfg, chatID, handleConfig(bcfg))
 				}
 			}
 		}
@@ -1438,6 +1446,48 @@ func handleExplainMarket(bcfg BotConfig, conditionID string) string {
 	} else {
 		sb.WriteString(fmt.Sprintf("⏭ <b>%s</b>", r.Action))
 	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// handleConfig returns the current bot configuration as a formatted Telegram
+// message. Sensitive fields (private key, tokens) are never shown. (TASK-172)
+func handleConfig(bcfg BotConfig) string {
+	mode := "live"
+	if bcfg.DryRun {
+		mode = "dry-run"
+	}
+	loopStr := "once"
+	if bcfg.LoopSec > 0 {
+		loopStr = fmt.Sprintf("%ds", bcfg.LoopSec)
+	}
+	kelly := bcfg.KellyFraction
+	if kelly == 0 {
+		kelly = 0.5
+	}
+	maxKelly := bcfg.MaxKellyFraction
+	if maxKelly == 0 {
+		maxKelly = 0.05
+	}
+	fee := bcfg.ProtocolFeeRate
+	if fee == 0 {
+		fee = 0.02
+	}
+	bankroll := calibration.LoadBankroll(bcfg.DataRoot)
+
+	var sb strings.Builder
+	sb.WriteString("⚙️ <b>Bot Configuration</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-22s %s\n", "mode:", mode))
+	sb.WriteString(fmt.Sprintf("%-22s %.4f (%.1f%%)\n", "min_edge:", bcfg.MinEdge, bcfg.MinEdge*100))
+	sb.WriteString(fmt.Sprintf("%-22s $%.2f\n", "max_bet:", bcfg.MaxBet))
+	sb.WriteString(fmt.Sprintf("%-22s $%.2f\n", "bankroll:", bankroll))
+	sb.WriteString(fmt.Sprintf("%-22s %.2f (%.0f%%)\n", "kelly_fraction:", kelly, kelly*100))
+	sb.WriteString(fmt.Sprintf("%-22s %.3f (%.1f%%)\n", "max_kelly_fraction:", maxKelly, maxKelly*100))
+	sb.WriteString(fmt.Sprintf("%-22s %.2f (%.0f%%)\n", "protocol_fee:", fee, fee*100))
+	sb.WriteString(fmt.Sprintf("%-22s %s\n", "loop_interval:", loopStr))
+	sb.WriteString(fmt.Sprintf("%-22s %s\n", "data_root:", bcfg.DataRoot))
+	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()
 }
