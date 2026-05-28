@@ -640,6 +640,9 @@ func main() {
 	case "signals-trend":
 		// TASK-168: rolling signal win rate over 7/14/30 days.
 		cmdSignalsTrend(dataRoot)
+	case "bias":
+		// TASK-174: per-(city,signal) probability bias summary.
+		cmdBias(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -678,6 +681,7 @@ func printUsage() {
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
 	fmt.Println("  week [N]                          N-day (default 7) daily P&L table with running total (TASK-164)")
 	fmt.Println("  signals-trend                     Rolling signal win rate trend: 7/14/30 days (TASK-168)")
+	fmt.Println("  bias                              Per-(city,signal) probability bias table (TASK-174)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -2470,4 +2474,56 @@ func cmdFreshness(dataRoot string) {
 	fmt.Printf("\n  %d fresh  |  %d ok  |  %d stale  |  %d missing\n",
 		fresh, ok, stale, missing)
 	fmt.Printf("  Cache directory: %s/data/forecasts/\n", dataRoot)
+}
+
+// ── bias (TASK-174) ────────────────────────────────────────────────────────
+
+// cmdBias prints a per-(city, signal) probability bias summary.
+// Bias = mean(ourP - outcome) over the last 30 resolved bets for each pair.
+// Positive bias means we systematically overestimate; negative = underestimate.
+func cmdBias(dataRoot string) {
+	header("🎯 PROBABILITY BIAS TRACKER")
+
+	rows := calibration.LoadBiasSummary(dataRoot)
+	if len(rows) == 0 {
+		fmt.Printf("  No bias data yet (requires ≥%d resolved bets per city+signal pair).\n", calibration.BiasMinSamples)
+		fmt.Println("  Bias is recorded automatically each time a bet resolves.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City", "Signal", "Bias", "N", "Status", "Interpretation"})
+
+	for _, r := range rows {
+		biasStr := fmt.Sprintf("%+.3f", r.Bias)
+		var statusColor text.Colors
+		var status, interp string
+		switch r.Calibration {
+		case "over":
+			statusColor = styleLoss
+			status = "over"
+			interp = "Overestimates ↑  (probability reduced)"
+		case "under":
+			statusColor = styleNeutral
+			status = "under"
+			interp = "Underestimates ↓  (probability raised)"
+		default:
+			statusColor = styleWin
+			status = "ok"
+			interp = "Well calibrated ✓"
+		}
+		t.AppendRow(table.Row{
+			r.City,
+			r.Signal,
+			statusColor.Sprint(biasStr),
+			r.N,
+			statusColor.Sprint(status),
+			interp,
+		})
+	}
+
+	t.Render()
+	fmt.Println()
+	fmt.Println("  Bias = mean(ourP − outcome).  Positive → we overestimate this signal.")
+	fmt.Printf("  Correction applied automatically in bot when N ≥ %d.\n", calibration.BiasMinSamples)
 }

@@ -928,6 +928,34 @@ func main() {
 				continue
 			}
 
+			// TASK-174: apply per-(city,signal) bias correction.
+			// Bias = mean(ourP - outcome) over last 30 resolved bets for this pair.
+			// Active only when >= 5 resolved samples exist.
+			if correctedP, bias := calibration.CorrectProbability(m.City, m.Signal, d.OurProbability, cfg.DataRoot); bias != 0 {
+				newEdge := correctedP - d.MarketPrice
+				if newEdge < adaptedSignalMinEdge {
+					slog.Info("skipped: edge below min after bias correction",
+						"city", m.City, "signal", m.Signal,
+						"ourP", fmt.Sprintf("%.3f", d.OurProbability),
+						"correctedP", fmt.Sprintf("%.3f", correctedP),
+						"bias", fmt.Sprintf("%+.3f", bias),
+						"edge", fmt.Sprintf("%.3f", newEdge),
+					)
+					continue
+				}
+				slog.Debug("bias correction applied",
+					"city", m.City, "signal", m.Signal,
+					"ourP", fmt.Sprintf("%.3f", d.OurProbability),
+					"correctedP", fmt.Sprintf("%.3f", correctedP),
+					"bias", fmt.Sprintf("%+.3f", bias),
+				)
+				out := *d
+				out.OurProbability = correctedP
+				out.Edge = newEdge
+				out.Reason = fmt.Sprintf("%s [bias:%+.3f]", d.Reason, bias)
+				d = &out
+			}
+
 			// TASK-133: apply time-of-day sizing multiplier based on historical win rate.
 			timingMult := calibration.TimingMultiplierNow(cfg.DataRoot)
 			if timingMult != 1.0 {

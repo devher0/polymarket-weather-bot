@@ -1674,3 +1674,51 @@ Telegram команда `/winrate` показывает rolling win rate за п
 - Таблица: Time | Market/City/Signal | Side | Size | Price | Hours Left
 - Итог: N open, total exposure USDC
 - Сортировка по времени истечения (ближайшие сначала)
+
+---
+
+## 🔴 ПРИОРИТЕТ 110 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-174: Weather model bias tracker — систематическая коррекция смещения вероятностей
+**Файлы:** `internal/calibration/bias.go` (новый), `internal/calibration/bias_test.go` (новый), `internal/calibration/resolver.go` (обновить), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить)
+После каждого resolved бета: сохранять (ourP, outcome) в `data/bias/{city}_{signal}.json` (rolling window 30).
+- `RecordBiasOutcome(city, signal string, ourP float64, won bool, dataRoot string) error`
+- `ComputeBias(city, signal, dataRoot string) float64` — mean(ourP - outcome); + = переоцениваем; 0 если < 5 записей
+- `CorrectProbability(city, signal, ourP, dataRoot) (correctedP, bias float64)` — clamp к [0.02, 0.98]
+- `LoadBiasSummary(dataRoot) []BiasSummaryRow` — для всех (city, signal) в data/bias/
+- `splitCitySignal(name) (city, signal)` — разбор имени файла через известные суффиксы сигналов
+- В resolver.go: вызывать `RecordBiasOutcome` после `UpdateOutcome`
+- В bot/main.go: после `applyPlattCalibration` применять `calibration.CorrectProbability`; если новый edge < minEdge → skip; логировать "bias correction: ourP=X→Y (bias=Z)"
+- `dashboard bias` — таблица: City | Signal | Bias | N | Status (over/under/ok) | Interpretation
+- 6 unit-тестов: нет данных→bias=0, 5 записей→правильный bias, clamp нижней границы, пустой LoadBiasSummary, splitCitySignal, rolling cap
+
+### [ ] TASK-175: Market volume filter — пропускать рынки с суммарным объёмом < MinVolumeUSDC
+**Файлы:** `internal/markets/markets.go` (обновить), `config/config.go` (обновить), `config/config.yaml` (обновить)
+Рынки с объёмом $10 USDC — это неликвидная игрушка. Добавить фильтр по totalVolume из Gamma API.
+- Парсить `volume` (строка USD) из Gamma API ответа → `Market.VolumeUSDC float64`
+- `MinVolumeUSDC float64` в Config (yaml: `min_volume_usdc`, env: `MIN_VOLUME_USDC`, default: 500.0)
+- В bot loop: если `m.VolumeUSDC > 0 && m.VolumeUSDC < cfg.MinVolumeUSDC` → skip с логом "skipped: low volume {V} USDC (min={min})"
+- В `dashboard markets`: добавить колонку "Vol USDC" рядом с Spread
+
+### [ ] TASK-176: Pre-trade slippage guard — проверка что наш ордер не двигает цену >5%
+**Файлы:** `internal/markets/slippage.go` (новый), `cmd/bot/main.go` (обновить)
+При малой ликвидности наш ордер может сам сдвинуть цену и сделать ставку невыгодной.
+- `EstimateSlippage(sizeUSDC, yesPrice float64, book []bookLevel) float64` — симулирует исполнение ордера по стакану, возвращает avg исполненную цену vs best bid
+- Если slippage > 0.03 (3 цента) → логировать "high slippage: {X} — reducing size" и обрезать size до 50% max
+- Если slippage > 0.07 → skip полностью
+
+### [ ] TASK-177: Per-source timeout config — настраиваемый timeout для каждого источника данных
+**Файлы:** `config/config.go` (обновить), `internal/collectors/aggregator.go` (обновить)
+Сейчас timeout фиксирован. GOES/NASA иногда медленнее OpenMeteo. Добавить per-source таймауты.
+- `SourceTimeouts map[string]int` в Config (yaml: `source_timeouts:`, в секундах)
+- Default timeouts: openmeteo=8, nasa=10, noaa=8, goes=15, hrrr=8, ensemble=10
+- В `collectSources()`: использовать `context.WithTimeout(ctx, time.Duration(timeout)*time.Second)` для каждого источника
+
+### [ ] TASK-178: Brier score trend alert — Telegram уведомление при устойчивом ухудшении
+**Файлы:** `internal/calibration/brier_trend.go` (новый), `cmd/bot/main.go` (обновить)
+3-недельный тренд Brier score — более устойчивый сигнал чем 14-дневное drift detection (TASK-147).
+- `BrierTrend(records []BetRecord, weeks int) (slope float64, r2 float64)` — линейная регрессия недельного Brier
+- Если slope > 0.015/неделю И r2 > 0.7 → устойчивое ухудшение → Telegram: "📉 Calibration trend: Brier worsening +0.02/week (R²=0.78)"
+- Минимум 3 недели с хотя бы 5 бетами каждая
+- Проверять при старте бота (после PrintBrierScore)
+- 4 unit-теста: пусто, нет тренда, улучшение, ухудшение
