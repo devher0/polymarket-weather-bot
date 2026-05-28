@@ -1,5 +1,29 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 09:02 UTC — TASK-196
+
+**Задача:** Реализовать отслеживание точности прогнозов по городам.
+
+**Реализация:**
+- Новый файл `internal/calibration/accuracy.go` (119 строк)
+  - `CityAccuracyRecord` struct: predictions, outcomes, timestamps
+  - `RecordCityAccuracy()` — добавляет пару (probability, outcome) для города, сохраняет на диск в `data/city_accuracy/{city}.json`
+  - Rolling window на 100 последних записей для экономии памяти
+  - `CityAccuracy()` — вычисляет Brier score для города
+  - `CityStats` — агрегированные метрики (Brier, count, status)
+  - `LoadCityAccuracies()` — загружает метрики для всех городов
+- Dashboard функция `cmdCityAccuracy(dataRoot)` — выводит таблицу по городам, сортировка по Brier DESC (лучшие первыми)
+  - Status классификация: excellent (<0.10), good (0.10-0.15), fair (0.15-0.20), poor (>0.20)
+  - Цветовая кодировка: 🟢 (excellent/good) | 🟡 (fair) | 🔴 (poor)
+  - Итоговая статистика по хорошим городам
+- Добавлен case `city-accuracy` в switch statement main() и в printUsage()
+
+**Результат:** `go build ./...` ✅
+**Файлы изменены:** 2
+**Строк добавлено:** ~170 (accuracy.go + dashboard)
+
+---
+
 ## 2026-05-28 08:56 UTC — TASK-195
 
 **Задача:** Реализовать анализ распределения спредов рынков в dashboard.

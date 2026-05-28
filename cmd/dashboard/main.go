@@ -646,6 +646,9 @@ func main() {
 	case "spread-analysis":
 		// TASK-195: market spread distribution and liquidity analysis.
 		cmdSpreadAnalysis()
+	case "city-accuracy":
+		// TASK-196: per-city forecast accuracy (Brier score breakdown).
+		cmdCityAccuracy(dataRoot)
 	case "pnl-city":
 		// TASK-161: per-city P&L breakdown table.
 		cmdPnLCity(dataRoot)
@@ -716,6 +719,7 @@ func printUsage() {
 	fmt.Println("  freshness                         Forecast freshness table: age/status per city (TASK-140)")
 	fmt.Println("  markets                           Live Polymarket weather market overview: price/spread/status (TASK-159)")
 	fmt.Println("  spread-analysis                   Market spread distribution & liquidity stats per city (TASK-195)")
+	fmt.Println("  city-accuracy                     Per-city forecast accuracy (Brier score breakdown) (TASK-196)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
@@ -3084,6 +3088,64 @@ func cmdExitSignals(dataRoot string) {
 	fmt.Printf("\n  %d open positions  |  %s suggested SELL\n",
 		len(signals), styleLoss.Sprintf("%d", sellCount))
 	fmt.Println("  SELL: forecast dropped >0.20 from entry  |  HOLD/REDUCE_SIZE: improved >0.15")
+}
+
+// cmdCityAccuracy displays per-city forecast accuracy (Brier score breakdown). (TASK-196)
+func cmdCityAccuracy(dataRoot string) {
+	header("🎯 FORECAST ACCURACY BY CITY")
+
+	stats := calibration.LoadCityAccuracies(dataRoot)
+	if len(stats) == 0 {
+		fmt.Println("  No accuracy data yet. Run some bets and resolve them first.")
+		return
+	}
+
+	// Sort by Brier score ascending (best forecasts first).
+	var sorted []calibration.CityStats
+	for _, s := range stats {
+		sorted = append(sorted, s)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].BrierScore < sorted[j].BrierScore
+	})
+
+	t := newTable()
+	t.AppendHeader(table.Row{"City", "Brier", "Bets", "Status"})
+
+	for _, s := range sorted {
+		// Color code by Brier score quality.
+		var statusColor text.Colors
+		switch s.Status {
+		case "excellent":
+			statusColor = styleWin
+		case "good":
+			statusColor = styleWin
+		case "fair":
+			statusColor = styleNeutral
+		default:
+			statusColor = styleLoss
+		}
+
+		statusStr := statusColor.Sprintf("%s", s.Status)
+		t.AppendRow(table.Row{
+			s.City,
+			fmt.Sprintf("%.4f", s.BrierScore),
+			s.Count,
+			statusStr,
+		})
+	}
+	t.Render()
+
+	// Summary.
+	excellentCount := 0
+	for _, s := range sorted {
+		if s.Status == "excellent" || s.Status == "good" {
+			excellentCount++
+		}
+	}
+	fmt.Printf("\n  %d cities with accuracy data  |  %d with excellent/good forecasts\n",
+		len(sorted), excellentCount)
+	fmt.Println("  🟢 Excellent: <0.10 | Good: 0.10-0.15 | Fair: 0.15-0.20 | 🔴 Poor: >0.20")
 }
 
 // cmdSpreadAnalysis displays market spread distribution and liquidity analysis. (TASK-195)

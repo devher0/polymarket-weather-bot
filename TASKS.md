@@ -1919,7 +1919,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Таблица: Range | Count | % | Avg Vol | Status
 - Бум-диаграмма: средний спред по городам
 
-### [ ] TASK-196: Forecast accuracy per-city — какой город прогнозируется лучше
+### [x] 2026-05-28 — TASK-196: Forecast accuracy per-city — какой город прогнозируется лучше
 **Файлы:** `internal/calibration/accuracy.go` (новый), `cmd/dashboard/main.go` (обновить)
 Точность предсказаний различается по городам — Берлин может быть стабильнее Майами.
 - После resolve рынка: сохранять в `data/city_accuracy/{city}.json` — (pred_prob, outcome)
