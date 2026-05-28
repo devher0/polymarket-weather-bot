@@ -1832,7 +1832,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `dashboard ev-track` subcommand — та же таблица, но с breakdown по сигналу (rain/heat/etc.)
 - 4 unit-теста: пустой список, все победы, все поражения, смешанный
 
-### [ ] TASK-188: Market exit signal — когда продавать позицию
+### [x] 2026-05-28 — TASK-188: Market exit signal — когда продавать позицию
 **Файлы:** `internal/calibration/exit_signal.go` (новый), `cmd/bot/main.go` (обновить)
 Если наш прогноз существенно изменился с момента ставки, возможно позицию выгоднее продать.
 - `ExitSignal{ConditionID, Side, EntryP, CurrentP, Delta, CurrentMktPrice, SuggestedAction string}`

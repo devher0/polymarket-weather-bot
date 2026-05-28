@@ -745,6 +745,42 @@ func main() {
 			checkProfitAlerts(history, mktByCondID, cfg.DataRoot)
 		}
 
+		// TASK-188: compute exit signals from latest prediction log.
+		// For each open position, compare entry ourP to the latest evaluated
+		// ourP from today's prediction log and alert via Telegram when the
+		// forecast has deteriorated by more than 0.20 (SELL signal).
+		{
+			forecasts := make(map[string]float64)
+			if preds, predErr := strategy.LoadPredictions(
+				time.Now().UTC().Format("2006-01-02"), cfg.DataRoot,
+			); predErr == nil {
+				// Walk newest-first; first hit per conditionID is the latest value.
+				for i := len(preds) - 1; i >= 0; i-- {
+					p := preds[i]
+					if _, ok := forecasts[p.ConditionID]; !ok {
+						forecasts[p.ConditionID] = p.OurP
+					}
+				}
+			}
+			exitSignals := calibration.ComputeExitSignals(history, forecasts, nil)
+			for _, es := range calibration.SellSignals(exitSignals) {
+				slog.Warn("exit signal: SELL recommended",
+					"conditionID", es.ConditionID,
+					"side", es.Side,
+					"entry_p", fmt.Sprintf("%.3f", es.EntryP),
+					"current_p", fmt.Sprintf("%.3f", es.CurrentP),
+					"delta", fmt.Sprintf("%+.3f", es.Delta),
+				)
+				msg := fmt.Sprintf(
+					"🚨 Exit Signal — SELL recommended\nconditionID: %s\nSide: %s\nEntry P: %.3f → Current P: %.3f (Δ%+.3f)\nForecast worsened >0.20 — consider selling the position.",
+					es.ConditionID, es.Side, es.EntryP, es.CurrentP, es.Delta,
+				)
+				if nErr := notifier.NotifyError("exit_signal_sell", fmt.Errorf("%s", msg)); nErr != nil {
+					slog.Warn("exit signal notify failed", "err", nErr)
+				}
+			}
+		}
+
 		// 4. Enrich markets with liquidity data (order book depth).
 		markets.EnrichWithLiquidity(mkt)
 

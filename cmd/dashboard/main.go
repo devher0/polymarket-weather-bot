@@ -676,6 +676,9 @@ func main() {
 	case "ev-track":
 		// TASK-187: EV capture ratio table (overall + per signal).
 		cmdEVTrack(dataRoot)
+	case "exit-signals":
+		// TASK-188: open positions with exit recommendations.
+		cmdExitSignals(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -720,6 +723,7 @@ func printUsage() {
 	fmt.Println("  stability                         Forecast probability stability tracker per market (TASK-184)")
 	fmt.Println("  crossday                          Cross-day signal consistency table: which cities/signals persist (TASK-185)")
 	fmt.Println("  ev-track                          EV capture ratio: expected vs realized P&L by signal (TASK-187)")
+	fmt.Println("  exit-signals                      Open positions with exit recommendations (TASK-188)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -3004,4 +3008,85 @@ func cmdEVTrack(dataRoot string) {
 	fmt.Println()
 	fmt.Println("  Capture < 70% may indicate calibration issues, market impact, or edge decay.")
 	fmt.Println("  Expected EV = Σ (ourP - mktP) × sizeUSDC for each bet.")
+}
+
+// ── exit-signals (TASK-188) ───────────────────────────────────────────────────
+
+// cmdExitSignals shows each open position alongside an exit recommendation
+// derived from comparing the entry ourP to the latest forecast probability.
+//
+// The latest ourP is sourced from today's prediction log (data/predictions/).
+// When no prediction log entry exists for a conditionID, delta is shown as 0
+// and the action defaults to HOLD.
+func cmdExitSignals(dataRoot string) {
+	header("🚪  EXIT SIGNALS — open positions vs latest forecast")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error loading history: %v\n", err)
+		return
+	}
+
+	// Build latest ourP from today's prediction log (may be empty).
+	forecasts := make(map[string]float64)
+	todayPreds, _ := strategy.LoadPredictions(time.Now().UTC().Format("2006-01-02"), dataRoot)
+	// Walk predictions newest-first so the last write wins (latest value).
+	for i := len(todayPreds) - 1; i >= 0; i-- {
+		p := todayPreds[i]
+		if _, already := forecasts[p.ConditionID]; !already {
+			forecasts[p.ConditionID] = p.OurP
+		}
+	}
+
+	signals := calibration.ComputeExitSignals(records, forecasts, nil)
+	if len(signals) == 0 {
+		fmt.Println("  No open positions found.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{
+		"ConditionID", "Side", "EntryP", "CurrentP", "Δ", "Action",
+	})
+
+	for _, s := range signals {
+		deltaStr := fmt.Sprintf("%+.3f", s.Delta)
+		var actionStyle text.Colors
+		switch s.SuggestedAction {
+		case "SELL":
+			actionStyle = styleLoss
+		case "HOLD/REDUCE_SIZE":
+			actionStyle = styleNeutral
+		default:
+			actionStyle = styleWin
+		}
+		t.AppendRow(table.Row{
+			truncateID(s.ConditionID, 16),
+			s.Side,
+			fmt.Sprintf("%.3f", s.EntryP),
+			fmt.Sprintf("%.3f", s.CurrentP),
+			deltaStr,
+			actionStyle.Sprint(s.SuggestedAction),
+		})
+	}
+	t.Render()
+
+	sellCount := 0
+	for _, s := range signals {
+		if s.SuggestedAction == "SELL" {
+			sellCount++
+		}
+	}
+	fmt.Printf("\n  %d open positions  |  %s suggested SELL\n",
+		len(signals), styleLoss.Sprintf("%d", sellCount))
+	fmt.Println("  SELL: forecast dropped >0.20 from entry  |  HOLD/REDUCE_SIZE: improved >0.15")
+}
+
+// truncateID shortens a hex conditionID to prefix…suffix for display.
+func truncateID(id string, n int) string {
+	if len(id) <= n {
+		return id
+	}
+	half := n / 2
+	return id[:half] + "…" + id[len(id)-half:]
 }

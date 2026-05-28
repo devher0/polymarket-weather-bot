@@ -1,5 +1,23 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 08:27 UTC — TASK-188
+
+**TASK-188: Market exit signal — рекомендации продать позицию при деградации прогноза**
+
+Когда наш прогноз для открытой ставки существенно изменился с момента входа, бот теперь предупреждает оператора через Telegram и показывает рекомендации в dashboard.
+
+**Изменения:**
+- `internal/calibration/exit_signal.go` (новый, 72 строки) — `ExitSignal` struct; `ComputeExitSignals(openBets, forecasts, mktPrices)` — сравнивает EntryP (из BetRecord) с CurrentP (из prediction log); SuggestedAction: "SELL" при Δ < -0.20, "HOLD/REDUCE_SIZE" при Δ > +0.15, иначе "HOLD"; `SellSignals()` helper для фильтрации
+- `cmd/bot/main.go` (+37 строк) — после checkProfitAlerts: загружает сегодняшний prediction log → `ComputeExitSignals` → Telegram уведомление для каждого SELL сигнала (`NotifyError("exit_signal_sell", ...)`)
+- `cmd/dashboard/main.go` (+65 строк) — новый subcommand `exit-signals`: таблица conditionID/Side/EntryP/CurrentP/Δ/Action; sell строки красным, reduce — жёлтым, hold — зелёным; итог: N открытых, K SELL
+
+**Проверка:** `go build ./...` — OK; `go test ./...` — все пакеты PASS
+
+**Файлы изменены:** 3
+**Строк добавлено:** ~174
+
+---
+
 ## 2026-05-28 08:08 UTC — TASK-185
 
 **TASK-185: Cross-day signal persistence — буст confidence при согласии смежных прогнозных дней**
