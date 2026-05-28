@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -37,6 +38,10 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
+
+// notifiedOpportunities deduplicates per-session opportunity alerts so each
+// market is only alerted once (TASK-165).
+var notifiedOpportunities sync.Map
 
 // sessionStats tracks cumulative statistics for the current process run.
 type sessionStats struct {
@@ -940,6 +945,21 @@ func main() {
 						slog.Info("skipped: size below minimum after signal kelly scaling",
 							"conditionID", m.ConditionID, "signal", m.Signal)
 						continue
+					}
+				}
+			}
+
+			// TASK-165: proactive opportunity alert — notify when edge > threshold.
+			if cfg.OpportunityAlertThreshold > 0 && d.Edge >= cfg.OpportunityAlertThreshold {
+				condID := d.Market.ConditionID
+				if _, already := notifiedOpportunities.LoadOrStore(condID, true); !already {
+					if aErr := notifier.SendOpportunityAlert(d); aErr != nil {
+						slog.Warn("opportunity alert failed", "err", aErr)
+					} else {
+						slog.Info("opportunity alert sent",
+							"conditionID", condID,
+							"edge", fmt.Sprintf("%.3f", d.Edge),
+						)
 					}
 				}
 			}

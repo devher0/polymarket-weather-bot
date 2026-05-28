@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -585,6 +586,15 @@ func main() {
 	case "pnl-city":
 		// TASK-161: per-city P&L breakdown table.
 		cmdPnLCity(dataRoot)
+	case "week":
+		// TASK-164: 7-day daily P&L table.
+		nDays := 7
+		if len(os.Args) >= 3 {
+			if n, err := strconv.Atoi(os.Args[2]); err == nil && n > 0 {
+				nDays = n
+			}
+		}
+		cmdWeek(dataRoot, nDays)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -621,6 +631,7 @@ func printUsage() {
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
+	fmt.Println("  week [N]                          N-day (default 7) daily P&L table with running total (TASK-164)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -690,6 +701,76 @@ func cmdPnLCity(dataRoot string) {
 		fmt.Sprintf("%.1f%%", overallROI),
 	})
 	t.Render()
+}
+
+// ── week (TASK-164) ───────────────────────────────────────────────────────────
+
+// cmdWeek prints a table of daily P&L for the last nDays UTC days.
+func cmdWeek(dataRoot string, nDays int) {
+	header(fmt.Sprintf("📅  DAILY P&L — LAST %d DAYS", nDays))
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+		return
+	}
+
+	rows := calibration.DailyPnLTable(records, nDays)
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Date", "Bets", "Win%", "P&L (USDC)", "Running Total"})
+
+	var totalBets int
+	var totalPnL float64
+
+	for _, r := range rows {
+		dateStr := r.Date.Format("Mon 2006-01-02")
+
+		var winPctStr string
+		if r.Bets == 0 {
+			winPctStr = "—"
+		} else {
+			winPctStr = fmt.Sprintf("%.0f%%", r.WinPct())
+		}
+
+		pnlStr := fmt.Sprintf("%+.2f", r.PnLUSDC)
+		cumStr := fmt.Sprintf("%+.2f", r.CumulativePnL)
+
+		var pnlCell, cumCell interface{}
+		if r.PnLUSDC >= 0 && r.Bets > 0 {
+			pnlCell = styleWin.Sprint(pnlStr)
+		} else if r.PnLUSDC < 0 {
+			pnlCell = styleLoss.Sprint(pnlStr)
+		} else {
+			pnlCell = styleNeutral.Sprint("  0.00")
+		}
+
+		if r.CumulativePnL >= 0 {
+			cumCell = styleWin.Sprint(cumStr)
+		} else {
+			cumCell = styleLoss.Sprint(cumStr)
+		}
+
+		t.AppendRow(table.Row{dateStr, r.Bets, winPctStr, pnlCell, cumCell})
+		totalBets += r.Bets
+		totalPnL += r.PnLUSDC
+	}
+
+	t.AppendSeparator()
+	totalPnLStr := fmt.Sprintf("%+.2f", totalPnL)
+	var totalPnLCell interface{}
+	if totalPnL >= 0 {
+		totalPnLCell = styleWin.Sprint(totalPnLStr)
+	} else {
+		totalPnLCell = styleLoss.Sprint(totalPnLStr)
+	}
+	t.AppendRow(table.Row{"TOTAL", totalBets, "—", totalPnLCell, "—"})
+	t.Render()
+
+	// Sparkline footer.
+	if line := calibration.DailyPnLLine(records, nDays); line != "" {
+		fmt.Printf("\n  %s\n", line)
+	}
 }
 
 // ── markets (TASK-159) ────────────────────────────────────────────────────────

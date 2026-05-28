@@ -119,6 +119,11 @@ type Config struct {
 	// TASK-162: minimum bet size in USDC. Bets sized below this threshold after
 	// all Kelly/scaling adjustments are silently skipped. Default 0.50 USDC.
 	MinBetUSDC float64 `yaml:"min_bet_usdc"`
+
+	// TASK-165: proactive opportunity alert threshold. When a market's edge
+	// exceeds this value, a Telegram notification is sent immediately (even in
+	// dry-run mode) so the operator can act manually. 0 = disabled.
+	OpportunityAlertThreshold float64 `yaml:"opportunity_alert_threshold"`
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -314,6 +319,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("MIN_BET_USDC"); v != nil {
 		cfg.MinBetUSDC = *v
+	}
+	if v := envFloat("OPPORTUNITY_ALERT_THRESHOLD"); v != nil {
+		cfg.OpportunityAlertThreshold = *v
 	}
 
 	// Telegram

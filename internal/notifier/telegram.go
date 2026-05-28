@@ -638,3 +638,36 @@ func absF(v float64) float64 {
 
 // ensure absF is used to avoid "declared and not used" error in some toolchains
 var _ = absF
+
+// SendOpportunityAlert sends a proactive Telegram notification when a newly
+// discovered market has edge above the configured OpportunityAlertThreshold
+// (TASK-165). Useful in semi-manual or dry-run modes where the operator wants
+// to decide manually whether to bet.
+//
+// No-op when Telegram is not configured.
+func SendOpportunityAlert(d *strategy.Decision) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	edgePct := d.Edge * 100
+
+	msg := fmt.Sprintf(
+		"🔔 <b>Strong Opportunity</b>\n\n"+
+			"Market: <code>%s</code>\n"+
+			"City: <b>%s</b>  Signal: <b>%s</b>\n"+
+			"Side: <b>%s</b>  Price: %.3f\n"+
+			"Edge: <b>+%.1f%%</b>  Size: %.2f USDC\n"+
+			"Reason: <i>%s</i>\n\n"+
+			"<i>%s UTC</i>",
+		truncate(d.Market.ConditionID, 16),
+		d.Market.City, d.Market.Signal,
+		d.Side, d.MarketPrice,
+		edgePct, d.SizeUSDC,
+		truncate(d.Reason, 120),
+		time.Now().UTC().Format("2006-01-02 15:04"),
+	)
+
+	return cfg.send(msg)
+}
