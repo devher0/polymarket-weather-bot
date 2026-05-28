@@ -1,0 +1,83 @@
+{
+  "saved_at": "2026-05-28T10:46:30.213743652+02:00",
+  "city": "london",
+  "day_offset": 6,
+  "confidence": 0.17019816096147003,
+  "sources": [
+    "gfs",
+    "openmeteo",
+    "ecmwf",
+    "nasa"
+  ],
+  "date": "2026-06-03",
+  "max_temp_c": -228.65277777777777,
+  "min_temp_c": -230.63888888888889,
+  "precipitation_mm": 0.45833333333333326,
+  "precipitation_probability": 32.847222222222214,
+  "wind_speed_kmh": 9.249999999999998,
+  "weather_code": 21,
+  "ensemble_uncertainty": 0,
+  "fetched_at": "2026-05-28T10:46:30.000199385+02:00",
+  "per_source_forecasts": {
+    "ecmwf": {
+      "City": "london",
+      "Date": "2026-06-03",
+      "MaxTempC": 0,
+      "MinTempC": 0,
+      "PrecipitationMM": 0,
+      "PrecipitationProbability": 0,
+      "WindSpeedKMH": 0,
+      "WeatherCode": 0,
+      "UVIndexMax": 0,
+      "HumidityPct": 0,
+      "ApparentMaxTempC": 0,
+      "CapeJkg": 0,
+      "SnowfallCM": 0
+    },
+    "gfs": {
+      "City": "london",
+      "Date": "2026-06-03",
+      "MaxTempC": 15.8,
+      "MinTempC": 11.5,
+      "PrecipitationMM": 0.9,
+      "PrecipitationProbability": 68,
+      "WindSpeedKMH": 20.8,
+      "WeatherCode": 51,
+      "UVIndexMax": 0,
+      "HumidityPct": 0,
+      "ApparentMaxTempC": 0,
+      "CapeJkg": 0,
+      "SnowfallCM": 0
+    },
+    "nasa": {
+      "City": "london",
+      "Date": "2026-05-28",
+      "MaxTempC": -999,
+      "MinTempC": -999,
+      "PrecipitationMM": 0,
+      "PrecipitationProbability": 5,
+      "WindSpeedKMH": 0,
+      "WeatherCode": 0,
+      "UVIndexMax": 0,
+      "HumidityPct": 0,
+      "ApparentMaxTempC": 0,
+      "CapeJkg": 0,
+      "SnowfallCM": 0
+    },
+    "openmeteo": {
+      "City": "london",
+      "Date": "2026-06-03",
+      "MaxTempC": 18.1,
+      "MinTempC": 13.1,
+      "PrecipitationMM": 1.2,
+      "PrecipitationProbability": 80,
+      "WindSpeedKMH": 22.9,
+      "WeatherCode": 51,
+      "UVIndexMax": 2.7,
+      "HumidityPct": 0,
+      "ApparentMaxTempC": 13.4,
+      "CapeJkg": 0,
+      "SnowfallCM": 0
+    }
+  }
+}

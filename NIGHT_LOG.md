@@ -3027,3 +3027,29 @@ Rationale: Polymarket order flow и liquidity существенно меняю�
 **Тесты**: 4/4 PASS  
 **Строк кода:** ~215 (calibration_curve.go ~140, test ~75) + ~110 в dashboard  
 **Файлы:** `internal/calibration/calibration_curve.go`, `internal/calibration/calibration_curve_test.go`, `cmd/dashboard/main.go`
+
+---
+
+## 2026-05-28 08:42 UTC — TASK-219
+
+### TASK-219: Wilson score confidence intervals для win rates
+
+**Что сделано:**
+- `internal/calibration/confidence_intervals.go` (новый):
+  - `WilsonCI(wins, n, z)` — Wilson score interval (Newcombe 1998), лучше Wald при малых n
+  - `WilsonCI95(wins, n)` — shortcut для 95% CI (z=1.96)
+  - `FormatCI(lo, hi, n)` — форматирует "±8%" или "~" при n<5
+  - `IsSignificantlyAbove50(wins, n)` — нижняя граница CI > 0.50
+  - `WinRateWithCI(wins, n)` — "62% ±8%" в одну строку
+  - `SignificanceBadge(wins, n)` — ⚡ (значимо выше 50%) или ❓
+- `internal/calibration/confidence_intervals_test.go` (новый):
+  - 9 unit-тестов: ZeroN, AllWins_N1, 60pct_N10, 60pct_N100, IsSignificantlyAbove50, FormatCI_SmallN, FormatCI_LargeN, WinRateWithCI_Zero, WinRateWithCI_Normal — все PASS
+- `internal/notifier/telegram_commands.go` (обновлён):
+  - `/signals`: колонка "Win% CI" заменила "Win%" — показывает "62% ±8%" + badge ⚡/❓
+  - `/pnl-city`: аналогичное обновление — CI + badge в таблице городов
+  - Legend строка: "⚡sig. above 50% ❓CI crosses 50%"
+
+**go build ./...**: ✅
+**Тесты**: 9/9 PASS
+**Строк кода:** ~120 (confidence_intervals.go) + ~105 (test) + ~30 diff в telegram_commands.go
+**Файлы:** `internal/calibration/confidence_intervals.go`, `internal/calibration/confidence_intervals_test.go`, `internal/notifier/telegram_commands.go`

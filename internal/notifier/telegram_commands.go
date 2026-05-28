@@ -902,8 +902,8 @@ func handleSignals(bcfg BotConfig) string {
 	var sb strings.Builder
 	sb.WriteString("📈 <b>Signal Performance</b>\n")
 	sb.WriteString("<pre>")
-	sb.WriteString(fmt.Sprintf("%-8s %4s %5s %6s %8s\n", "Signal", "N", "Win%", "Brier", "P&L"))
-	sb.WriteString(strings.Repeat("─", 38) + "\n")
+	sb.WriteString(fmt.Sprintf("%-8s %4s  %-10s %6s %8s\n", "Signal", "N", "Win% CI", "Brier", "P&L"))
+	sb.WriteString(strings.Repeat("─", 44) + "\n")
 
 	for _, row := range rows {
 		name := row.name
@@ -928,18 +928,21 @@ func handleSignals(bcfg BotConfig) string {
 			emoji = "🔴"
 		}
 
+		badge := calibration.SignificanceBadge(s.Wins, s.Count)
+		ciStr := calibration.WinRateWithCI(s.Wins, s.Count)
+
 		pnl := pnlBySignal[row.name]
 		pnlSign := "+"
 		if pnl < 0 {
 			pnlSign = ""
 		}
 
-		sb.WriteString(fmt.Sprintf("%s %-7s %4d %4.0f%% %6.4f %s%.2f\n",
-			emoji, name, s.Count, wr, s.BrierAvg(), pnlSign, pnl))
+		sb.WriteString(fmt.Sprintf("%s %-7s %4d  %-10s %6.4f %s%.2f %s\n",
+			emoji, name, s.Count, ciStr, s.BrierAvg(), pnlSign, pnl, badge))
 	}
 
 	sb.WriteString("</pre>")
-	sb.WriteString("\n🟢≥55% 🟡45-55% 🔴&lt;45% (min 3 bets)")
+	sb.WriteString("\n🟢≥55% 🟡45-55% 🔴&lt;45% (min 3 bets)\n⚡sig. above 50% ❓CI crosses 50%")
 	return sb.String()
 }
 
@@ -1319,9 +1322,9 @@ func handlePnLCity(bcfg BotConfig) string {
 	var sb strings.Builder
 	sb.WriteString("<b>🏙️ P&L by City</b>\n")
 	sb.WriteString("<pre>")
-	sb.WriteString(fmt.Sprintf("%-14s %4s %4s %5s %8s %6s\n",
-		"City", "Bets", "Wins", "Win%", "PnL", "ROI%"))
-	sb.WriteString(repeatDash(47) + "\n")
+	sb.WriteString(fmt.Sprintf("%-14s %4s  %-10s %8s %6s\n",
+		"City", "N", "Win% CI", "PnL", "ROI%"))
+	sb.WriteString(repeatDash(48) + "\n")
 
 	var totalBets, totalWins int
 	var totalPnL, totalRisked float64
@@ -1335,15 +1338,17 @@ func handlePnLCity(bcfg BotConfig) string {
 		if s.TotalRisked > 0 {
 			roi = s.PnLUSDC / s.TotalRisked * 100
 		}
-		sb.WriteString(fmt.Sprintf("%-14s %4d %4d %4.0f%% %s%.2f %+5.1f%%\n",
-			s.City, s.Bets, s.Wins, s.WinRate(), sign, s.PnLUSDC, roi))
+		ciStr := calibration.WinRateWithCI(s.Wins, s.Bets)
+		badge := calibration.SignificanceBadge(s.Wins, s.Bets)
+		sb.WriteString(fmt.Sprintf("%-14s %4d  %-10s %s%.2f %+5.1f%% %s\n",
+			s.City, s.Bets, ciStr, sign, s.PnLUSDC, roi, badge))
 		totalBets += s.Bets
 		totalWins += s.Wins
 		totalPnL += s.PnLUSDC
 		totalRisked += s.TotalRisked
 	}
 
-	sb.WriteString(repeatDash(47) + "\n")
+	sb.WriteString(repeatDash(48) + "\n")
 	overallROI := 0.0
 	if totalRisked > 0 {
 		overallROI = totalPnL / totalRisked * 100
@@ -1352,12 +1357,12 @@ func handlePnLCity(bcfg BotConfig) string {
 	if totalPnL < 0 {
 		sign = ""
 	}
-	sb.WriteString(fmt.Sprintf("%-14s %4d %4d %4.0f%% %s%.2f %+5.1f%%\n",
-		"TOTAL", totalBets, totalWins,
-		float64(totalWins)/float64(totalBets)*100,
-		sign, totalPnL, overallROI))
+	totalCIStr := calibration.WinRateWithCI(totalWins, totalBets)
+	sb.WriteString(fmt.Sprintf("%-14s %4d  %-10s %s%.2f %+5.1f%%\n",
+		"TOTAL", totalBets, totalCIStr, sign, totalPnL, overallROI))
 	sb.WriteString("</pre>")
-	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	sb.WriteString(fmt.Sprintf("\n⚡sig.>50%% ❓CI crosses 50%% — <i>%s UTC</i>",
+		time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()
 }
 

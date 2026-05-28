@@ -2190,3 +2190,49 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Показывает какой сигнал переоценён/недооценён: "rain: ECE=0.08 (overconfident)", "heat: ECE=0.03 (well-calibrated)"
 - 4 unit-теста: empty, one signal, perfect calibration, systematic overestimation
 - `go run ./cmd/dashboard calibration-curve`
+
+---
+
+## 🔴 ПРИОРИТЕТ 1000 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-219: Wilson score confidence intervals для win rate — статистическая значимость
+**Файлы:** `internal/calibration/confidence_intervals.go` (новый), `internal/calibration/confidence_intervals_test.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Показываем 95% CI рядом с win rate в /signals и /pnl-city. Предотвращает over-fitting на малой выборке.
+- `WilsonCI(wins, n int, z float64) (lo, hi float64)` — Wilson score interval (Newcombe 1998)
+- `WilsonCI95(wins, n int) (lo, hi float64)` — z=1.96 shortcut
+- `FormatCI(lo, hi float64) string` — форматирует "±8%" (half-width) или "~" для n<5
+- Обновить `handleSignals`: добавить колонку CI → `62% ±8%` вместо просто `62%`
+- Обновить `handlePnLCity`: добавить CI для win rate
+- Добавить значок ⚡ (статистически значимо > 50%, нижняя граница > 50%) или ❓ (CI пересекает 50%)
+- 5 unit-тестов: n=0, n=1 (100%), n=10 (60%), n=100 (60%), n=30 (50% edge case)
+
+### [ ] TASK-220: Telegram `/compare-signals` — сравнение двух временных периодов по сигналам
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает как изменилась точность каждого сигнала за последние 30 дней vs предыдущие 30 дней.
+- `handleCompareSignals(bcfg BotConfig) string`
+- Использует `calibration.SignalBreakdownForPeriod(records, 30)` для обоих периодов
+- Таблица: Signal | Recent Win% | Prev Win% | Δ | Trend emoji
+- Тренд: 📈 если Δ > +5%, 📉 если Δ < -5%, ➡️ иначе
+- Минимум 3 ставки в каждом периоде для сравнения; иначе "N/A"
+- Добавить case "/compare-signals" + строку в /help секция "Analytics"
+
+### [ ] TASK-221: Polymarket volume tracker — отслеживать объём торгов на рынках
+**Файл:** `internal/markets/volume_tracker.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Добавить `/volume` команду: топ рынков по объёму торгов за последние 24ч.
+- `FetchVolume(conditionID string) (float64, error)` — GET Gamma API `/markets?condition_id=...` → поле `volume`
+- `VolumeSnapshot{ConditionID, Question, Volume24h, TotalVolume float64, UpdatedAt time.Time}`
+- Сохранять snapshots в `data/volume/{date}.json` при каждом цикле бота
+- Команда `/volume`: топ-5 рынков по объёму 24h + средний объём за неделю
+- Добавить `HighVolume bool` в Market struct: volume > 10000 USDC → выше доверие к цене
+- Высокий объём = более точная market probability, учитывать в EvaluateFused() weight
+
+### [ ] TASK-222: Auto-generated insight summary — ежедневный AI-анализ производительности
+**Файл:** `internal/notifier/telegram.go` (обновить), `cmd/bot/main.go` (обновить)
+Раз в день (в 09:00) — помимо DailyDigest отправлять 2-3 строки инсайтов.
+- `GenerateDailyInsights(records []BetRecord, dataRoot string) string` — детерминированные правила:
+  1. Если лучший сигнал сегодня имеет win rate > 70% → "🔥 {signal} on fire: 70%+ today"
+  2. Если drawdown > 10% от пика → "⚠️ Drawdown alert: -X% from peak"
+  3. Если найдены рынки с confidence > 0.75 которые не были поставлены (из prediction log) → "💡 Missed high-conf bet: {city}/{signal}"
+  4. Если Brier score улучшился на 0.01+ за неделю → "📈 Calibration improving: Brier {old}→{new}"
+- Добавить в DailyDigest() после P&L секции
+- Не требует внешнего AI — только детерминированная логика на существующих данных
