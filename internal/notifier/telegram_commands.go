@@ -58,6 +58,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/devher0/polymarket-weather-bot/internal/aggregation"
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
@@ -312,6 +313,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleCompareSignals(bcfg))
 				case "/volume":
 					sendReply(cfg, chatID, handleVolume(bcfg))
+				case "/uncertainty":
+					sendReply(cfg, chatID, handleUncertainty(bcfg))
 				}
 			}
 		}
@@ -3322,4 +3325,72 @@ func formatVolume(v float64) string {
 	default:
 		return fmt.Sprintf("%.0f", v)
 	}
+}
+
+// handleUncertainty — TASK-226: per-city source probability spread from cache.
+// Shows how much the weather data sources disagree on rain probability for each
+// city. Wide spread → low confidence → bets skipped by the spread gate.
+func handleUncertainty(bcfg BotConfig) string {
+	cities := []string{
+		"new_york", "london", "tokyo", "miami", "paris",
+		"chicago", "los_angeles", "san_francisco", "berlin",
+	}
+
+	type row struct {
+		city    string
+		spread  aggregation.SourceSpread
+		sources int
+		ok      bool
+	}
+
+	rows := make([]row, 0, len(cities))
+	for _, city := range cities {
+		ff, ok := collectors.LoadForecastCache(city, 0, bcfg.DataRoot, 0)
+		if !ok || ff == nil || len(ff.PerSourceForecasts) < 2 {
+			rows = append(rows, row{city: city})
+			continue
+		}
+		perProbs := strategy.ComputePerSourceProbsRain(ff.PerSourceForecasts)
+		if len(perProbs) < 2 {
+			rows = append(rows, row{city: city})
+			continue
+		}
+		probs := make([]float64, 0, len(perProbs))
+		for _, p := range perProbs {
+			probs = append(probs, p)
+		}
+		sg := aggregation.ComputeSpread(probs)
+		rows = append(rows, row{city: city, spread: sg, sources: len(probs), ok: true})
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>📊 Source Probability Spread (rain signal)</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-14s %4s %4s %6s %8s\n", "City", "Min", "Max", "Spread", "Label"))
+	sb.WriteString(strings.Repeat("─", 42) + "\n")
+
+	for _, r := range rows {
+		if !r.ok {
+			sb.WriteString(fmt.Sprintf("%-14s  — no cached forecast\n", r.city))
+			continue
+		}
+		gateFlag := ""
+		if r.spread.Exceeds(strategy.MaxSourceSpread) {
+			gateFlag = " ⛔"
+		}
+		sb.WriteString(fmt.Sprintf("%-14s %4.0f%% %4.0f%% %5.0fpp %-8s%s\n",
+			r.city,
+			r.spread.Min*100, r.spread.Max*100,
+			r.spread.Spread*100,
+			r.spread.Label(),
+			gateFlag,
+		))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf(
+		"<i>⛔ = spread > %.0fpp gate threshold | %s UTC</i>",
+		strategy.MaxSourceSpread*100,
+		time.Now().UTC().Format("15:04"),
+	))
+	return sb.String()
 }

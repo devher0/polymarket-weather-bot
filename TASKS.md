@@ -2269,3 +2269,35 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Добавить в config.yaml: `stop_loss_enabled`, `stop_loss_pct`
 - 5 unit-тестов: triggered, not triggered, disabled, exactly at threshold, no entry price
 
+
+---
+
+## 🔴 ПРИОРИТЕТ 1200 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-226: Source probability spread gate + `/uncertainty` Telegram команда
+**Файлы:** `internal/aggregation/spread_gate.go` (новый), `internal/aggregation/spread_gate_test.go` (новый), `config/config.go` (обновить), `internal/strategy/strategy.go` (обновить), `internal/notifier/telegram_commands.go` (обновить)
+Добавить явный gate: если max(sourceProbs) - min(sourceProbs) > MaxSourceSpread → SKIP.
+- `SourceSpread{Min, Max, Spread, Mean, StdDev float64, Sources int}`
+- `ComputeSpread(probs []float64) SourceSpread`
+- `(s SourceSpread) Exceeds(maxSpread float64) bool`
+- `(s SourceSpread) Label() string` → "tight"(<0.10) / "moderate"(0.10-0.20) / "wide"(0.20-0.30) / "extreme"(>0.30)
+- config: `MaxSourceSpread float64` (default 0.35, 0=disabled)
+- strategy: если len(probSlice)>=2 && ComputeSpread().Exceeds(cfg) → SKIP:wide_spread
+- `/uncertainty` команда: таблица city|sources|min|max|spread|label из кэшированных прогнозов
+- 6 unit-тестов: all same, two sources, wide spread, empty, exceeds, label
+
+### [ ] TASK-227: NWS Active Alerts Telegram команда `/alerts`
+**Файлы:** `internal/notifier/telegram_commands.go` (обновить)
+Добавить `/alerts` команду — список активных NWS предупреждений для US городов из кэша.
+- Итерировать через LoadForecastCache для us-городов (new_york, miami, chicago, los_angeles)
+- Показывать AlertLevel + AlertEvents из FusedForecast
+- Формат: "⚠️ NYC: Thunderstorm Warning, Heat Advisory\n🟢 Miami: no alerts"
+- Сортировать по AlertLevel DESC
+- Если нет данных — "No US forecast data cached"
+
+### [ ] TASK-228: Per-signal probability trend (7d rolling) в `/signals`
+**Файлы:** `internal/calibration/signal_trend.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+В команде `/signals` добавить колонку "7d Trend" — изменение win rate за последние 7 vs предыдущие 7 дней.
+- `SignalTrend7d(records []BetRecord, signal string) float64` — Δ win rate (положительный = улучшение)
+- Форматировать: "+5%" (📈) / "-3%" (📉) / "~" (ничего если Δ < 1%)
+- Требует min 3 ставки в каждом окне; иначе "N/A"

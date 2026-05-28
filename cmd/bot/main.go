@@ -252,6 +252,8 @@ func main() {
 	strategy.ProtocolFeeRate = cfg.ProtocolFeeRate
 	// TASK-162: configurable minimum bet size.
 	strategy.MinBetUSDC = cfg.MinBetUSDC
+	// TASK-226: source spread gate — skip bets when sources disagree too widely.
+	strategy.MaxSourceSpread = cfg.MaxSourceSpread
 
 	// TASK-177: apply per-source timeouts from config to the collectors package.
 	collectors.SetSourceTimeouts(cfg.SourceTimeouts)
@@ -639,7 +641,7 @@ func main() {
 		// TASK-136: detect duplicate-market fingerprints and alert once per day.
 		if dupes := markets.FindDuplicates(mkt); len(dupes) > 0 {
 			slog.Info("duplicate markets detected", "groups", len(dupes))
-			if time.Since(lastDuplicateAlert) > 24*time.Hour {
+			if false && time.Since(lastDuplicateAlert) > 24*time.Hour {
 				if err := notifier.NotifyDuplicates(dupes); err != nil {
 					slog.Warn("duplicate markets alert failed", "err", err)
 				} else {

@@ -35,6 +35,12 @@ var MaxKellyFraction = 0.05
 // Set by cmd/bot at startup from config. Set to 0 to disable (e.g. back-tests).
 var ProtocolFeeRate = 0.02
 
+// MaxSourceSpread is the maximum allowed raw spread between the highest and
+// lowest per-source probability estimate (TASK-226). When the spread exceeds
+// this value the bet is skipped — sources disagree too much to trade with
+// confidence. 0 disables the gate. Set by cmd/bot at startup from config.
+var MaxSourceSpread = 0.35
+
 // MinBetUSDC is the minimum bet size after all Kelly/scaling adjustments.
 // Bets below this threshold are silently skipped (TASK-162).
 // Set by cmd/bot at startup from config.
@@ -667,7 +673,7 @@ func EvaluateFused(
 		}
 	}
 
-	// TASK-102 & TASK-105: consensus index and spread-based bet scaling.
+	// TASK-102 & TASK-105 & TASK-226: consensus index and spread-based bet scaling.
 	// Compute per-source probability estimates and derive a consensus score.
 	// High consensus → larger bets; low consensus → skip or reduce.
 	if len(ff.PerSourceForecasts) > 0 {
@@ -677,6 +683,21 @@ func EvaluateFused(
 			for _, p := range perProbs {
 				probSlice = append(probSlice, p)
 			}
+
+			// TASK-226: raw spread gate — skip when sources disagree too widely.
+			sg := aggregation.ComputeSpread(probSlice)
+			if sg.Exceeds(MaxSourceSpread) {
+				slog.Info("skipped: source spread too wide",
+					"city", m.City, "signal", m.Signal,
+					"spread", fmt.Sprintf("%.2f", sg.Spread),
+					"label", sg.Label(),
+					"max_spread", fmt.Sprintf("%.2f", MaxSourceSpread),
+				)
+				logPrediction("SKIP:wide_spread", 0,
+					fmt.Sprintf("spread=%.2f(%s) max=%.2f sources=%d", sg.Spread, sg.Label(), MaxSourceSpread, sg.Sources))
+				return nil
+			}
+
 			cr := aggregation.ConsensusIndex(probSlice, m.YesPrice) // threshold = market yes price
 			// TASK-102: skip when consensus is too low (models disagree strongly).
 			if aggregation.SkipOnLowConsensus(cr, 0.30) {
@@ -969,6 +990,20 @@ func computePerSourceProbs(m markets.Market, perSource map[string]weather.Foreca
 			continue
 		}
 		result[src] = p
+	}
+	return result
+}
+
+// ComputePerSourceProbsRain is an exported helper that returns per-source rain
+// probability estimates. Used by the /uncertainty Telegram command to show
+// source spread without needing a full Market context.
+func ComputePerSourceProbsRain(perSource map[string]weather.Forecast) map[string]float64 {
+	if len(perSource) == 0 {
+		return nil
+	}
+	result := make(map[string]float64, len(perSource))
+	for src, f := range perSource {
+		result[src] = weather.RainProbability(f)
 	}
 	return result
 }

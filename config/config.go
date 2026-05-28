@@ -149,6 +149,15 @@ type Config struct {
 	// ENV:  STOP_LOSS_ENABLED / STOP_LOSS_PCT
 	StopLossEnabled bool    `yaml:"stop_loss_enabled"` // default false
 	StopLossPct     float64 `yaml:"stop_loss_pct"`     // default 0.50 (50%)
+
+	// TASK-226: raw source probability spread gate.
+	// When the spread between the highest and lowest per-source probability
+	// estimate exceeds MaxSourceSpread, the bet is skipped (sources disagree too
+	// much to trade confidently). 0 disables the gate.
+	//
+	// YAML: max_source_spread
+	// ENV:  MAX_SOURCE_SPREAD
+	MaxSourceSpread float64 `yaml:"max_source_spread"` // default 0.35 (35 pp)
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -188,6 +197,7 @@ func defaults() Config {
 		MinVolumeUSDC:           500.0,
 		StopLossEnabled:         false,
 		StopLossPct:             0.50,
+		MaxSourceSpread:         0.35,
 		SourceTimeouts: map[string]int{
 			"openmeteo": 8,
 			"nasa":      10,
@@ -371,6 +381,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("STOP_LOSS_PCT"); v != nil {
 		cfg.StopLossPct = *v
+	}
+	if v := envFloat("MAX_SOURCE_SPREAD"); v != nil {
+		cfg.MaxSourceSpread = *v
 	}
 
 	// Telegram
