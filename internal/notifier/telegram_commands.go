@@ -346,6 +346,23 @@ func handleStatus(bcfg BotConfig) string {
 		driftStr = "\n" + line
 	}
 
+	// TASK-198: Brier history sparkline (30-day trend).
+	brierHistStr := ""
+	if snaps, err := calibration.LoadBrierSnapshots(bcfg.DataRoot); err == nil && len(snaps) >= 5 {
+		spark := calibration.BrierSparkline(snaps, 30)
+		trend := calibration.BrierTrendLabel(snaps, 30)
+		trendEmoji := "→"
+		switch trend {
+		case "improving":
+			trendEmoji = "↑"
+		case "worsening":
+			trendEmoji = "↓"
+		}
+		if spark != "" {
+			brierHistStr = fmt.Sprintf("\nBrier 30d: <code>%s</code> %s", spark, trendEmoji)
+		}
+	}
+
 	return fmt.Sprintf(
 		"📊 <b>Bot Status</b>\n"+
 			"State: %s\n"+
@@ -353,8 +370,8 @@ func handleStatus(bcfg BotConfig) string {
 			"Sharpe (30d): <code>%s</code>\n"+
 			"Streak: <code>%s</code>\n"+
 			"Open positions: <b>%d</b>\n"+
-			"Today P&amp;L: <b>%+.2f USDC</b>%s%s%s",
-		pauseState, brierStr, sharpeStr, streakStr, open, pnlToday, sparkStr, plattStr, driftStr,
+			"Today P&amp;L: <b>%+.2f USDC</b>%s%s%s%s",
+		pauseState, brierStr, sharpeStr, streakStr, open, pnlToday, sparkStr, plattStr, driftStr, brierHistStr,
 	)
 }
 

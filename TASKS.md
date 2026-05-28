@@ -1937,3 +1937,34 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Итог: current balance, cumulative profit, daily avg, best day, worst day, days up/down
 
 ---
+
+## 🔴 ПРИОРИТЕТ 200 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-198: Daily Brier snapshot + sparkline в /status
+**Файлы:** `internal/calibration/brier_history.go` (новый), `internal/calibration/brier_history_test.go` (новый), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить), `internal/notifier/telegram_commands.go` (обновить)
+Сохранять дневной снимок Brier score в `data/brier_snapshots.json` — один раз в сутки при старте бота. Позволяет видеть долгосрочный тренд точности.
+- `BrierSnapshot{Date, BrierAll, Brier7d, Brier30d, BetsAll int}`
+- `AppendBrierSnapshot(records []BetRecord, dataRoot string) error` — добавляет строку только если сегодняшнего снимка ещё нет (идемпотентно)
+- `LoadBrierSnapshots(dataRoot string) ([]BrierSnapshot, error)` — читает весь JSON-массив
+- `BrierSparkline(snapshots []BrierSnapshot, n int) string` — последние N дней в виде ASCII-спарклайна ▁▂▃▄▅▆▇█ (меньше Brier = выше блок = лучше)
+- В `cmd/bot/main.go`: вызывать `calibration.AppendBrierSnapshot(history, cfg.DataRoot)` после `PrintBrierScore()`
+- В `cmd/dashboard/main.go`: subcommand `brier-history` — таблица дат с колонками Date | Brier (all) | 7d | 30d | N bets; снизу спарклайн за 30 дней
+- В `telegram_commands.go handleStatus()`: добавить строку `Brier 30d: ▁▃▅▇ (trend)` если есть ≥5 снимков
+- 5 unit-тестов: AppendIdempotent (повторный вызов не дублирует), BrierSparklineEmpty, BrierSparklineAscending (чем ниже Brier тем выше блок), LoadRoundtrip, AppendFirstDay
+
+### [ ] TASK-199: Per-cycle stats CSV — журнал производительности циклов
+**Файлы:** `internal/calibration/cycle_stats.go` (новый), `cmd/bot/main.go` (обновить), `cmd/dashboard/main.go` (обновить)
+Логировать статистику каждого цикла в `data/cycles.csv`: timestamp, duration_ms, markets_evaluated, bets_placed, avg_edge, avg_confidence. Позволяет анализировать производительность бота во времени.
+- `CycleStat{Timestamp, DurationMs, MarketsEvaluated, BetsPlaced int, AvgEdge, AvgConfidence float64}`
+- `AppendCycleStat(stat CycleStat, dataRoot string) error` — append CSV строку
+- `LoadCycleStats(dataRoot string) ([]CycleStat, error)` — чтение всего CSV
+- В `cmd/bot/main.go`: в конце каждого `run()` вызывать AppendCycleStat с данными из cycleResult
+- `cmd/dashboard/main.go` subcommand `cycles`: таблица последних 20 циклов + итоги: avg duration, avg bets/cycle, avg edge
+
+### [ ] TASK-200: `/watchdog` Telegram команда + горутина самопроверки
+**Файлы:** `cmd/bot/main.go` (обновить), `internal/notifier/telegram_commands.go` (обновить)
+Добавить background горутину-сторожа: если прошло > 2×loop_sec без успешного цикла — отправить Telegram-уведомление "⚠️ Watchdog: no cycle in Xs (expected ≤Ys)". Также команда `/watchdog` возвращает время последнего успешного цикла и статус.
+- В `cmd/bot/main.go`: `lastCycleAt atomic.Value` — обновлять в начале каждого успешного цикла
+- Горутина watchdog: `ticker := time.NewTicker(loopSec * time.Second)`; если `time.Since(lastCycleAt) > 2×loopSec` → `notifier.NotifyError`
+- `handleWatchdog(bcfg)` в `telegram_commands.go` — возвращает `lastCycleAt` + статус "ok/delayed"
+- Добавить `/watchdog` в help и switch поллера

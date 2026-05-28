@@ -347,6 +347,7 @@ func main() {
 	calibration.PrintBrierScore(cfg.DataRoot)
 	// TASK-147: log calibration drift status at startup.
 	// TASK-178: check 3-week Brier trend and alert on sustained worsening.
+	// TASK-198: persist daily Brier snapshot for long-term trend visualization.
 	if startupDriftRecords, err := calibration.LoadHistory(cfg.DataRoot); err == nil {
 		if line := calibration.DriftStatusLine(startupDriftRecords); line != "" {
 			slog.Info("calibration drift status", "status", line)
@@ -356,6 +357,9 @@ func main() {
 			_ = notifier.NotifyError("Brier trend", fmt.Errorf("%s", msg))
 		} else if trendLine := calibration.BrierTrendLine(startupDriftRecords); trendLine != "" {
 			slog.Info("calibration trend", "status", trendLine)
+		}
+		if err2 := calibration.AppendBrierSnapshot(startupDriftRecords, cfg.DataRoot); err2 != nil {
+			slog.Warn("brier snapshot: failed to persist", "err", err2)
 		}
 	}
 

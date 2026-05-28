@@ -691,6 +691,9 @@ func main() {
 	case "exit-signals":
 		// TASK-188: open positions with exit recommendations.
 		cmdExitSignals(dataRoot)
+	case "brier-history":
+		// TASK-198: daily Brier score snapshot table + sparkline.
+		cmdBrierHistory(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -740,6 +743,7 @@ func printUsage() {
 	fmt.Println("  crossday                          Cross-day signal consistency table: which cities/signals persist (TASK-185)")
 	fmt.Println("  ev-track                          EV capture ratio: expected vs realized P&L by signal (TASK-187)")
 	fmt.Println("  exit-signals                      Open positions with exit recommendations (TASK-188)")
+	fmt.Println("  brier-history                     Daily Brier score snapshots + trend sparkline (TASK-198)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -3576,4 +3580,66 @@ func truncateID(id string, n int) string {
 	}
 	half := n / 2
 	return id[:half] + "…" + id[len(id)-half:]
+}
+
+// ── brier-history (TASK-198) ──────────────────────────────────────────────────
+
+// cmdBrierHistory prints a table of daily Brier score snapshots and a sparkline
+// showing the calibration trend over the last 30 days.
+func cmdBrierHistory(dataRoot string) {
+	header("📈  BRIER SCORE HISTORY")
+
+	snaps, err := calibration.LoadBrierSnapshots(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error loading brier snapshots: %v\n", err)
+		return
+	}
+	if len(snaps) == 0 {
+		fmt.Println("  No Brier snapshots yet. Snapshots are recorded once per day at bot startup.")
+		fmt.Println("  Run the bot at least once to create the first snapshot.")
+		return
+	}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Date", "Brier (all)", "7-day", "30-day", "Resolved bets"})
+
+	// Show latest 30 entries (most recent last).
+	display := snaps
+	if len(display) > 30 {
+		display = display[len(display)-30:]
+	}
+	for _, s := range display {
+		brierAllStr := "—"
+		if s.BetsAll > 0 {
+			brierAllStr = fmt.Sprintf("%.4f", s.BrierAll)
+		}
+		b7 := "—"
+		if s.Brier7d > 0 {
+			b7 = fmt.Sprintf("%.4f", s.Brier7d)
+		}
+		b30 := "—"
+		if s.Brier30d > 0 {
+			b30 = fmt.Sprintf("%.4f", s.Brier30d)
+		}
+		t.AppendRow(table.Row{s.Date, brierAllStr, b7, b30, s.BetsAll})
+	}
+	t.Render()
+
+	// Sparkline + trend summary.
+	spark := calibration.BrierSparkline(snaps, 30)
+	trend := calibration.BrierTrendLabel(snaps, 30)
+	if spark != "" {
+		trendEmoji := "→"
+		switch trend {
+		case "improving":
+			trendEmoji = "↑"
+		case "worsening":
+			trendEmoji = "↓"
+		}
+		fmt.Printf("\n  30-day trend: %s  %s (%s)\n", spark, trendEmoji, trend)
+	}
+
+	latest := snaps[len(snaps)-1]
+	fmt.Printf("  Latest (%s): Brier=%.4f  7d=%.4f  30d=%.4f  |  %d total resolved bets\n",
+		latest.Date, latest.BrierAll, latest.Brier7d, latest.Brier30d, latest.BetsAll)
 }

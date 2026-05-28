@@ -1,5 +1,35 @@
 # Night Log — Polymarket Weather Bot
 
+---
+
+### 2026-05-28 09:07 UTC — TASK-198: Daily Brier snapshot + sparkline
+
+**Задача:** все 197 предыдущих задач выполнены. Добавлены 3 новые задачи (198–200), реализована первая.
+
+**TASK-198: Daily Brier snapshot + sparkline в /status**
+- `internal/calibration/brier_history.go` (новый, ~155 строк):
+  - `BrierSnapshot{Date, BrierAll, Brier7d, Brier30d, BetsAll}` — дневной снимок точности
+  - `AppendBrierSnapshot(records, dataRoot)` — идемпотентно добавляет запись 1 раз в сутки в `data/brier_snapshots.json`
+  - `LoadBrierSnapshots(dataRoot)` — читает весь JSON-массив (graceful empty)
+  - `BrierSparkline(snapshots, n)` — ASCII спарклайн последних N снимков (▁–█), инвертированный (меньше Brier = выше блок = лучше)
+  - `BrierTrendLabel(snapshots, n)` → "improving" / "stable" / "worsening"
+- `internal/calibration/brier_history_test.go` (новый, ~110 строк) — 7 unit-тестов (все pass):
+  - AppendIdempotent, LoadMissingFile, LoadRoundtrip, BrierSparklineEmpty, BrierSparklineAscending, BrierTrendLabel_Improving, CreatesDataDir
+- `cmd/bot/main.go` (~3 строки) — вызов `AppendBrierSnapshot` сразу после PrintBrierScore и BrierTrendAlert в startup block
+- `cmd/dashboard/main.go` (~45 строк) — subcommand `brier-history`:
+  - Таблица: Date | Brier (all) | 7d | 30d | Resolved bets
+  - До 30 строк, снизу: спарклайн + тренд-стрелка (↑↓→) + latest summary
+  - Добавлен в switch, printUsage
+- `internal/notifier/telegram_commands.go` (~16 строк) — в `handleStatus()`:
+  - Если ≥5 снимков → строка `Brier 30d: ▁▃▅▇ ↑` под P&L спарклайном
+
+**go build ./...** ✅ | **go test ./...** ✅ (все тесты pass)
+
+**Строк кода:** ~329 (новые файлы + изменения в 3 файлах)
+**Файлы:** brier_history.go (новый), brier_history_test.go (новый), cmd/bot/main.go, cmd/dashboard/main.go, internal/notifier/telegram_commands.go
+
+---
+
 ## 2026-05-28 09:22 UTC — ИТОГОВЫЙ ОТЧЕТ
 
 **Автономная инженерная сессия завершена.**
