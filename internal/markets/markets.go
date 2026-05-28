@@ -55,7 +55,8 @@ type signal struct {
 var signals = []signal{
 	{regexp.MustCompile(`(?i)rain|precipitation|rainfall|rainy`), "rain"},
 	// TASK-048: added "exceed" and temperature range as heat indicator.
-	{regexp.MustCompile(`(?i)temperature.{0,20}above|above.{0,10}\d+.{0,10}degree|exceed.{0,10}\d+.{0,10}degree|heat.?wave|heatwave|hot day|between\s+\d+.*and\s+\d+.*°[CF]`), "heat"},
+	// Also matches "highest temperature in London" / "maximum temp" range markets.
+	{regexp.MustCompile(`(?i)temperature.{0,20}above|above.{0,10}\d+.{0,10}degree|exceed.{0,10}\d+.{0,10}degree|heat.?wave|heatwave|hot day|between\s+\d+.*and\s+\d+.*°[CF]|highest.{0,10}temperature|max(?:imum)?.{0,10}temp`), "heat"},
 	{regexp.MustCompile(`(?i)temperature.{0,20}below|below.{0,10}\d+.{0,10}degree|cold snap|freeze`), "cold"},
 	{regexp.MustCompile(`(?i)snow|snowfall|blizzard`), "snow"},
 	{regexp.MustCompile(`(?i)wind|hurricane|typhoon|storm`), "wind"},
@@ -143,6 +144,27 @@ func parseTempThresholdC(question string) float64 {
 		}
 	}
 
+	return 0
+}
+
+// outcomeThresholdRe extracts a temperature value from outcome strings like
+// "26°C", "20°C or below", "30°C or higher", "75°F".
+var outcomeThresholdRe = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*°?\s*([CF])\b`)
+
+// parseTempThresholdFromOutcome extracts the temperature threshold in Celsius
+// from a token outcome string (e.g., "26°C" → 26.0, "75°F" → ~23.9).
+// Returns 0 if no temperature is found.
+func parseTempThresholdFromOutcome(outcome string) float64 {
+	m := outcomeThresholdRe.FindStringSubmatch(outcome)
+	if len(m) >= 3 {
+		val, err := strconv.ParseFloat(m[1], 64)
+		if err == nil {
+			if strings.ToUpper(m[2]) == "F" {
+				val = (val - 32) * 5 / 9
+			}
+			return val
+		}
+	}
 	return 0
 }
 
@@ -330,6 +352,13 @@ func GetWeatherMarkets() ([]Market, error) {
 			}
 			if yes.TokenID == "" || no.TokenID == "" {
 				continue
+			}
+
+			// For highest-temperature range markets the threshold is not in the
+			// question itself but in the YES token outcome (e.g., "26°C", "30°C or higher").
+			// Fall back to parsing the outcome when the question parse returned nothing.
+			if sig == "heat" && thresholdC == 0 && yes.Outcome != "" {
+				thresholdC = parseTempThresholdFromOutcome(yes.Outcome)
 			}
 
 			// TASK-063: parse last trade timestamp to determine staleness.

@@ -190,6 +190,65 @@ func TestParseUVThreshold(t *testing.T) {
 	}
 }
 
+// TestParseTempThresholdFromOutcome tests the outcome-string temperature parser.
+func TestParseTempThresholdFromOutcome(t *testing.T) {
+	tests := []struct {
+		outcome string
+		want    float64
+	}{
+		{"26°C", 26.0},
+		{"27°C", 27.0},
+		{"20°C or below", 20.0},
+		{"30°C or higher", 30.0},
+		{"75°F", (75 - 32) * 5 / 9}, // ≈23.89
+		{"No threshold here", 0},
+		{"", 0},
+	}
+	for _, tc := range tests {
+		got := parseTempThresholdFromOutcome(tc.outcome)
+		if abs(got-tc.want) > 0.1 {
+			t.Errorf("parseTempThresholdFromOutcome(%q): got %.2f, want %.2f", tc.outcome, got, tc.want)
+		}
+	}
+}
+
+// TestClassify_HighestTemperature verifies that "Highest temperature in London"
+// style questions are classified as heat/london.
+func TestClassify_HighestTemperature(t *testing.T) {
+	tests := []struct {
+		question   string
+		wantCity   string
+		wantSignal string
+	}{
+		{
+			question:   "Highest temperature in London on May 29?",
+			wantCity:   "london",
+			wantSignal: "heat",
+		},
+		{
+			question:   "Highest temperature in Tokyo today?",
+			wantCity:   "tokyo",
+			wantSignal: "heat",
+		},
+		{
+			question:   "Maximum temp in Paris tomorrow?",
+			wantCity:   "paris",
+			wantSignal: "heat",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.question, func(t *testing.T) {
+			city, sig, _ := classify(tc.question)
+			if city != tc.wantCity {
+				t.Errorf("city: got %q, want %q", city, tc.wantCity)
+			}
+			if sig != tc.wantSignal {
+				t.Errorf("signal: got %q, want %q", sig, tc.wantSignal)
+			}
+		})
+	}
+}
+
 func abs(x float64) float64 {
 	if x < 0 {
 		return -x

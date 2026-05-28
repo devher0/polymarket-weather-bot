@@ -2286,7 +2286,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `/uncertainty` команда: таблица city|sources|min|max|spread|label из кэшированных прогнозов
 - 6 unit-тестов: all same, two sources, wide spread, empty, exceeds, label
 
-### [ ] TASK-227: NWS Active Alerts Telegram команда `/alerts`
+### [x] 2026-05-28 — TASK-227: NWS Active Alerts Telegram команда `/alerts`
 **Файлы:** `internal/notifier/telegram_commands.go` (обновить)
 Добавить `/alerts` команду — список активных NWS предупреждений для US городов из кэша.
 - Итерировать через LoadForecastCache для us-городов (new_york, miami, chicago, los_angeles)
@@ -2295,7 +2295,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Сортировать по AlertLevel DESC
 - Если нет данных — "No US forecast data cached"
 
-### [ ] TASK-228: Per-signal probability trend (7d rolling) в `/signals`
+### [x] 2026-05-28 — TASK-228: Per-signal probability trend (7d rolling) в `/signals`
 **Файлы:** `internal/calibration/signal_trend.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
 В команде `/signals` добавить колонку "7d Trend" — изменение win rate за последние 7 vs предыдущие 7 дней.
 - `SignalTrend7d(records []BetRecord, signal string) float64` — Δ win rate (положительный = улучшение)

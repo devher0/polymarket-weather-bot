@@ -36,6 +36,8 @@
 //   /roi             — cumulative ROI% from starting bankroll with weekly sparkline (TASK-215)
 //   /compare-signals — compare per-signal win rate: last 30d vs previous 30d (TASK-220)
 //   /volume          — top markets by volume: total + 24h with HighVolume badge (TASK-221)
+//   /alerts          — NWS active alerts for US cities from cache (TASK-227)
+//   /signals         — per-signal win rate + Brier + 7d trend (TASK-228)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -315,6 +317,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleVolume(bcfg))
 				case "/uncertainty":
 					sendReply(cfg, chatID, handleUncertainty(bcfg))
+				case "/alerts":
+					sendReply(cfg, chatID, handleAlerts(bcfg))
 				}
 			}
 		}
@@ -856,7 +860,7 @@ func forecastAlertEmoji(level int) string {
 }
 
 // handleSignals returns a per-signal performance breakdown table for Telegram.
-// Shows win rate, Brier score, and estimated P&L for each signal type.
+// Shows win rate, Brier score, estimated P&L, and 7-day trend (TASK-228).
 // Signals with fewer than 3 resolved bets show "–" instead of stats.
 func handleSignals(bcfg BotConfig) string {
 	records, err := calibration.LoadHistory(bcfg.DataRoot)
@@ -870,9 +874,6 @@ func handleSignals(bcfg BotConfig) string {
 	}
 
 	// Compute P&L per signal from raw records.
-	type sigPnL struct {
-		pnl float64
-	}
 	pnlBySignal := make(map[string]float64)
 	for _, r := range records {
 		if r.Outcome == nil || r.Signal == "" {
@@ -911,8 +912,8 @@ func handleSignals(bcfg BotConfig) string {
 	var sb strings.Builder
 	sb.WriteString("📈 <b>Signal Performance</b>\n")
 	sb.WriteString("<pre>")
-	sb.WriteString(fmt.Sprintf("%-8s %4s  %-10s %6s %8s\n", "Signal", "N", "Win% CI", "Brier", "P&L"))
-	sb.WriteString(strings.Repeat("─", 44) + "\n")
+	sb.WriteString(fmt.Sprintf("%-8s %4s  %-10s %6s %8s  %s\n", "Signal", "N", "Win% CI", "Brier", "P&L", "7dΔ"))
+	sb.WriteString(strings.Repeat("─", 54) + "\n")
 
 	for _, row := range rows {
 		name := row.name
@@ -922,7 +923,7 @@ func handleSignals(bcfg BotConfig) string {
 		}
 
 		if s.Count < minSamples {
-			sb.WriteString(fmt.Sprintf("%-8s %4d    —      —        —\n", name, s.Count))
+			sb.WriteString(fmt.Sprintf("%-8s %4d    —      —        —     N/A\n", name, s.Count))
 			continue
 		}
 
@@ -946,12 +947,15 @@ func handleSignals(bcfg BotConfig) string {
 			pnlSign = ""
 		}
 
-		sb.WriteString(fmt.Sprintf("%s %-7s %4d  %-10s %6.4f %s%.2f %s\n",
-			emoji, name, s.Count, ciStr, s.BrierAvg(), pnlSign, pnl, badge))
+		delta, trendOK := calibration.SignalTrend7d(records, row.name, 3)
+		trendStr := calibration.FormatTrend(delta, trendOK)
+
+		sb.WriteString(fmt.Sprintf("%s %-7s %4d  %-10s %6.4f %s%.2f %s  %s\n",
+			emoji, name, s.Count, ciStr, s.BrierAvg(), pnlSign, pnl, badge, trendStr))
 	}
 
 	sb.WriteString("</pre>")
-	sb.WriteString("\n🟢≥55% 🟡45-55% 🔴&lt;45% (min 3 bets)\n⚡sig. above 50% ❓CI crosses 50%")
+	sb.WriteString("\n🟢≥55% 🟡45-55% 🔴&lt;45% (min 3 bets)\n⚡sig. above 50% ❓CI crosses 50%\n7dΔ: win rate change vs prev 7 days")
 	return sb.String()
 }
 
@@ -1880,7 +1884,9 @@ func handleHelp() string {
 /next            Top-3 best bet opportunities right now
 /markets         Active weather markets (price/spread/expiry)
 /top-edge        Markets ranked by edge×confidence
-/countdown       Markets sorted by time-to-close (urgency)</pre>
+/countdown       Markets sorted by time-to-close (urgency)
+/uncertainty     Per-city source probability spread
+/alerts          NWS active alerts for US cities</pre>
 
 <b>📂 Positions &amp; History</b>
 <pre>/positions       Open (unresolved) bets
@@ -3392,5 +3398,89 @@ func handleUncertainty(bcfg BotConfig) string {
 		strategy.MaxSourceSpread*100,
 		time.Now().UTC().Format("15:04"),
 	))
+	return sb.String()
+}
+
+// handleAlerts — TASK-227: NWS active alerts for US cities from forecast cache.
+// Iterates US cities, shows AlertLevel + AlertEvents from FusedForecast,
+// sorted by AlertLevel descending so highest-severity alerts appear first.
+func handleAlerts(bcfg BotConfig) string {
+	usCities := []string{"new_york", "miami", "chicago", "los_angeles"}
+
+	type alertRow struct {
+		city       string
+		alertLevel int
+		events     []string
+	}
+
+	rows := make([]alertRow, 0, len(usCities))
+	for _, city := range usCities {
+		ff, ok := collectors.LoadForecastCache(city, 0, bcfg.DataRoot, 0)
+		if !ok || ff == nil {
+			rows = append(rows, alertRow{city: city, alertLevel: -1})
+			continue
+		}
+		rows = append(rows, alertRow{
+			city:       city,
+			alertLevel: ff.AlertLevel,
+			events:     ff.AlertEvents,
+		})
+	}
+
+	// Sort by AlertLevel descending (highest severity first); missing data last.
+	for i := 0; i < len(rows); i++ {
+		for j := i + 1; j < len(rows); j++ {
+			if rows[j].alertLevel > rows[i].alertLevel {
+				rows[i], rows[j] = rows[j], rows[i]
+			}
+		}
+	}
+
+	cityLabel := map[string]string{
+		"new_york":    "NYC",
+		"miami":       "Miami",
+		"chicago":     "Chicago",
+		"los_angeles": "LA",
+	}
+
+	alertEmoji := func(level int) string {
+		switch level {
+		case collectors.AlertLevelWarning:
+			return "🔴"
+		case collectors.AlertLevelWatch:
+			return "🟠"
+		case collectors.AlertLevelAdvisory:
+			return "🟡"
+		default:
+			return "🟢"
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>⚠️ NWS Active Alerts — US Cities</b>\n\n")
+
+	anyAlerts := false
+	for _, r := range rows {
+		label := cityLabel[r.city]
+		if label == "" {
+			label = r.city
+		}
+		if r.alertLevel < 0 {
+			sb.WriteString(fmt.Sprintf("❓ %s: no cached data\n", label))
+			continue
+		}
+		if r.alertLevel == collectors.AlertLevelNone || len(r.events) == 0 {
+			sb.WriteString(fmt.Sprintf("🟢 %s: no alerts\n", label))
+			continue
+		}
+		anyAlerts = true
+		emoji := alertEmoji(r.alertLevel)
+		sb.WriteString(fmt.Sprintf("%s %s: %s\n", emoji, label, strings.Join(r.events, ", ")))
+	}
+
+	if !anyAlerts {
+		sb.WriteString("\n<i>All clear — no active NWS warnings.</i>")
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
 	return sb.String()
 }
