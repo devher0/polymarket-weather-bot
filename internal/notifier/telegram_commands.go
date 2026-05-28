@@ -5,6 +5,7 @@
 //   /status          — Brier score, open positions, P&L for today
 //   /positions       — list of open (unresolved) bets
 //   /daily           — today's bets timeline with running P&L
+//   /compare         — compare today vs yesterday: bets/wins/edge/PnL
 //   /next            — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
 //   /forecast-quality — per-city forecast confidence + age
@@ -195,6 +196,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handlePositions(bcfg))
 				case "/daily":
 					sendReply(cfg, chatID, handleDaily(bcfg))
+				case "/compare":
+					sendReply(cfg, chatID, handleCompare(bcfg))
 				case "/next":
 					sendReply(cfg, chatID, handleNext(bcfg))
 				case "/forecast":
@@ -1947,5 +1950,158 @@ func handleForecastQuality(bcfg BotConfig) string {
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("\n<i>✅ conf≥50%% &amp; age<3h | ⚠️ marginal | ❌ stale/missing | %s UTC</i>",
 		time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// handleCompare returns comparison of today vs yesterday metrics. (TASK-192)
+func handleCompare(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	yesterday := today.AddDate(0, 0, -1)
+	todayStr := today.Format("2006-01-02")
+	yesterdayStr := yesterday.Format("2006-01-02")
+
+	type dayStats struct {
+		totalBets    int
+		resolved     int
+		wins         int
+		pnl          float64
+		totalEdge    float64
+		totalSize    float64
+	}
+
+	computeDayStats := func(day time.Time, records []calibration.BetRecord) dayStats {
+		dayStr := day.Format("2006-01-02")
+		s := dayStats{}
+		for _, r := range records {
+			if r.Timestamp.UTC().Format("2006-01-02") != dayStr {
+				continue
+			}
+			s.totalBets++
+			s.totalSize += r.SizeUSDC
+
+			if r.Outcome != nil {
+				s.resolved++
+				s.totalEdge += (r.OurProbability - r.MarketPrice) * r.SizeUSDC
+				if *r.Outcome {
+					s.wins++
+					s.pnl += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+				} else {
+					s.pnl -= r.SizeUSDC
+				}
+			}
+		}
+		return s
+	}
+
+	todaySt := computeDayStats(today, records)
+	yesterdaySt := computeDayStats(yesterday, records)
+
+	// Compute metrics
+	todayWR := 0.0
+	if todaySt.resolved > 0 {
+		todayWR = float64(todaySt.wins) / float64(todaySt.resolved) * 100
+	}
+	yesterdayWR := 0.0
+	if yesterdaySt.resolved > 0 {
+		yesterdayWR = float64(yesterdaySt.wins) / float64(yesterdaySt.resolved) * 100
+	}
+
+	todayAvgEdge := 0.0
+	if todaySt.totalBets > 0 {
+		todayAvgEdge = todaySt.totalEdge / todaySt.totalSize
+	}
+	yesterdayAvgEdge := 0.0
+	if yesterdaySt.totalBets > 0 {
+		yesterdayAvgEdge = yesterdaySt.totalEdge / yesterdaySt.totalSize
+	}
+
+	todayROI := 0.0
+	if todaySt.totalSize > 0 {
+		todayROI = todaySt.pnl / todaySt.totalSize * 100
+	}
+	yesterdayROI := 0.0
+	if yesterdaySt.totalSize > 0 {
+		yesterdayROI = yesterdaySt.pnl / yesterdaySt.totalSize * 100
+	}
+
+	// Build comparison table
+	var sb strings.Builder
+	sb.WriteString("<b>📊 Today vs Yesterday</b>\n\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-18s %10s %10s %6s\n", "Metric", "Today", "Yesterday", "Δ%"))
+	sb.WriteString(strings.Repeat("─", 47) + "\n")
+
+	// Total Bets
+	deltaBets := 0.0
+	if yesterdaySt.totalBets > 0 {
+		deltaBets = float64(todaySt.totalBets-yesterdaySt.totalBets) / float64(yesterdaySt.totalBets) * 100
+	}
+	sb.WriteString(fmt.Sprintf("%-18s %10d %10d %5.0f%%\n",
+		"Total Bets", todaySt.totalBets, yesterdaySt.totalBets, deltaBets))
+
+	// Resolved
+	deltaResolved := 0.0
+	if yesterdaySt.resolved > 0 {
+		deltaResolved = float64(todaySt.resolved-yesterdaySt.resolved) / float64(yesterdaySt.resolved) * 100
+	}
+	sb.WriteString(fmt.Sprintf("%-18s %10d %10d %5.0f%%\n",
+		"Resolved", todaySt.resolved, yesterdaySt.resolved, deltaResolved))
+
+	// Win Rate
+	deltaWR := 0.0
+	if yesterdayWR > 0 {
+		deltaWR = (todayWR - yesterdayWR) / yesterdayWR * 100
+	}
+	sb.WriteString(fmt.Sprintf("%-18s %9.0f%% %9.0f%% %5.0f%%\n",
+		"Win Rate", todayWR, yesterdayWR, deltaWR))
+
+	// Avg Edge
+	deltaEdge := 0.0
+	if yesterdayAvgEdge > 0 {
+		deltaEdge = (todayAvgEdge - yesterdayAvgEdge) / yesterdayAvgEdge * 100
+	}
+	sb.WriteString(fmt.Sprintf("%-18s %9.4f %9.4f %5.0f%%\n",
+		"Avg Edge", todayAvgEdge, yesterdayAvgEdge, deltaEdge))
+
+	// PnL
+	deltaPnL := 0.0
+	if yesterdaySt.pnl != 0 {
+		deltaPnL = (todaySt.pnl - yesterdaySt.pnl) / math.Abs(yesterdaySt.pnl) * 100
+	}
+	pnlTodayStr := fmt.Sprintf("%+.2f", todaySt.pnl)
+	pnlYesterdayStr := fmt.Sprintf("%+.2f", yesterdaySt.pnl)
+	sb.WriteString(fmt.Sprintf("%-18s %10s %10s %5.0f%%\n",
+		"PnL USDC", pnlTodayStr, pnlYesterdayStr, deltaPnL))
+
+	// ROI
+	deltaROI := 0.0
+	if yesterdayROI > 0 {
+		deltaROI = (todayROI - yesterdayROI) / yesterdayROI * 100
+	}
+	sb.WriteString(fmt.Sprintf("%-18s %9.1f%% %9.1f%% %5.0f%%\n",
+		"ROI", todayROI, yesterdayROI, deltaROI))
+
+	sb.WriteString(strings.Repeat("─", 47) + "\n")
+
+	// Trend summary
+	trend := "→"
+	trendColor := "🟡"
+	if todaySt.pnl > yesterdaySt.pnl {
+		trend = "↑"
+		trendColor = "🟢"
+	} else if todaySt.pnl < yesterdaySt.pnl {
+		trend = "↓"
+		trendColor = "🔴"
+	}
+	sb.WriteString(fmt.Sprintf("Trend: %s %s (%s vs %s UTC)\n",
+		trendColor, trend, todayStr, yesterdayStr))
+
+	sb.WriteString("</pre>")
 	return sb.String()
 }

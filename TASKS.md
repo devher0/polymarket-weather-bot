@@ -1875,3 +1875,65 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Status: ✅ если confidence ≥ 0.5 и age < 3h; ⚠️ если confidence 0.35-0.5 или age 3-6h; ❌ иначе
 - Итог: "Ready: N/9 cities"
 - Добавить case "/forecast-quality" в switch поллера
+
+---
+
+## 🔴 ПРИОРИТЕТ 31 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-192: `/compare` Telegram команда — сравнение сегодня vs вчера
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показать как мы делали вчера относительно сегодня — быстро понять в тренде ли стратегия.
+- `handleCompare(bcfg BotConfig) string` — фильтрует records на две даты: сегодня (UTC) и вчера (UTC)
+- Таблица сравнения: Metric | Today | Yesterday | Δ%
+  - Metrics: Total Bets | Resolved | Win Rate | Avg Edge | PnL USDC | ROI%
+  - Win Rate = Wins / Resolved
+  - Avg Edge = mean(edge) для размещённых ставок
+  - ROI = PnL / (avg size × count) ×100%
+- Формат: `<pre>СРАВНЕНИЕ СЕГОДНЯ VS ВЧЕРА\n...\nТренд: ↑ (улучш) / ↓ (ухудш) / → (стабильно)`
+- Если одного дня нет → "insufficient data for X"
+- Добавить case "/compare" в switch поллера
+
+### [ ] TASK-193: Signal heatmap в dashboard — матрица вероятностей по городам и сигналам
+**Файлы:** `cmd/dashboard/main.go` (добавить `cmdHeatmap`), `internal/collectors/aggregator.go` (утилита)
+Визуализация: какие города×сигналы сейчас наиболее вероятны для нашей стратегии.
+- `LoadForecastCache()` → загружает кэшированные FusedForecast для всех 9 городов
+- Матрица 9×9 (города × 9 сигналов: rain, heat, cold, snow, wind, hail, storm, sunny, fog)
+- Ячейка = наша вероятность (colorized: 🟢 >0.6, 🟡 0.4-0.6, 🔴 <0.4, ⚫ нет данных)
+- `go run ./cmd/dashboard heatmap` → выводит ASCII-матрицу с обозначениями
+- Итоговые статистики: Max prob (город/сигнал), Min prob, Avg confidence
+
+### [ ] TASK-194: `/trend` Telegram команда — 7-дневный тренд выбранного города
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Оператор пишет `/trend new_york` и видит как менялось наше edge/confidence за неделю для этого города.
+- `handleTrend(city string, bcfg BotConfig) string` — фильтрует resolved bets для города за 7 дней
+- Группировка по дням (UTC) → для каждого дня: count | win_rate | avg_edge | pnl
+- ASCII bar chart edge по дням (█ пропорционально)
+- Итог: trend (↑↓→), best day, worst day
+- Команда: `/trend new_york` или `/trend` → список доступных городов
+
+### [ ] TASK-195: Market price spread tracker — распределение спредов по типам рынков
+**Файлы:** `cmd/dashboard/main.go` (добавить `cmdSpreadAnalysis`)
+Анализ ликвидности: каких рынков спред узкий (хорошо), каких широкий (плохо).
+- `go run ./cmd/dashboard spread-analysis` → группировка рынков по spread ranges
+  - ≤0.01 (узкий, отлично), 0.01-0.03, 0.03-0.05, 0.05-0.10, >0.10 (широкий, плохо)
+- Таблица: Range | Count | % | Avg Vol | Status
+- Бум-диаграмма: средний спред по городам
+
+### [ ] TASK-196: Forecast accuracy per-city — какой город прогнозируется лучше
+**Файлы:** `internal/calibration/accuracy.go` (новый), `cmd/dashboard/main.go` (обновить)
+Точность предсказаний различается по городам — Берлин может быть стабильнее Майами.
+- После resolve рынка: сохранять в `data/city_accuracy/{city}.json` — (pred_prob, outcome)
+- `CityAccuracy(city, dataRoot) (brier float64, count int)` — считает per-city Brier
+- `LoadCityAccuracies(dataRoot) map[string]CityStats` — для всех городов
+- `cmdCityAccuracy(dataRoot)` — таблица: City | Brier | Bets | Status (good/ok/poor)
+- Сортировка по Brier ASC (лучшие первыми)
+
+### [ ] TASK-197: Bankroll tracking — график баланса по дням
+**Файлы:** `internal/calibration/bankroll.go` (обновить), `cmd/dashboard/main.go` (обновить)
+Показать как растёт/падает наш bankroll — ключевой метрик долгосрочного выживания.
+- `LoadBankrollHistory(dataRoot)` → [](timestamp, balance_usdc)
+- Минимум 1 запись в сутки (end-of-day snapshot)
+- `cmdBankrollChart(dataRoot)` — ASCII line chart 30 дней (или максимум имеющихся)
+- Итог: current balance, cumulative profit, daily avg, best day, worst day, days up/down
+
+---
