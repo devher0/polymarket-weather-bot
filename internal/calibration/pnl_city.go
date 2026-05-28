@@ -101,3 +101,73 @@ func SignalPnL(records []BetRecord) []CityPnLStats {
 	})
 	return out
 }
+
+// LeaderboardEntry holds all-time P&L stats for a city+signal combination.
+type LeaderboardEntry struct {
+	City     string
+	Signal   string
+	Bets     int
+	Wins     int
+	PnLUSDC  float64
+	TotalRisked float64
+}
+
+// WinRate returns win percentage (0–100), or 0 when Bets == 0.
+func (e LeaderboardEntry) WinRate() float64 {
+	if e.Bets == 0 {
+		return 0
+	}
+	return float64(e.Wins) / float64(e.Bets) * 100
+}
+
+// ROI returns P&L / TotalRisked as a percentage, or 0 when TotalRisked == 0.
+func (e LeaderboardEntry) ROI() float64 {
+	if e.TotalRisked == 0 {
+		return 0
+	}
+	return e.PnLUSDC / e.TotalRisked * 100
+}
+
+// CitySignalLeaderboard groups resolved bets by (city, signal) and returns
+// entries sorted by ROI% descending (ties broken by number of bets descending).
+// Only entries with at least minBets resolved bets are included.
+func CitySignalLeaderboard(records []BetRecord, minBets int) []LeaderboardEntry {
+	type key struct{ city, signal string }
+	m := make(map[key]*LeaderboardEntry)
+
+	for _, r := range records {
+		if r.Outcome == nil || r.City == "" || r.Signal == "" {
+			continue
+		}
+		k := key{r.City, r.Signal}
+		e, ok := m[k]
+		if !ok {
+			e = &LeaderboardEntry{City: r.City, Signal: r.Signal}
+			m[k] = e
+		}
+		e.Bets++
+		e.TotalRisked += r.SizeUSDC
+		if *r.Outcome {
+			e.Wins++
+			e.PnLUSDC += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			e.PnLUSDC -= r.SizeUSDC
+		}
+	}
+
+	out := make([]LeaderboardEntry, 0, len(m))
+	for _, v := range m {
+		if v.Bets >= minBets {
+			out = append(out, *v)
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		ri, rj := out[i].ROI(), out[j].ROI()
+		if ri != rj {
+			return ri > rj
+		}
+		return out[i].Bets > out[j].Bets
+	})
+	return out
+}

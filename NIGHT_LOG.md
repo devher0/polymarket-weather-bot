@@ -2,6 +2,36 @@
 
 ---
 
+### 2026-05-28 10:33 UTC — TASK-216 + TASK-217: Milestone alerts & Leaderboard
+
+**Задача:** все 215 предыдущих задач выполнены. Добавлены 3 новые задачи (216–218), реализованы первые 2.
+
+**TASK-216: Profit milestone Telegram alerts**
+- `internal/calibration/milestone.go` (новый, ~130 строк):
+  - `Milestone{Pct, Label}` — 4 порога: +25%, +50%, +100%, +200%
+  - `CheckMilestones(current, initial, dataRoot)` → список новых (непройденных) milestone
+  - `MarkMilestone(pct, dataRoot)` — персистентная пометка в `data/milestones.json`
+  - `LoadMilestones(dataRoot)` — чтение достигнутых milestone (graceful на пустой файл)
+- `internal/calibration/milestone_test.go` (новый, ~70 строк) — 6 unit-тестов (все pass)
+- `internal/notifier/telegram.go` (+24 строки) — `NotifyMilestone(m, current, initial)` → 🎉 HTML-сообщение
+- `cmd/bot/main.go` (+18 строк) — post-cycle check: CheckMilestones → NotifyMilestone → MarkMilestone
+
+**TASK-217: `dashboard leaderboard`**
+- `internal/calibration/pnl_city.go` (+65 строк):
+  - `LeaderboardEntry{City, Signal, Bets, Wins, PnLUSDC, TotalRisked}` + `WinRate()`, `ROI()` методы
+  - `CitySignalLeaderboard(records, minBets)` — группировка по (city, signal), фильтр ≥minBets, сортировка по ROI% desc
+- `cmd/dashboard/main.go` (+58 строк) — `cmdLeaderboard(dataRoot)`:
+  - Таблица топ-10: # | City | Signal | Bets | Win% | P&L | ROI%
+  - 🥇🥈🥉 медали для топ-3, цветовое кодирование ROI (зелёный/жёлтый/красный)
+  - Интегрирован в switch и printUsage
+
+**go build ./...** ✅ | **go test ./internal/calibration/ -run TestCheck** ✅
+
+**Строк кода:** ~365 (новые файлы + изменения в 4 файлах)
+**Файлы:** milestone.go (новый), milestone_test.go (новый), telegram.go (+24), pnl_city.go (+65), cmd/dashboard/main.go (+58), cmd/bot/main.go (+18)
+
+---
+
 ### 2026-05-28 09:07 UTC — TASK-198: Daily Brier snapshot + sparkline
 
 **Задача:** все 197 предыдущих задач выполнены. Добавлены 3 новые задачи (198–200), реализована первая.

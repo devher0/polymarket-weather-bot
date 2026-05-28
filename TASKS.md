@@ -2157,7 +2157,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 
 ## 🔴 ПРИОРИТЕТ 900 — Новые улучшения (добавлено 2026-05-28)
 
-### [ ] TASK-216: Profit milestone Telegram alerts — 🎉 алерт при достижении порогов доходности
+### [x] 2026-05-28 — TASK-216: Profit milestone Telegram alerts — 🎉 алерт при достижении порогов доходности
 **Файлы:** `internal/calibration/milestone.go` (новый), `internal/calibration/milestone_test.go` (новый), `cmd/bot/main.go` (обновить)
 Когда банкролл пересекает 125%/150%/200%/300% от начального — отправлять 🎉 Telegram-алерт. Алерт один раз на каждый milestone (сохранять достигнутые в `data/milestones.json`).
 - `Milestone{Pct float64, Label string}` — e.g. {1.25, "125%"}, {1.50, "150%"}, {2.0, "200%"}, {3.0, "300%"}
@@ -2168,7 +2168,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `NotifyMilestone(token, chatID string, m Milestone, bankroll float64) error` — сообщение: "🎉 Profit Milestone: +25% ROI! Bankroll: $125.00 USDC (was $100.00)"
 - 5 unit-тестов: нет достижений, первое достижение, уже достигнутый (не повторять), несколько новых сразу, nil dataRoot
 
-### [ ] TASK-217: `dashboard leaderboard` — топ city+signal по всем метрикам
+### [x] 2026-05-28 — TASK-217: `dashboard leaderboard` — топ city+signal по всем метрикам
 **Файл:** `cmd/dashboard/main.go` (добавить `cmdLeaderboard`, case в switch)
 Показывает топ-10 комбинаций city+signal по ROI% за всё время — "зал славы" лучших торговых паттернов.
 - Переиспользует `calibration.CityPnL()` + `calibration.SignalBreakdown()` для group-by (city,signal)

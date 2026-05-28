@@ -23,6 +23,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -700,6 +701,9 @@ func main() {
 	case "entropy":
 		// TASK-202: signal entropy — source disagreement analysis.
 		cmdEntropy(dataRoot)
+	case "leaderboard":
+		// TASK-217: top city+signal combos by ROI%.
+		cmdLeaderboard(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -752,6 +756,7 @@ func printUsage() {
 	fmt.Println("  brier-history                     Daily Brier score snapshots + trend sparkline (TASK-198)")
 	fmt.Println("  cycles                            Per-cycle performance journal: duration/bets/edge (TASK-199)")
 	fmt.Println("  entropy                           Source disagreement analysis: per-city entropy (TASK-202)")
+	fmt.Println("  leaderboard                       Top city+signal combos by all-time ROI%% (TASK-217)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -3792,4 +3797,81 @@ func cmdEntropy(dataRoot string) {
 	fmt.Printf("\n  Cities: %d total | ✅ consensus: %d | 🟡 moderate: %d | 🔴 disputed: %d\n",
 		len(reports), consensus, moderate, disputed)
 	fmt.Println("  Tip: disputed cities have high source disagreement — consider higher min edge before betting.")
+}
+
+// ── leaderboard (TASK-217) ────────────────────────────────────────────────────
+
+// cmdLeaderboard prints the top city+signal combinations by all-time ROI%.
+// Entries with fewer than 3 resolved bets are excluded.
+func cmdLeaderboard(dataRoot string) {
+	header("🏆  CITY+SIGNAL LEADERBOARD (all-time ROI%)")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error loading history: %v\n", err)
+		return
+	}
+
+	entries := calibration.CitySignalLeaderboard(records, 3)
+	if len(entries) == 0 {
+		fmt.Println("  Not enough data yet (need ≥3 resolved bets per city+signal combo).")
+		return
+	}
+
+	// Medals for top-3.
+	medals := []string{"🥇", "🥈", "🥉"}
+
+	t := newTable()
+	t.AppendHeader(table.Row{"#", "City", "Signal", "Bets", "Win%", "P&L (USDC)", "ROI%"})
+
+	maxShow := 10
+	for i, e := range entries {
+		if i >= maxShow {
+			break
+		}
+
+		rank := fmt.Sprintf("%d", i+1)
+		if i < len(medals) {
+			rank = medals[i]
+		}
+
+		roi := e.ROI()
+		pnlStr := fmt.Sprintf("%+.2f", e.PnLUSDC)
+		roiStr := fmt.Sprintf("%+.1f%%", roi)
+
+		var roiColor text.Colors
+		switch {
+		case roi > 15:
+			roiColor = text.Colors{text.FgGreen}
+		case roi < 0:
+			roiColor = text.Colors{text.FgRed}
+		default:
+			roiColor = text.Colors{text.FgYellow}
+		}
+
+		t.AppendRow(table.Row{
+			rank,
+			strings.Title(strings.ReplaceAll(e.City, "_", " ")),
+			e.Signal,
+			e.Bets,
+			fmt.Sprintf("%.0f%%", e.WinRate()),
+			pnlStr,
+			roiColor.Sprint(roiStr),
+		})
+	}
+	t.Render()
+
+	total := 0
+	for _, e := range entries {
+		total += e.Bets
+	}
+	fmt.Printf("\n  Showing top %d combinations (min 3 bets). Total resolved bets across all: %d\n",
+		min217(len(entries), maxShow), total)
+}
+
+func min217(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
