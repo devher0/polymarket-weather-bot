@@ -780,3 +780,34 @@ func GenerateDailyInsights(records []calibration.BetRecord, dataRoot string) str
 	}
 	return "\n\n<b>💡 Insights</b>\n" + strings.Join(lines, "\n")
 }
+
+// NotifyStopLoss sends a Telegram alert when a position's unrealized loss
+// exceeds the configured stop-loss threshold (TASK-225).
+//
+// This is an advisory alert — the bot does not automatically exit positions;
+// the operator decides whether to sell manually on the Polymarket UI.
+//
+// No-op when Telegram is not configured.
+func NotifyStopLoss(condID, side string, entry, current, lossPct float64) error {
+	cfg := config()
+	if cfg == nil {
+		return nil
+	}
+
+	msg := fmt.Sprintf(
+		"🛑 <b>Stop-Loss Alert</b>\n\n"+
+			"Market: <code>%s</code>\n"+
+			"Side: <b>%s</b>\n"+
+			"Entry: %.3f  →  Now: %.3f\n"+
+			"Loss: <b>−%.1f%%</b> of entry\n\n"+
+			"<i>Consider closing this position manually.</i>\n"+
+			"<i>%s UTC</i>",
+		condID,
+		side,
+		entry, current,
+		lossPct*100,
+		time.Now().UTC().Format("2006-01-02 15:04"),
+	)
+
+	return cfg.send(msg)
+}

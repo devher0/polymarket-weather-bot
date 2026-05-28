@@ -204,3 +204,11 @@ source_timeouts:
   ensemble: 10
   ecmwf: 12
   gfs: 10
+
+# ── Stop-loss guard (TASK-225) ────────────────────────────────────────────────
+# When enabled, each cycle checks all open positions for unrealized losses that
+# exceed stop_loss_pct of the entry price and sends a Telegram alert.
+# The bot does NOT auto-exit positions — the alert is advisory only.
+# Env overrides: STOP_LOSS_ENABLED / STOP_LOSS_PCT
+stop_loss_enabled: false
+stop_loss_pct: 0.50   # alert when position has lost >50% of entry value

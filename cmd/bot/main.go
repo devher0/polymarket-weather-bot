@@ -751,6 +751,31 @@ func main() {
 			checkProfitAlerts(history, mktByCondID, cfg.DataRoot)
 		}
 
+		// TASK-225: stop-loss guard — alert when any open position has lost
+		// more than StopLossPct of its entry price.
+		if cfg.StopLossEnabled {
+			slCfg := risk.StopLossConfig{
+				Enabled:    true,
+				MaxLossPct: cfg.StopLossPct,
+			}
+			unrealized := calibration.FetchUnrealizedPnL(history)
+			for _, res := range risk.ScanStopLosses(unrealized, slCfg) {
+				slog.Warn("stop-loss triggered",
+					"conditionID", res.ConditionID,
+					"side", res.Side,
+					"entry", res.EntryPrice,
+					"current", res.CurrentPrice,
+					"loss_pct", fmt.Sprintf("%.1f%%", res.LossFraction*100),
+				)
+				if nErr := notifier.NotifyStopLoss(
+					res.ConditionID, res.Side,
+					res.EntryPrice, res.CurrentPrice, res.LossFraction,
+				); nErr != nil {
+					slog.Warn("stop-loss notify failed", "err", nErr)
+				}
+			}
+		}
+
 		// TASK-188: compute exit signals from latest prediction log.
 		// For each open position, compare entry ourP to the latest evaluated
 		// ourP from today's prediction log and alert via Telegram when the

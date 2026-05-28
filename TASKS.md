@@ -2236,3 +2236,36 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
   4. Если Brier score улучшился на 0.01+ за неделю → "📈 Calibration improving: Brier {old}→{new}"
 - Добавить в DailyDigest() после P&L секции
 - Не требует внешнего AI — только детерминированная логика на существующих данных
+
+---
+
+## 🔴 ПРИОРИТЕТ 1100 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-223: Forecast freshness dashboard widget — индикатор свежести данных
+**Файлы:** `cmd/dashboard/main.go` (обновить), `internal/collectors/forecast_cache.go` (обновить)
+Добавить новый sub-command `dashboard freshness`:
+- Для каждого города показывает: City | D+0 Age | D+1 Age | D+2 Age | Cache Status
+- Age = время с момента последнего успешного фетча (в минутах или часах)
+- Cache Status: "🟢 fresh" (<1ч), "🟡 aging" (1-3ч), "🔴 stale" (>3ч или нет кэша)
+- Итоговая строка: "X/9 cities fresh | oldest: {city} ({age})"
+- `GetCacheAge(city, dayOffset, dataRoot) (time.Duration, bool)` в forecast_cache.go
+- Помогает оператору увидеть нужна ли принудительная перезагрузка данных
+
+### [x] 2026-05-28 — TASK-224: Telegram `/markets` command — список активных рынков с edge
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+- Команда `/markets` — список всех текущих активных погодных рынков от Polymarket
+- Для каждого рынка: город, сигнал, YES цена, наш estimate edge (если >0 — выделить)
+- Формат: "📊 Active Markets (N):\n🌧 NYC rain: YES=0.45 | edge: +0.08\n☀️ Miami heat: YES=0.62 | no edge\n..."
+- Рынки без edge показываются серым (без emoji-маркера)
+- Если рынков нет — "No active weather markets found"
+- Добавить case "/markets" в switch поллера и в /help
+
+### [x] 2026-05-28 — TASK-225: Stop-loss per position — авто-закрытие убыточных позиций
+**Файлы:** `internal/risk/stoploss.go` (новый), `internal/risk/stoploss_test.go` (новый), `cmd/bot/main.go` (обновить), `config/config.go` (обновить)
+- `StopLossConfig{Enabled bool, MaxLossPct float64}` — default MaxLossPct=0.50 (50% от ставки)
+- `CheckStopLoss(rec BetRecord, currentPrice float64) bool` — true если unrealized loss > MaxLossPct
+- При срабатывании: логировать + отправить Telegram уведомление "🛑 Stop-loss triggered: {condID}"
+- В bot loop: после SnapshotOpenPositions проверять stop-loss для каждой позиции
+- Добавить в config.yaml: `stop_loss_enabled`, `stop_loss_pct`
+- 5 unit-тестов: triggered, not triggered, disabled, exactly at threshold, no entry price
+

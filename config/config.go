@@ -138,6 +138,17 @@ type Config struct {
 	// deadline for individual sources. 0 or missing → use the default for that source.
 	// Example yaml: source_timeouts: {openmeteo: 8, nasa: 10, noaa: 8, goes: 15}
 	SourceTimeouts map[string]int `yaml:"source_timeouts"`
+
+	// TASK-225: per-position stop-loss guard.
+	// When enabled and a position's unrealized loss exceeds StopLossMaxPct of the
+	// entry price, a Telegram alert is sent. The bot does not auto-exit positions
+	// (Polymarket has no programmatic limit orders via this bot), so the alert is
+	// advisory — the operator decides whether to sell manually.
+	//
+	// YAML: stop_loss_enabled / stop_loss_pct
+	// ENV:  STOP_LOSS_ENABLED / STOP_LOSS_PCT
+	StopLossEnabled bool    `yaml:"stop_loss_enabled"` // default false
+	StopLossPct     float64 `yaml:"stop_loss_pct"`     // default 0.50 (50%)
 }
 
 // defaults returns a Config with sensible built-in defaults.
@@ -175,6 +186,8 @@ func defaults() Config {
 		RollingWinRateThreshold: 0.35,
 		MinBetUSDC:              0.50,
 		MinVolumeUSDC:           500.0,
+		StopLossEnabled:         false,
+		StopLossPct:             0.50,
 		SourceTimeouts: map[string]int{
 			"openmeteo": 8,
 			"nasa":      10,
@@ -350,6 +363,14 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("MIN_VOLUME_USDC"); v != nil {
 		cfg.MinVolumeUSDC = *v
+	}
+
+	// Stop-loss (TASK-225)
+	if v := os.Getenv("STOP_LOSS_ENABLED"); v != "" {
+		cfg.StopLossEnabled = v == "true" || v == "1"
+	}
+	if v := envFloat("STOP_LOSS_PCT"); v != nil {
+		cfg.StopLossPct = *v
 	}
 
 	// Telegram

@@ -3125,3 +3125,39 @@ Rationale: Polymarket order flow и liquidity существенно меняю�
 **Тесты**: all PASS
 **Строк кода:** ~65 (GenerateDailyInsights) + ~5 wiring в DailyDigest
 **Файлы:** `internal/notifier/telegram.go`
+
+---
+
+## 2026-05-28 11:07 UTC — TASK-225
+
+### TASK-225: Stop-loss per position — авто-алерт при убыточных позициях
+
+**Что сделано:**
+
+- `internal/risk/stoploss.go` (новый):
+  - `StopLossConfig{Enabled, MaxLossPct}` + `DefaultStopLossConfig()` (default: disabled, 50%)
+  - `CheckStopLoss(rec, currentPrice, cfg)` — вычисляет `lossFraction = (entry - current) / entry`; если ≥ MaxLossPct → triggered + slog.Warn
+  - `ScanStopLosses(positions, cfg)` — пробегает по `[]UnrealizedPosition` (из FetchUnrealizedPnL), возвращает все сработавшие
+
+- `internal/risk/stoploss_test.go` (новый):
+  - 7 unit-тестов: Triggered, NotTriggered, Disabled, ExactlyAtThreshold, AlreadyResolved, MultiplePositions, DisabledScan
+  - Все PASS
+
+- `internal/notifier/telegram.go` (обновлён):
+  - `NotifyStopLoss(condID, side, entry, current, lossPct float64)` — HTML-сообщение 🛑 с advisory hint
+
+- `config/config.go` (обновлён):
+  - Поля `StopLossEnabled bool` и `StopLossPct float64`
+  - ENV: `STOP_LOSS_ENABLED` / `STOP_LOSS_PCT`
+  - Дефолты: false / 0.50
+
+- `config/config.yaml` (обновлён):
+  - Секция `stop_loss_enabled: false` / `stop_loss_pct: 0.50`
+
+- `cmd/bot/main.go` (обновлён):
+  - После цикла profit-alerts: если `cfg.StopLossEnabled` → вызвать `FetchUnrealizedPnL` + `ScanStopLosses` → `NotifyStopLoss` для каждого triggered
+
+**go build ./...**: ✅
+**Тесты**: 7/7 PASS (internal/risk)
+**Строк кода:** ~110 (stoploss.go) + ~90 (тесты) + ~30 (wiring)
+**Файлы:** `internal/risk/stoploss.go`, `internal/risk/stoploss_test.go`, `internal/notifier/telegram.go`, `config/config.go`, `config/config.yaml`, `cmd/bot/main.go`
