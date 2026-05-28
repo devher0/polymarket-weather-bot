@@ -497,6 +497,13 @@ func main() {
 		// When active (N >= 20 resolved bets), it corrects systematic over/under-confidence.
 		plattCal := calibration.LoadCalibrator(cfg.DataRoot)
 
+		// TASK-156: per-signal adaptive Kelly multiplier based on historical Brier performance.
+		// Computed once per cycle from resolved history; applied per-bet below.
+		signalKellyMults := calibration.SignalKellyMultipliers(history)
+		if len(signalKellyMults) > 0 {
+			slog.Debug("signal kelly multipliers loaded", "count", len(signalKellyMults))
+		}
+
 		// Risk summary at cycle start.
 		slog.Info(risk.Summary(history, risk.Config{
 			MaxDailyLossUSDC:   cfg.MaxDailyLossUSDC,
@@ -907,6 +914,34 @@ func main() {
 				)
 			}
 
+			// TASK-156: apply per-signal adaptive Kelly multiplier.
+			// Signals with a strong historical Brier score bet larger; poorly
+			// calibrated signals are scaled back automatically.
+			{
+				skInfo := calibration.LookupSignalKelly(signalKellyMults, m.Signal)
+				if skInfo.Multiplier != 1.0 {
+					before := d.SizeUSDC
+					d.SizeUSDC = math.Round(d.SizeUSDC*skInfo.Multiplier*100) / 100
+					if d.SizeUSDC > cfg.MaxBet {
+						d.SizeUSDC = cfg.MaxBet
+					}
+					d.Reason += " " + skInfo.String(m.Signal)
+					slog.Debug("signal kelly multiplier applied",
+						"signal", m.Signal,
+						"multiplier", fmt.Sprintf("%.2f", skInfo.Multiplier),
+						"brier", fmt.Sprintf("%.4f", skInfo.BrierScore),
+						"n", skInfo.Count,
+						"size_before", fmt.Sprintf("%.2f", before),
+						"size_after", fmt.Sprintf("%.2f", d.SizeUSDC),
+					)
+					if d.SizeUSDC < 0.5 {
+						slog.Info("skipped: size below minimum after signal kelly scaling",
+							"conditionID", m.ConditionID, "signal", m.Signal)
+						continue
+					}
+				}
+			}
+
 			// Per-bet risk gate: re-evaluate after each bet (history may grow).
 			if err := riskMgr.AllowBet(history); err != nil {
 				slog.Warn("risk gate blocked bet", "reason", err.Error())
@@ -1232,10 +1267,11 @@ func main() {
 
 		// TASK-111: start Telegram command poller (/status /positions /next /pause /resume).
 		notifier.StartCommandPoller(ctx, notifier.BotConfig{
-			DataRoot: cfg.DataRoot,
-			Bankroll: calibration.LoadBankroll(cfg.DataRoot),
-			MinEdge:  cfg.MinEdge,
-			MaxBet:   cfg.MaxBet,
+			DataRoot:  cfg.DataRoot,
+			Bankroll:  calibration.LoadBankroll(cfg.DataRoot),
+			MinEdge:   cfg.MinEdge,
+			MaxBet:    cfg.MaxBet,
+			StartTime: sess.startTime,
 		})
 
 		// TASK-047: adaptive loop interval.

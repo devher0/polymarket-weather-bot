@@ -1,14 +1,16 @@
 // telegram_commands.go — TASK-111: Telegram bot command polling.
 //
 // Supported commands:
-//   /status   — Brier score, open positions, P&L for today
-//   /positions — list of open (unresolved) bets
-//   /next     — top-3 best bets right now (dry-run, from cached forecasts)
+//   /status      — Brier score, open positions, P&L for today
+//   /positions   — list of open (unresolved) bets
+//   /next        — top-3 best bets right now (dry-run, from cached forecasts)
 //   /forecast [city] — current weather forecast from cache (or live fetch)
-//   /summary  — compact multi-section health overview (TASK-146)
+//   /summary     — compact multi-section health overview (TASK-146)
+//   /signals     — per-signal win rate + Brier breakdown (TASK-151)
 //   /export [days] — send CSV of resolved bets as file (TASK-154)
-//   /pause    — suspend all trading
-//   /resume   — resume trading
+//   /healthcheck — data source status, calibration, risk state, signal kelly (TASK-157)
+//   /pause       — suspend all trading
+//   /resume      — resume trading
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -24,6 +26,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -32,6 +35,7 @@ import (
 	"github.com/devher0/polymarket-weather-bot/internal/calibration"
 	"github.com/devher0/polymarket-weather-bot/internal/collectors"
 	"github.com/devher0/polymarket-weather-bot/internal/markets"
+	"github.com/devher0/polymarket-weather-bot/internal/risk"
 	"github.com/devher0/polymarket-weather-bot/internal/strategy"
 	"github.com/devher0/polymarket-weather-bot/internal/weather"
 )
@@ -82,6 +86,7 @@ type BotConfig struct {
 	Bankroll  float64
 	MinEdge   float64
 	MaxBet    float64
+	StartTime time.Time // when the bot process started (for uptime display in /healthcheck)
 }
 
 // ── long-poll loop ────────────────────────────────────────────────────────
@@ -211,6 +216,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 						arg = strings.TrimSpace(parts[1])
 					}
 					sendReply(cfg, chatID, handleWatchlist(bcfg, arg))
+				case "/healthcheck":
+					sendReply(cfg, chatID, handleHealthcheck(bcfg))
 				}
 			}
 		}
@@ -965,4 +972,149 @@ func sendDocument(cfg *telegramConfig, chatID int64, fileName, mimeType string, 
 		return fmt.Errorf("telegram sendDocument HTTP %d: %s", resp.StatusCode, raw)
 	}
 	return nil
+}
+
+// ── /healthcheck handler ──────────────────────────────────────────────────
+
+// handleHealthcheck returns a comprehensive system health overview:
+//   - Bot uptime
+//   - Data source status (from source_health.json)
+//   - Brier score + drift alert
+//   - Rolling win rate
+//   - Daily risk state (bets today, daily P&L)
+//   - Per-signal adaptive Kelly multipliers (only non-unity entries)
+//   - Forecast cache freshness (open positions count)
+//
+// TASK-157
+func handleHealthcheck(bcfg BotConfig) string {
+	var sb strings.Builder
+	sb.WriteString("<b>🩺 Health Check</b>\n")
+	sb.WriteString("<pre>")
+
+	// ── Uptime ───────────────────────────────────────────────────────────
+	if !bcfg.StartTime.IsZero() {
+		uptime := time.Since(bcfg.StartTime).Round(time.Second)
+		sb.WriteString(fmt.Sprintf("Uptime      : %s\n", uptime))
+	}
+	pausedStatus := "running"
+	if IsPaused() {
+		pausedStatus = "PAUSED ⏸"
+	}
+	sb.WriteString(fmt.Sprintf("Status      : %s\n", pausedStatus))
+	sb.WriteString("\n")
+
+	// ── Data sources ─────────────────────────────────────────────────────
+	sourceHealth := collectors.LoadSourceHealth(bcfg.DataRoot)
+	if len(sourceHealth) > 0 {
+		sb.WriteString("── Data Sources ──────────────────\n")
+		// Sort by source name for stable output.
+		names := make([]string, 0, len(sourceHealth))
+		for k := range sourceHealth {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		now := time.Now().UTC()
+		for _, name := range names {
+			h := sourceHealth[name]
+			status := h.Status(now)
+			icon := "✅"
+			if status == "degraded" {
+				icon = "⚠️"
+			} else if status == "down" || status == "unknown" {
+				icon = "❌"
+			}
+			age := "never"
+			if !h.LastSuccess.IsZero() {
+				a := now.Sub(h.LastSuccess)
+				if a < time.Minute {
+					age = fmt.Sprintf("%ds", int(a.Seconds()))
+				} else if a < time.Hour {
+					age = fmt.Sprintf("%dm", int(a.Minutes()))
+				} else {
+					age = fmt.Sprintf("%.1fh", a.Hours())
+				}
+			}
+			sb.WriteString(fmt.Sprintf("%-14s %s %-8s up=%.0f%% fails=%d\n",
+				name, icon, age, h.UpRatePct(), h.ConsecFails))
+		}
+		sb.WriteString("\n")
+	}
+
+	// ── Calibration / performance ─────────────────────────────────────────
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		sb.WriteString("❌ history unavailable\n")
+		sb.WriteString("</pre>")
+		return sb.String()
+	}
+
+	brier, brierN, _ := calibration.BrierScore(records)
+	brierStr := "n/a"
+	if brierN > 0 {
+		brierStr = fmt.Sprintf("%.4f (n=%d)", brier, brierN)
+	}
+
+	winRate, wrN := calibration.ComputeRollingWinRate(records, 20)
+	wrStr := "n/a"
+	if wrN > 0 {
+		wrStr = fmt.Sprintf("%.0f%% (last %d)", winRate*100, wrN)
+	}
+
+	sb.WriteString("── Calibration ───────────────────\n")
+	sb.WriteString(fmt.Sprintf("Brier score : %s\n", brierStr))
+	sb.WriteString(fmt.Sprintf("Win rate    : %s\n", wrStr))
+
+	// Drift alert
+	driftAlert, driftMsg := calibration.DriftAlert(records, 14, 30, 0.15)
+	if driftAlert {
+		sb.WriteString(fmt.Sprintf("Drift ⚠️  : %s\n", driftMsg))
+	} else {
+		sb.WriteString("Drift       : ok\n")
+	}
+
+	// Streak alert
+	streakAlert, streakMsg := calibration.StreakAlert(records, 4)
+	if streakAlert {
+		sb.WriteString(fmt.Sprintf("Streak ⚠️ : %s\n", streakMsg))
+	} else {
+		sb.WriteString("Streak      : ok\n")
+	}
+	sb.WriteString("\n")
+
+	// ── Risk / daily state ────────────────────────────────────────────────
+	dailyCount, dailyPnL := risk.DailyStats(records)
+	openPos := risk.OpenPositionsCount(records)
+	sb.WriteString("── Risk State ────────────────────\n")
+	sb.WriteString(fmt.Sprintf("Bets today  : %d\n", dailyCount))
+	sb.WriteString(fmt.Sprintf("Daily P&L   : %+.2f USDC\n", dailyPnL))
+	sb.WriteString(fmt.Sprintf("Open pos    : %d\n", openPos))
+	sb.WriteString(fmt.Sprintf("Bankroll    : %.2f USDC\n", bcfg.Bankroll))
+	sb.WriteString("\n")
+
+	// ── Signal Kelly multipliers (deviating from 1.0x) ───────────────────
+	skMults := calibration.SignalKellyMultipliers(records)
+	nonNeutral := make([]string, 0)
+	for sig, info := range skMults {
+		if info.Multiplier != 1.0 && info.Count >= calibration.MinSignalSamples {
+			nonNeutral = append(nonNeutral, sig)
+		}
+	}
+	if len(nonNeutral) > 0 {
+		sort.Strings(nonNeutral)
+		sb.WriteString("── Signal Kelly ──────────────────\n")
+		for _, sig := range nonNeutral {
+			info := skMults[sig]
+			icon := "📈"
+			if info.Multiplier < 1.0 {
+				icon = "📉"
+			}
+			sb.WriteString(fmt.Sprintf("%-8s %s %.2fx (brier=%.3f,n=%d)\n",
+				sig, icon, info.Multiplier, info.BrierScore, info.Count))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04:05")))
+	return sb.String()
 }
