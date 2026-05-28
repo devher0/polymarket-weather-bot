@@ -1911,7 +1911,7 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Итог: trend (↑↓→), best day, worst day
 - Команда: `/trend new_york` или `/trend` → список доступных городов
 
-### [ ] TASK-195: Market price spread tracker — распределение спредов по типам рынков
+### [x] 2026-05-28 — TASK-195: Market price spread tracker — распределение спредов по типам рынков
 **Файлы:** `cmd/dashboard/main.go` (добавить `cmdSpreadAnalysis`)
 Анализ ликвидности: каких рынков спред узкий (хорошо), каких широкий (плохо).
 - `go run ./cmd/dashboard spread-analysis` → группировка рынков по spread ranges

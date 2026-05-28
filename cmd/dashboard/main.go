@@ -643,6 +643,9 @@ func main() {
 	case "markets":
 		// TASK-159: live Polymarket weather market overview table.
 		cmdMarkets()
+	case "spread-analysis":
+		// TASK-195: market spread distribution and liquidity analysis.
+		cmdSpreadAnalysis()
 	case "pnl-city":
 		// TASK-161: per-city P&L breakdown table.
 		cmdPnLCity(dataRoot)
@@ -712,6 +715,7 @@ func printUsage() {
 	fmt.Println("  timing                            Hourly win-rate and bet-size timing multiplier (TASK-133)")
 	fmt.Println("  freshness                         Forecast freshness table: age/status per city (TASK-140)")
 	fmt.Println("  markets                           Live Polymarket weather market overview: price/spread/status (TASK-159)")
+	fmt.Println("  spread-analysis                   Market spread distribution & liquidity stats per city (TASK-195)")
 	fmt.Println("  summary                           Single-page health overview: bankroll, perf, streak, sources (TASK-144)")
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
@@ -3080,6 +3084,174 @@ func cmdExitSignals(dataRoot string) {
 	fmt.Printf("\n  %d open positions  |  %s suggested SELL\n",
 		len(signals), styleLoss.Sprintf("%d", sellCount))
 	fmt.Println("  SELL: forecast dropped >0.20 from entry  |  HOLD/REDUCE_SIZE: improved >0.15")
+}
+
+// cmdSpreadAnalysis displays market spread distribution and liquidity analysis. (TASK-195)
+func cmdSpreadAnalysis() {
+	header("💱 MARKET SPREAD ANALYSIS")
+
+	fmt.Print("  Fetching markets…")
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n  error: %v\n", err)
+		return
+	}
+	fmt.Printf(" %d found\n", len(mks))
+
+	if len(mks) == 0 {
+		fmt.Println("  No weather markets found.")
+		return
+	}
+
+	// Enrich with liquidity data.
+	fmt.Print("  Enriching with order-book depth…")
+	markets.EnrichWithLiquidity(mks)
+	fmt.Println(" done")
+
+	// Define spread ranges.
+	type spreadRange struct {
+		label     string
+		minSpread float64
+		maxSpread float64
+	}
+	ranges := []spreadRange{
+		{label: "≤0.01 (Tight)", minSpread: 0, maxSpread: 0.01},
+		{label: "0.01-0.03 (Good)", minSpread: 0.01, maxSpread: 0.03},
+		{label: "0.03-0.05 (Fair)", minSpread: 0.03, maxSpread: 0.05},
+		{label: "0.05-0.10 (Wide)", minSpread: 0.05, maxSpread: 0.10},
+		{label: ">0.10 (Very Wide)", minSpread: 0.10, maxSpread: math.MaxFloat64},
+	}
+
+	// Categorize markets by spread range.
+	type spreadBucket struct {
+		label     string
+		count     int
+		avgVol    float64
+		totalVol  float64
+		status    string
+	}
+	buckets := make(map[int]*spreadBucket)
+	for i, r := range ranges {
+		buckets[i] = &spreadBucket{
+			label: r.label,
+		}
+	}
+
+	spreadsByCity := make(map[string][]float64)
+	for _, m := range mks {
+		// Categorize spread.
+		for i, r := range ranges {
+			if m.Spread >= r.minSpread && m.Spread < r.maxSpread {
+				b := buckets[i]
+				b.count++
+				b.totalVol += m.VolumeUSDC
+				if m.City != "" {
+					spreadsByCity[m.City] = append(spreadsByCity[m.City], m.Spread)
+				}
+				break
+			}
+		}
+	}
+
+	// Compute average volumes.
+	for i := range buckets {
+		if buckets[i].count > 0 {
+			buckets[i].avgVol = buckets[i].totalVol / float64(buckets[i].count)
+		}
+		// Status emoji based on spread.
+		switch i {
+		case 0, 1:
+			buckets[i].status = styleWin.Sprint("✅")
+		case 2, 3:
+			buckets[i].status = styleNeutral.Sprint("⚠️")
+		default:
+			buckets[i].status = styleLoss.Sprint("❌")
+		}
+	}
+
+	// Print spread distribution table.
+	t := newTable()
+	t.AppendHeader(table.Row{"Spread Range", "Count", "% of Total", "Avg Volume", "Status"})
+
+	for _, b := range buckets {
+		pct := float64(b.count) / float64(len(mks)) * 100
+		volStr := "—"
+		if b.avgVol > 0 {
+			volStr = fmt.Sprintf("$%.0f", b.avgVol)
+		}
+		t.AppendRow(table.Row{
+			b.label,
+			b.count,
+			fmt.Sprintf("%.1f%%", pct),
+			volStr,
+			b.status,
+		})
+	}
+	t.Render()
+
+	// Per-city spread summary.
+	fmt.Println("\n  Per-City Spread Summary:")
+	fmt.Println("  " + repeatStr("─", 50))
+
+	type citySpreadStats struct {
+		city    string
+		count   int
+		minSp   float64
+		maxSp   float64
+		avgSp   float64
+	}
+
+	var cityStats []citySpreadStats
+	for city, spreads := range spreadsByCity {
+		if len(spreads) == 0 {
+			continue
+		}
+		sort.Float64s(spreads)
+		min, max := spreads[0], spreads[len(spreads)-1]
+		sum := 0.0
+		for _, s := range spreads {
+			sum += s
+		}
+		avg := sum / float64(len(spreads))
+		cityStats = append(cityStats, citySpreadStats{
+			city:  city,
+			count: len(spreads),
+			minSp: min,
+			maxSp: max,
+			avgSp: avg,
+		})
+	}
+
+	// Sort by average spread ascending (best liquidity first).
+	sort.Slice(cityStats, func(i, j int) bool {
+		return cityStats[i].avgSp < cityStats[j].avgSp
+	})
+
+	for _, cs := range cityStats {
+		// Color code by average spread quality.
+		var emoji string
+		switch {
+		case cs.avgSp <= 0.02:
+			emoji = styleWin.Sprint("🟢")
+		case cs.avgSp <= 0.05:
+			emoji = styleNeutral.Sprint("🟡")
+		default:
+			emoji = styleLoss.Sprint("🔴")
+		}
+		fmt.Printf("  %s %-14s  Min: %.3f | Avg: %.3f | Max: %.3f (%d markets)\n",
+			emoji, cs.city, cs.minSp, cs.avgSp, cs.maxSp, cs.count)
+	}
+
+	// Summary stats.
+	totalMarkets := len(mks)
+	tightMarkets := 0
+	for _, b := range buckets {
+		if b.label == "≤0.01 (Tight)" {
+			tightMarkets = b.count
+		}
+	}
+	fmt.Printf("\n  Summary: %d markets total  |  %d (%.1f%%) have spread ≤0.01\n",
+		totalMarkets, tightMarkets, float64(tightMarkets)/float64(totalMarkets)*100)
 }
 
 // truncateID shortens a hex conditionID to prefix…suffix for display.
