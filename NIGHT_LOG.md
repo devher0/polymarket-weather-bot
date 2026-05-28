@@ -1619,3 +1619,26 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 - 10 unit-тестов: disabled, empty signal, no history, under limit, exactly at limit, over limit, resolved excluded, breakdown basic, pct empty, pct values
 
 **Итого:** ~220 строк кода, `go build ./...` чисто, `go test ./internal/risk/...` — все 31 тест проходят.
+
+## 2026-05-28 01:57 UTC — TASK-130
+
+**Файлы изменены:**
+- `internal/collectors/consensus.go` (новый, 58 строк) — ConsensusScore + MultiDimConsensus
+- `internal/collectors/consensus_test.go` (новый, 85 строк) — 7 unit-тестов
+- `internal/collectors/aggregator.go` (+22 строки) — ConsensusScore в FusedForecast, вычисление в fuse()
+- `internal/strategy/explain.go` (+3 строки) — ConsensusScore в ExplainResult
+- `cmd/dashboard/main.go` (+14 строк) — новая колонка "Consensus" в `dashboard explain`
+- `TASKS.md` — добавлены TASK-130/131/132, TASK-130 закрыт
+
+**Что сделано:**
+
+**TASK-130: Source consensus spread indicator** — новая метрика качества ансамблевого прогноза. Когда 7 источников (ECMWF, OpenMeteo, NASA, NOAA, GOES, HRRR, GFS) расходятся по температуре/осадкам/ветру, уверенность в прогнозе снижается:
+- `ConsensusScore(values)` — 1 - clamp(stddev/range, 0, 1). 1.0 = полное согласие, 0.0 = максимальный разброс
+- `MultiDimConsensus(temps, precips, winds)` — взвешенное среднее (temp×0.5 + precip×0.3 + wind×0.2)
+- В `fuse()`: `ff.Confidence *= math.Sqrt(consensusScore)` — sqrt-dampening предотвращает слишком агрессивное снижение
+- `FusedForecast.ConsensusScore` — поле для аналитики и аудит-трейла
+- `ExplainResult.ConsensusScore` — передаётся в dashboard explain
+- `dashboard explain` — новая колонка "Consensus" с color-coding: красный < 0.6, жёлтый 0.6-0.80, белый ≥ 0.80
+- 7 unit-тестов: perfect consensus, extreme spread, single/empty, two close values, bounds check, MultiDim perfect, MultiDim mixed
+
+**Итого:** ~182 строки кода, `go build ./...` чисто, `go test ./...` — все пакеты зелёные.

@@ -1220,3 +1220,38 @@ Spread между источниками = мера неопределённос
 - `DeadHeatAdjust(p float64, distanceToThreshold, sigma float64) float64` — сжать вероятность к 0.5 пропорционально близости к порогу
 - Вызывать в `evaluate()` перед seasonal correction
 - Предотвращает ставки когда "coin flip" — снижает bankroll drain
+
+---
+
+## 🔴 ПРИОРИТЕТ 28 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-130: Source consensus spread indicator — масштабирование confidence по межисточниковому согласию
+**Файлы:** `internal/collectors/consensus.go` (новый), `internal/collectors/consensus_test.go` (новый), `internal/collectors/aggregator.go` (обновить)
+Текущий confidence считается только по stddev осадков. Если 4 источника дают 20/25/22/23°C макс — они согласны. Если 15/25/35/20°C — значительное расхождение снижает достоверность прогноза.
+- `ConsensusScore(values []float64) float64` — 1 - clamp(stddev/range, 0, 1); range = max-min. Возвращает 1.0 для 0-1 значений, 0.0 для максимального разброса
+- `MultiDimConsensus(temps, precips, winds []float64) float64` — взвешенное среднее consensus по трём измерениям (temp weight 0.5, precip 0.3, wind 0.2)
+- Добавить `ConsensusScore float64` в FusedForecast struct
+- В `fuse()` — вычислять consensus по per-source MaxTempC/PrecipProb/WindSpeed; `ff.Confidence *= math.Sqrt(consensus)` (смягчающая функция чтобы не слишком агрессивно снижать)
+- В `dashboard explain` — выводить "consensus: X.XX (temp±Xσ, precip±Xσ)"
+- 7 unit-тестов: perfect consensus, total disagreement, two sources, empty, single, mixed dims, floor at 0
+
+### [ ] TASK-131: Auto-blacklist city+signal по убыточной истории
+**Файлы:** `internal/markets/auto_blacklist.go` (новый), `internal/markets/auto_blacklist_test.go` (новый), `cmd/bot/main.go` (обновить), `config/config.go` (обновить)
+Если пара (city, signal) систематически теряет деньги — автоматически добавлять в blacklist на N дней.
+- `AutoBlacklistCheck(records []calibration.BetRecord, city, signal, dataRoot string, cfg AutoBlacklistCfg) error` — анализирует последние MinBets resolved ставок для city+signal; если net PnL < -LossThreshold USDC → записывает в data/auto_blacklist.json с timestamp+expiry
+- `IsAutoBlacklisted(city, signal, dataRoot string) bool` — проверяет активную запись (не истёкшую)
+- `AutoBlacklistStatus(dataRoot string) []AutoBlacklistEntry` — список активных auto-blacklist записей для dashboard
+- `AutoBlacklistCfg` struct: MinBets int (default 8), LossThresholdUSDC float64 (default -3.0), BlacklistDays int (default 3)
+- Добавить в config.yaml: `auto_blacklist_min_bets`, `auto_blacklist_loss_usdc`, `auto_blacklist_days`
+- Вызывать в cmd/bot перед CheckRisk — если IsAutoBlacklisted → skip с логом "auto-blacklisted"
+- `dashboard blacklist` — показывать manual + auto blacklist вместе
+
+### [ ] TASK-132: Rolling win rate monitor — алерт при деградации метрик
+**Файлы:** `internal/calibration/rolling_winrate.go` (новый), `internal/calibration/rolling_winrate_test.go` (новый), `cmd/bot/main.go` (обновить)
+Brier score хорош для долгосрочного трекинга, но медленно реагирует на резкую деградацию. Rolling win rate за последние 20 ставок — быстрый сигнал тревоги.
+- `ComputeRollingWinRate(records []BetRecord, window int) (winRate float64, sampleSize int)` — берёт последние `window` resolved ставок, считает процент победных; возвращает (-1, 0) если resolved < 5
+- `WinRateAlert(records []BetRecord, window int, threshold float64) (bool, string)` — возвращает (true, message) если winRate < threshold
+- В cmd/bot после каждого resolved update: вызывать WinRateAlert(records, 20, 0.35); если true — слать Telegram warning
+- В Telegram /status: добавить строку `Win Rate 20: X% (N bets)` рядом с Brier score
+- В dashboard stats: показывать rolling win rate таблицу по окнам [10, 20, 50]
+- 8 unit-тестов: empty, too few resolved, all wins, all losses, mixed, exactly at threshold, window larger than history, negative P&L detection

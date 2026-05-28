@@ -661,7 +661,7 @@ func cmdExplain(dataRoot string) {
 
 	t := newTable()
 	t.AppendHeader(table.Row{
-		"City/Signal", "OurP", "YesP→Edge", "NoP→Edge", "Conf", "EnsUnc", "Action",
+		"City/Signal", "OurP", "YesP→Edge", "NoP→Edge", "Conf", "Consensus", "EnsUnc", "Action",
 	})
 
 	betCount := 0
@@ -673,6 +673,17 @@ func cmdExplain(dataRoot string) {
 		noEdgeStr := fmt.Sprintf("%.2f→%+.3f", m.NoPrice, r.NoEdge)
 		confStr := fmt.Sprintf("%.2f", r.Confidence)
 		encStr := fmt.Sprintf("%.1f°C", r.EnsUnc)
+
+		// TASK-130: consensus score column — color-code by agreement level.
+		consensusStr := "—"
+		if r.ConsensusScore > 0 {
+			consensusStr = fmt.Sprintf("%.2f", r.ConsensusScore)
+			if r.ConsensusScore < 0.6 {
+				consensusStr = styleLoss.Sprint(consensusStr)
+			} else if r.ConsensusScore < 0.80 {
+				consensusStr = styleNeutral.Sprint(consensusStr)
+			}
+		}
 
 		actionStr := r.Action
 		if r.IsBet() {
@@ -700,6 +711,7 @@ func cmdExplain(dataRoot string) {
 			yesEdgeStr,
 			noEdgeStr,
 			confStr,
+			consensusStr,
 			encStr,
 			actionStr,
 		})

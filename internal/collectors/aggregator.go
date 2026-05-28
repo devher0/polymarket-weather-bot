@@ -34,6 +34,9 @@ type FusedForecast struct {
 	LightningStrikes int     // raw strike count in the 30-min rolling window
 	// TASK-092: GFS 16-day extended forecast (nil when GFS unavailable or not fetched).
 	Forecast16Days []weather.Forecast
+	// TASK-130: multi-dimensional consensus score across sources.
+	// 1.0 = all sources agree; < 1.0 = sources disagree on temperature/precip/wind.
+	ConsensusScore float64
 }
 
 // staticSourceWeights defines the base weight for each data source.
@@ -375,7 +378,11 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		maxCapeJkg float64
 
 		sourceNames []string
-		precipProbs []float64 // for confidence calc
+		precipProbs []float64  // for confidence calc
+		// TASK-130: per-source raw values for consensus scoring.
+		perTemps  []float64
+		perPrecip []float64
+		perWinds  []float64
 	)
 
 	// Filter to sources that have actual forecast data (not just cloud cover).
@@ -405,6 +412,10 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		wWind += r.forecast.WindSpeedKMH * w
 		wCode += float64(r.forecast.WeatherCode) * w
 		precipProbs = append(precipProbs, r.forecast.PrecipitationProbability/100.0)
+		// TASK-130: collect raw values for multi-dimensional consensus scoring.
+		perTemps = append(perTemps, r.forecast.MaxTempC)
+		perPrecip = append(perPrecip, r.forecast.PrecipitationProbability/100.0)
+		perWinds = append(perWinds, r.forecast.WindSpeedKMH)
 		// TASK-084: accumulate humidity only from sources that have valid RH data.
 		if r.forecast.HumidityPct > 0 {
 			wHumidity += r.forecast.HumidityPct * r.weight
@@ -442,6 +453,15 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 		confidence = math.Max(0, 1-sd)
 	}
 
+	// TASK-130: multi-dimensional consensus score measures inter-source agreement
+	// across temperature, precipitation probability, and wind speed.
+	// Apply sqrt dampening so moderate disagreement doesn't kill confidence outright.
+	consensusScore := MultiDimConsensus(perTemps, perPrecip, perWinds)
+	if len(forecastSources) > 1 {
+		confidence *= math.Sqrt(consensusScore)
+		confidence = math.Max(0, math.Min(1, confidence))
+	}
+
 	// Build per-source forecast map (excludes cloud-cover-only sources).
 	perSourceForecasts := make(map[string]weather.Forecast, len(forecastSources))
 	for _, r := range forecastSources {
@@ -466,6 +486,7 @@ func fuse(city string, results []sourceResult) *FusedForecast {
 			CapeJkg:                  maxCapeJkg,    // TASK-089: max CAPE across sources
 		},
 		Confidence:         confidence,
+		ConsensusScore:     consensusScore, // TASK-130
 		Sources:            sourceNames,
 		FetchedAt:          time.Now(),
 		PerSourceForecasts: perSourceForecasts,

@@ -19,9 +19,10 @@ type ExplainResult struct {
 	Market markets.Market
 
 	// Forecast metadata
-	Confidence float64
-	Sources    []string // from ff.Sources
-	EnsUnc     float64  // ensemble temperature stddev (°C); 0 = unavailable
+	Confidence     float64
+	ConsensusScore float64  // TASK-130: multi-dim inter-source agreement [0,1]
+	Sources        []string // from ff.Sources
+	EnsUnc         float64  // ensemble temperature stddev (°C); 0 = unavailable
 
 	// Probability pipeline
 	RawP    float64 // raw signal probability before seasonal adjustment
@@ -71,6 +72,7 @@ func ExplainEvaluate(
 	}
 
 	r.Confidence = ff.Confidence
+	r.ConsensusScore = ff.ConsensusScore
 	r.Sources = ff.Sources
 	r.EnsUnc = ff.EnsembleUncertainty
 
