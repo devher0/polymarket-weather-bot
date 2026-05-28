@@ -28,6 +28,9 @@
 //   /pause           — suspend all trading
 //   /resume          — resume trading
 //   /watchdog        — last successful cycle time + overdue status (TASK-200)
+//   /sharpe          — 30-day + 7-day Sharpe ratio with trend (TASK-210)
+//   /timing          — best/worst UTC hours to bet by win rate (TASK-211)
+//   /drawdown        — current bankroll drawdown from historical peak (TASK-212)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -288,6 +291,12 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleBreakdown(bcfg))
 				case "/missed":
 					sendReply(cfg, chatID, handleMissed(bcfg))
+				case "/sharpe":
+					sendReply(cfg, chatID, handleSharpe(bcfg))
+				case "/timing":
+					sendReply(cfg, chatID, handleTiming(bcfg))
+				case "/drawdown":
+					sendReply(cfg, chatID, handleDrawdown(bcfg))
 				}
 			}
 		}
@@ -1832,7 +1841,10 @@ func handleHelp() string {
 /breakdown       City×signal matrix sorted by ROI%
 /ev              EV capture ratio (last 50 bets)
 /missed          Today's skipped markets sorted by edge
-/daily           Today's bets timeline + running P&L</pre>
+/daily           Today's bets timeline + running P&L
+/sharpe          30-day + 7-day Sharpe ratio with trend
+/timing          Best/worst UTC hours to bet (win rate)
+/drawdown        Current drawdown from bankroll peak</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -2678,5 +2690,193 @@ func handleMissed(bcfg BotConfig) string {
 	}
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("<i>%s UTC | sorted by edge</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+// ── TASK-210: /sharpe command ─────────────────────────────────────────────────
+
+// handleSharpe shows the rolling 30-day and 7-day Sharpe ratios with a trend indicator.
+func handleSharpe(bcfg BotConfig) string {
+	sharpe30, count30, err30 := calibration.RollingSharpe(bcfg.DataRoot, 30)
+	sharpe7, count7, _ := calibration.RollingSharpe(bcfg.DataRoot, 7)
+
+	if err30 != nil || count30 < 2 {
+		return "📊 Not enough data yet — need at least 2 days of returns."
+	}
+
+	q30 := calibration.SharpeQuality(sharpe30)
+
+	var trendEmoji, trendLabel string
+	if count7 >= 2 {
+		if sharpe7 > sharpe30 {
+			trendEmoji = "↑"
+			trendLabel = "improving"
+		} else {
+			trendEmoji = "↓"
+			trendLabel = "declining"
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("📈 <b>Sharpe Ratio</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("30-day Sharpe : %.3f (%s)\n", sharpe30, q30))
+	if count7 >= 2 {
+		sb.WriteString(fmt.Sprintf("7-day Sharpe  : %.3f %s %s\n", sharpe7, trendEmoji, trendLabel))
+	}
+	sb.WriteString(fmt.Sprintf("Data points   : %d days\n", count30))
+	sb.WriteString("\nBenchmarks:\n")
+	sb.WriteString("  >2.0 excellent  >1.0 good\n")
+	sb.WriteString("  >0.5 acceptable ≤0.5 poor\n")
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-211: /timing command ─────────────────────────────────────────────────
+
+// handleTiming shows win rate by UTC hour and the best/worst hours to bet.
+func handleTiming(bcfg BotConfig) string {
+	buckets, err := calibration.LoadHourlyStats(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load hourly stats."
+	}
+
+	const minBets = 3
+	totalBets := 0
+	for _, b := range buckets {
+		totalBets += b.Total()
+	}
+	if totalBets < minBets {
+		return "⏰ Not enough data yet — need 3+ resolved bets."
+	}
+
+	// Collect hours with enough data.
+	type hourStat struct {
+		hour    int
+		winRate float64
+		total   int
+		mult    float64
+	}
+	var valid []hourStat
+	for i, b := range buckets {
+		if b.Total() >= minBets {
+			valid = append(valid, hourStat{
+				hour:    i,
+				winRate: b.WinRate(),
+				total:   b.Total(),
+				mult:    calibration.TimingMultiplier(buckets, i),
+			})
+		}
+	}
+
+	sort.Slice(valid, func(i, j int) bool { return valid[i].winRate > valid[j].winRate })
+
+	nowHour := time.Now().UTC().Hour()
+	nowBucket := buckets[nowHour]
+
+	var sb strings.Builder
+	sb.WriteString("⏰ <b>Bet Timing Analysis</b>\n<pre>")
+
+	// Best hours.
+	top := 3
+	if len(valid) < top {
+		top = len(valid)
+	}
+	if top > 0 {
+		sb.WriteString("Best hours (UTC):\n")
+		for _, h := range valid[:top] {
+			sb.WriteString(fmt.Sprintf("  %02d:00  win%% %4.0f%%  n=%d  ×%.2f\n",
+				h.hour, h.winRate*100, h.total, h.mult))
+		}
+	}
+
+	// Worst hours.
+	worst := 3
+	if len(valid) < worst {
+		worst = len(valid)
+	}
+	if worst > 0 && len(valid) > worst {
+		sb.WriteString("Worst hours (UTC):\n")
+		for i := len(valid) - worst; i < len(valid); i++ {
+			h := valid[i]
+			sb.WriteString(fmt.Sprintf("  %02d:00  win%% %4.0f%%  n=%d  ×%.2f\n",
+				h.hour, h.winRate*100, h.total, h.mult))
+		}
+	}
+
+	// Current hour.
+	sb.WriteString(fmt.Sprintf("\nNow: %02d UTC", nowHour))
+	if nowBucket.Total() >= minBets {
+		nowMult := calibration.TimingMultiplier(buckets, nowHour)
+		sb.WriteString(fmt.Sprintf(" | win%% %4.0f%% | ×%.2f", nowBucket.WinRate()*100, nowMult))
+		if nowMult >= 1.0 {
+			sb.WriteString(" ✅")
+		} else {
+			sb.WriteString(" ⚠️")
+		}
+	} else {
+		sb.WriteString(" | no data yet")
+	}
+	sb.WriteString("\n</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-212: /drawdown command ───────────────────────────────────────────────
+
+// handleDrawdown shows current bankroll drawdown from the historical peak.
+func handleDrawdown(bcfg BotConfig) string {
+	history, err := calibration.LoadBankrollHistory(bcfg.DataRoot)
+	if err != nil || len(history) == 0 {
+		return "📉 No bankroll history yet."
+	}
+
+	current := calibration.LoadBankroll(bcfg.DataRoot)
+	if current <= 0 {
+		current = bcfg.Bankroll
+	}
+
+	// Find peak balance across all snapshots.
+	peak := current
+	for _, snap := range history {
+		if snap.BalanceUSDC > peak {
+			peak = snap.BalanceUSDC
+		}
+	}
+
+	dd := calibration.DrawdownFraction(peak, current)
+	mult := calibration.DrawdownMultiplier(dd, 0.20)
+	ddPct := dd * 100
+
+	var status string
+	switch {
+	case dd == 0:
+		status = "at peak 🏔"
+	case dd < 0.05:
+		status = "minimal"
+	case dd < 0.10:
+		status = "moderate"
+	case dd < 0.20:
+		status = "significant ⚠️"
+	default:
+		status = "severe 🚨"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("📉 <b>Bankroll Drawdown</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("Peak      : $%.2f USDC\n", peak))
+	sb.WriteString(fmt.Sprintf("Current   : $%.2f USDC\n", current))
+	if dd > 0 {
+		sb.WriteString(fmt.Sprintf("Drawdown  : -%.1f%% (%s)\n", ddPct, status))
+		sb.WriteString(fmt.Sprintf("Kelly ×   : %.2f (reduced sizing)\n", mult))
+		recovery := peak - current
+		sb.WriteString(fmt.Sprintf("Recovery  : +$%.2f needed to reach peak\n", recovery))
+	} else {
+		sb.WriteString(fmt.Sprintf("Drawdown  : 0.0%% (%s)\n", status))
+		sb.WriteString("Kelly ×   : 1.00 (no reduction)\n")
+	}
+	sb.WriteString(fmt.Sprintf("Snapshots : %d days tracked\n", len(history)))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()
 }

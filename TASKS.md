@@ -2076,3 +2076,39 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Топ-10 строк: city/signal | skip_reason | max_edge | confidence | our_p→price
 - Если нет SKIP записей: "✅ All evaluated markets were bet on today"
 - Добавить case "/missed" в switch поллера и в /help раздел "Analytics"
+
+---
+
+## 🔴 ПРИОРИТЕТ 700 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-210: `/sharpe` Telegram команда — Sharpe ratio с трендом
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает скользящий Sharpe ratio за 30 дней + сравнение с 7-дневным окном.
+- `handleSharpe(bcfg BotConfig) string`
+- Загружает `calibration.RollingSharpe(dataRoot, 30)` и `calibration.RollingSharpe(dataRoot, 7)`
+- `calibration.SharpeQuality(ratio)` → "excellent/good/acceptable/poor"
+- Тренд: если 7-day > 30-day → "↑ improving", иначе "↓ declining"
+- Форматировать: "30d Sharpe: 1.23 (good) | 7d: 1.45 ↑ improving"
+- Добавить case "/sharpe" в switch поллера и в /help раздел "Analytics"
+
+### [x] 2026-05-28 — TASK-211: `/timing` Telegram команда — лучшие/худшие часы для ставок
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает win rate по UTC часам на основе `calibration.LoadHourlyStats`.
+- `handleTiming(bcfg BotConfig) string`
+- Топ-3 лучших часа (по win rate, мин 3 ставки) и топ-3 худших
+- Текущий UTC час с текущим win rate
+- "Now: 14 UTC | win rate 62% (good) | multiplier 1.10x"
+- Если нет данных (<3 ставок суммарно): "Not enough data yet (need 3+ resolved bets)"
+- Добавить case "/timing" в switch поллера и в /help раздел "Analytics"
+
+### [x] 2026-05-28 — TASK-212: `/drawdown` Telegram команда — текущий drawdown от пика
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает текущий drawdown bankroll от исторического максимума.
+- `handleDrawdown(bcfg BotConfig) string`
+- Загружает историю bankroll из `calibration.LoadBankrollHistory(dataRoot)`
+- Находит max bankroll (peak) за всё время
+- Считает `(peak - current) / peak * 100` → drawdown %
+- `calibration.DrawdownMultiplier(dd, 0.20)` → коэффициент Kelly
+- Форматировать: "Peak: $1234.56 | Current: $1180.00 | Drawdown: -4.4% (moderate) | Kelly ×0.78"
+- Если нет истории: "No bankroll history yet"
+- Добавить case "/drawdown" в switch поллера и в /help раздел "Analytics"
