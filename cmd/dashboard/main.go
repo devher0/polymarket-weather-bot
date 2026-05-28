@@ -666,7 +666,7 @@ func cmdExplain(dataRoot string) {
 
 	t := newTable()
 	t.AppendHeader(table.Row{
-		"City/Signal", "OurP", "YesP→Edge", "NoP→Edge", "Conf", "Consensus", "EnsUnc", "Action",
+		"City/Signal", "OurP", "YesP→Edge", "NoP→Edge", "Conf", "Consensus", "EnsUnc", "Horizon", "Action",
 	})
 
 	betCount := 0
@@ -687,6 +687,20 @@ func cmdExplain(dataRoot string) {
 				consensusStr = styleLoss.Sprint(consensusStr)
 			} else if r.ConsensusScore < 0.80 {
 				consensusStr = styleNeutral.Sprint(consensusStr)
+			}
+		}
+
+		// TASK-134: horizon column — hours to target date with color-coding.
+		// Green ≤ 24 h, yellow 24–72 h, red > 72 h.
+		horizonStr := "—"
+		if r.ForecastHorizonHours > 0 {
+			horizonStr = fmt.Sprintf("+%.0fh", r.ForecastHorizonHours)
+			if r.ForecastHorizonHours <= 24 {
+				horizonStr = styleWin.Sprint(horizonStr)
+			} else if r.ForecastHorizonHours <= 72 {
+				horizonStr = styleNeutral.Sprint(horizonStr)
+			} else {
+				horizonStr = styleLoss.Sprint(horizonStr)
 			}
 		}
 
@@ -718,6 +732,7 @@ func cmdExplain(dataRoot string) {
 			confStr,
 			consensusStr,
 			encStr,
+			horizonStr,
 			actionStr,
 		})
 	}

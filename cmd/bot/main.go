@@ -489,6 +489,17 @@ func main() {
 		}
 		slog.Info("open positions loaded", "count", len(openPositions))
 
+		// TASK-135: build open-bet info slice for duplicate-market guard.
+		openBetInfos := make([]markets.OpenBetInfo, len(history))
+		for i, r := range history {
+			openBetInfos[i] = markets.OpenBetInfo{
+				City:     r.City,
+				Signal:   r.Signal,
+				PlacedAt: r.Timestamp,
+				Resolved: r.Outcome != nil,
+			}
+		}
+
 		// 1. Discover weather markets FIRST so we know which cities are active.
 		// TASK-043: only fetch fresh forecasts for cities that have live markets.
 		mkt, err := markets.GetWeatherMarkets()
@@ -739,6 +750,17 @@ func main() {
 			// TASK-131: skip markets where the (city, signal) pair is auto-blacklisted.
 			if m.City != "" && m.Signal != "" && markets.IsAutoBlacklisted(m.City, m.Signal, cfg.DataRoot) {
 				slog.Info("skipped: auto-blacklisted (city+signal)",
+					"city", m.City,
+					"signal", m.Signal,
+					"conditionID", m.ConditionID,
+					"question", truncate(m.Question, 60))
+				continue
+			}
+
+			// TASK-135: skip if we already have an open bet on the same weather event
+			// (same city+signal placed within the last 14 days).
+			if m.City != "" && m.Signal != "" && markets.IsDuplicateOf(m, openBetInfos) {
+				slog.Info("duplicate-market: already bet on same event",
 					"city", m.City,
 					"signal", m.Signal,
 					"conditionID", m.ConditionID,

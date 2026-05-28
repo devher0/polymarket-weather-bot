@@ -1686,3 +1686,38 @@ ALL TASKS COMPLETE — Wed May 27 21:25:47 UTC 2026
 Rationale: Polymarket order flow и liquidity существенно меняются по времени суток. В часы с активной торговлей (US afternoon, Asia morning) спреды уже и качество исполнения лучше. Трекер позволяет боту со временем обнаружить эти паттерны и адаптировать размер ставок автоматически, без ручной настройки.
 
 **Итого:** ~385 строк кода, `go build ./...` чисто, `go test ./...` — все пакеты зелёные.
+
+---
+
+## 2026-05-28 02:30 UTC — Ночная итерация (cron)
+
+### TASK-134: Forecast horizon confidence decay
+
+**Что сделано:**
+- Создан `internal/collectors/horizon.go` — функции `HorizonDecay` и `HorizonDecayLinear`
+- `HorizonDecayLinear(h)` = max(0.65, 1.0 - h/400) — непрерывный линейный decay ∈ [0.65, 1.0]
+- Добавлено поле `ForecastHorizonHours float64` в `FusedForecast`
+- В `AggregateForDay`: вычисляется horizonHours из даты прогноза, применяется decay к Confidence
+- В `ExplainResult`: добавлено `ForecastHorizonHours` для передачи в dashboard
+- `dashboard explain`: новая колонка "Horizon" (+36h) с цвет-кодировкой (зелёный ≤24h, жёлтый 24-72h, красный >72h)
+- Создан `internal/collectors/horizon_test.go` — 11 тестов (все PASS)
+
+**Файлы:** horizon.go (37 строк), horizon_test.go (88 строк), aggregator.go (+25 строк), explain.go (+2 строки), dashboard/main.go (+14 строк)
+
+---
+
+### TASK-135: Market duplicate guard
+
+**Что сделано:**
+- Создан `internal/markets/duplicate_guard.go`:
+  - `MarketFingerprint(m Market) string` — normalize(city)/signal/date(expiry)
+  - `FindDuplicates(markets []Market) map[string][]string`
+  - `OpenBetInfo` struct (без import cycle с calibration)
+  - `IsDuplicateOf(m Market, openBets []OpenBetInfo) bool` — 14-дневное окно
+- Создан `internal/markets/duplicate_guard_test.go` — 6 тестов (все PASS)
+- `cmd/bot/main.go`: строится `openBetInfos` из history, вызывается `IsDuplicateOf` перед EvaluateFused
+- При дубле: slog.Info "duplicate-market: already bet on same event" + continue
+
+**Файлы:** duplicate_guard.go (89 строк), duplicate_guard_test.go (112 строк), main.go (+16 строк)
+
+**Билд:** `go build ./...` ✅ | **Тесты:** все PASS ✅

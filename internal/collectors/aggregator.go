@@ -37,6 +37,9 @@ type FusedForecast struct {
 	// TASK-130: multi-dimensional consensus score across sources.
 	// 1.0 = all sources agree; < 1.0 = sources disagree on temperature/precip/wind.
 	ConsensusScore float64
+	// TASK-134: hours between forecast assembly and target date (e.g. 36 for a
+	// day-1.5 forecast). Used to apply HorizonDecayLinear confidence penalty.
+	ForecastHorizonHours float64
 }
 
 // staticSourceWeights defines the base weight for each data source.
@@ -579,6 +582,30 @@ func AggregateForDay(city string, dayOffset int, dataRoot string) (*FusedForecas
 	// Embed the target date in the fused result so callers can inspect it.
 	if ff.Forecast.Date == "" || ff.Forecast.Date == "unknown" {
 		ff.Forecast.Date = time.Now().UTC().AddDate(0, 0, dayOffset).Format("2006-01-02")
+	}
+
+	// TASK-134: compute forecast horizon and apply continuous linear confidence decay.
+	// Horizon = hours from now until midnight of the target date.
+	if targetTime, err := time.Parse("2006-01-02", ff.Forecast.Date); err == nil {
+		targetTime = targetTime.UTC().Add(24 * time.Hour) // end-of-day for the forecast date
+		horizonHours := time.Until(targetTime).Hours()
+		if horizonHours < 0 {
+			horizonHours = 0
+		}
+		ff.ForecastHorizonHours = horizonHours
+		decay := HorizonDecayLinear(horizonHours)
+		if decay < 1.0 {
+			raw := ff.Confidence
+			ff.Confidence *= decay
+			slog.Debug("horizon decay applied",
+				"city", city,
+				"day_offset", dayOffset,
+				"horizon_hours", fmt.Sprintf("%.1f", horizonHours),
+				"decay_factor", fmt.Sprintf("%.3f", decay),
+				"raw_confidence", fmt.Sprintf("%.3f", raw),
+				"adj_confidence", fmt.Sprintf("%.3f", ff.Confidence),
+			)
+		}
 	}
 
 	// TASK-027: replace inter-model confidence with ensemble-based uncertainty.

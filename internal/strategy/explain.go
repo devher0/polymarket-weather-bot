@@ -19,10 +19,11 @@ type ExplainResult struct {
 	Market markets.Market
 
 	// Forecast metadata
-	Confidence     float64
-	ConsensusScore float64  // TASK-130: multi-dim inter-source agreement [0,1]
-	Sources        []string // from ff.Sources
-	EnsUnc         float64  // ensemble temperature stddev (°C); 0 = unavailable
+	Confidence           float64
+	ConsensusScore       float64  // TASK-130: multi-dim inter-source agreement [0,1]
+	Sources              []string // from ff.Sources
+	EnsUnc               float64  // ensemble temperature stddev (°C); 0 = unavailable
+	ForecastHorizonHours float64  // TASK-134: hours from now to target date
 
 	// Probability pipeline
 	RawP    float64 // raw signal probability before seasonal adjustment
@@ -75,6 +76,7 @@ func ExplainEvaluate(
 	r.ConsensusScore = ff.ConsensusScore
 	r.Sources = ff.Sources
 	r.EnsUnc = ff.EnsembleUncertainty
+	r.ForecastHorizonHours = ff.ForecastHorizonHours // TASK-134
 
 	// ── Gate 1: confidence ─────────────────────────────────────────────────
 	if ff.Confidence < minConfidence {
