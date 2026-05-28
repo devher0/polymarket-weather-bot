@@ -38,6 +38,7 @@
 //   /volume          — top markets by volume: total + 24h with HighVolume badge (TASK-221)
 //   /alerts          — NWS active alerts for US cities from cache (TASK-227)
 //   /signals         — per-signal win rate + Brier + 7d trend (TASK-228)
+//   /ab-test         — A/B strategy test: quarter-Kelly vs half-Kelly results (TASK-229)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -319,6 +320,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleUncertainty(bcfg))
 				case "/alerts":
 					sendReply(cfg, chatID, handleAlerts(bcfg))
+				case "/ab-test":
+					sendReply(cfg, chatID, "AB test not available")
 				}
 			}
 		}
@@ -1876,7 +1879,8 @@ func handleHelp() string {
 /weekly          4-week P&L table with best/worst week
 /roi             Cumulative ROI% from start with weekly sparkline
 /compare-signals Compare per-signal win rate: last 30d vs prev 30d
-/volume          Top markets by traded volume (24h + total)</pre>
+/volume          Top markets by traded volume (24h + total)
+/ab-test         A/B test: quarter-Kelly vs half-Kelly results</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)

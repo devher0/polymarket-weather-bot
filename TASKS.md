@@ -2301,3 +2301,38 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - `SignalTrend7d(records []BetRecord, signal string) float64` — Δ win rate (положительный = улучшение)
 - Форматировать: "+5%" (📈) / "-3%" (📉) / "~" (ничего если Δ < 1%)
 - Требует min 3 ставки в каждом окне; иначе "N/A"
+
+---
+
+## 🔴 ПРИОРИТЕТ 1300 — Новые улучшения (добавлено 2026-05-28)
+
+### [ ] TASK-229: Telegram `/ab-test` — A/B strategy test status в Telegram
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Добавить `/ab-test` команду, которая показывает текущие результаты A/B теста Kelly fraction.
+- `handleABTest(bcfg BotConfig) string`
+- Показывать: Variant A (quarter-Kelly=0.25) vs Variant B (half-Kelly=0.50)
+- Таблица: Variant | Bets | Resolved | Win% | Brier | ROI% | PnL
+- Строка winner: "🏆 Winner: B — Brier Δ=0.002" или "⏳ Need N more resolved bets"
+- Если нет данных — "No A/B test data yet. Bets are being logged."
+- Добавить в /help секция "Analytics"
+- Данные брать через `strategy.LoadABStats(bcfg.DataRoot)`
+
+### [ ] TASK-230: Forecast momentum tracker — `/momentum` Telegram команда
+**Файлы:** `internal/collectors/momentum_cache.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Отслеживать направление изменения прогнозов между циклами фетча.
+- `MomentumPoint{City string, Timestamp time.Time, TempC, PrecipMM, PrecipProb float64}`
+- Сохранять последние 3 точки в `data/momentum/{city}.json` при каждом цикле
+- `GetMomentum(city, dataRoot) (tempDir, precipDir string, ok bool)` — "rising"/"falling"/"stable"
+- stable если |Δ| < 0.5°C для temp, < 5pp для precip
+- Команда `/momentum`: таблица City | Temp | Precip | Status
+- Status: "🔥 rising" / "❄️ falling" / "➡️ stable" / "❓ no data"
+- Интегрировать в bot loop: вызывать SaveMomentum(city, ff, dataRoot) после фетча
+
+### [ ] TASK-231: `/best-city` — топ город с наибольшим суммарным edge прямо сейчас
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Команда `/best-city` — из всех активных рынков найти город с максимальным суммарным edge.
+- Загружать активные рынки, для каждого города суммировать edge по всем сигналам
+- Показывать топ-3 города: место, город, суммарный edge, кол-во рынков
+- Формат: "🥇 New York — edge: +0.28 (3 markets)\n🥈 Miami — edge: +0.15 (2 markets)\n🥉 Chicago — edge: +0.09 (1 market)"
+- Если нет активных рынков с edge > 0 — "No cities with positive edge right now"
+- Edge брать из handleTopEdge логики (bcfg.MarketCache + EvaluateFused)

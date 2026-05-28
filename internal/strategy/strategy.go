@@ -911,12 +911,13 @@ func evaluate(
 	size = ratelimit.FuzzSize(size)
 	size = math.Min(size, maxBet)
 
-	// Liquidity gate: skip thin markets when expected position size < $50 USDC
-	// to avoid moving the price on illiquid books.
-	if m.ThinLiquidity && size < 50 {
+	// Liquidity gate: skip thin markets UNLESS the market has real trading
+	// volume (AMM-style markets have no limit orders but DO have volume).
+	if m.ThinLiquidity && m.VolumeUSDC < 500 && size < 50 {
 		slog.Info("skipped: thin liquidity",
 			"conditionID", m.ConditionID,
 			"spread", fmt.Sprintf("%.3f", m.Spread),
+			"volume_usdc", fmt.Sprintf("%.0f", m.VolumeUSDC),
 			"est_size", fmt.Sprintf("%.2f", size),
 		)
 		return nil
