@@ -92,6 +92,11 @@ type Config struct {
 	MinBetIntervalHours float64 `yaml:"min_bet_interval_hours"` // cooldown per conditionID in hours (default: 4.0)
 	BetCooldownHours    int     `yaml:"bet_cooldown_hours"`     // pause after betting on same (city,signal) pair (default: 4)
 
+	// TASK-152: dynamic Kelly scaling based on bankroll growth.
+	// InitialBankroll is the reference bankroll for Kelly scale computation.
+	// 0 = use DefaultBankroll (100 USDC) the first time, then auto-set from current.
+	InitialBankroll float64 `yaml:"initial_bankroll"` // reference bankroll for Kelly scaling (default: 0 → auto)
+
 	// Polymarket CLOB credentials (usually via ENV, not yaml)
 	PolyPrivateKey   string `yaml:"poly_private_key"`
 	PolyAddress      string `yaml:"poly_address"`
@@ -298,6 +303,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envInt("BET_COOLDOWN_HOURS"); v != nil {
 		cfg.BetCooldownHours = *v
+	}
+	if v := envFloat("INITIAL_BANKROLL"); v != nil {
+		cfg.InitialBankroll = *v
 	}
 
 	// Telegram

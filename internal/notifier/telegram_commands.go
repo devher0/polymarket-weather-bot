@@ -184,6 +184,8 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					slog.Info("telegram: trading resumed via /resume command")
 				case "/summary":
 					sendReply(cfg, chatID, handleSummary(bcfg))
+				case "/signals":
+					sendReply(cfg, chatID, handleSignals(bcfg))
 				}
 			}
 		}
@@ -705,4 +707,101 @@ func forecastAlertEmoji(level int) string {
 	default:
 		return "🔵"
 	}
+}
+
+// handleSignals returns a per-signal performance breakdown table for Telegram.
+// Shows win rate, Brier score, and estimated P&L for each signal type.
+// Signals with fewer than 3 resolved bets show "–" instead of stats.
+func handleSignals(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	breakdown := calibration.SignalBreakdown(records)
+	if len(breakdown) == 0 {
+		return "📈 No resolved bets yet — signal stats unavailable."
+	}
+
+	// Compute P&L per signal from raw records.
+	type sigPnL struct {
+		pnl float64
+	}
+	pnlBySignal := make(map[string]float64)
+	for _, r := range records {
+		if r.Outcome == nil || r.Signal == "" {
+			continue
+		}
+		if *r.Outcome {
+			pnlBySignal[r.Signal] += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+		} else {
+			pnlBySignal[r.Signal] -= r.SizeUSDC
+		}
+	}
+
+	// Collect and sort signals by win rate descending.
+	type sigRow struct {
+		name string
+		s    calibration.BreakdownStats
+	}
+	rows := make([]sigRow, 0, len(breakdown))
+	for name, s := range breakdown {
+		rows = append(rows, sigRow{name, s})
+	}
+	// Sort: first by count desc (more data = more reliable), then win rate desc.
+	for i := 0; i < len(rows); i++ {
+		for j := i + 1; j < len(rows); j++ {
+			wi := rows[i].s.WinRate()
+			wj := rows[j].s.WinRate()
+			if rows[i].s.Count < 3 && rows[j].s.Count >= 3 {
+				rows[i], rows[j] = rows[j], rows[i]
+			} else if rows[i].s.Count >= 3 && rows[j].s.Count >= 3 && wj > wi {
+				rows[i], rows[j] = rows[j], rows[i]
+			}
+		}
+	}
+
+	const minSamples = 3
+	var sb strings.Builder
+	sb.WriteString("📈 <b>Signal Performance</b>\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-8s %4s %5s %6s %8s\n", "Signal", "N", "Win%", "Brier", "P&L"))
+	sb.WriteString(strings.Repeat("─", 38) + "\n")
+
+	for _, row := range rows {
+		name := row.name
+		s := row.s
+		if len(name) > 8 {
+			name = name[:7] + "…"
+		}
+
+		if s.Count < minSamples {
+			sb.WriteString(fmt.Sprintf("%-8s %4d    —      —        —\n", name, s.Count))
+			continue
+		}
+
+		wr := s.WinRate()
+		var emoji string
+		switch {
+		case wr >= 55:
+			emoji = "🟢"
+		case wr >= 45:
+			emoji = "🟡"
+		default:
+			emoji = "🔴"
+		}
+
+		pnl := pnlBySignal[row.name]
+		pnlSign := "+"
+		if pnl < 0 {
+			pnlSign = ""
+		}
+
+		sb.WriteString(fmt.Sprintf("%s %-7s %4d %4.0f%% %6.4f %s%.2f\n",
+			emoji, name, s.Count, wr, s.BrierAvg(), pnlSign, pnl))
+	}
+
+	sb.WriteString("</pre>")
+	sb.WriteString("\n🟢≥55% 🟡45-55% 🔴&lt;45% (min 3 bets)")
+	return sb.String()
 }

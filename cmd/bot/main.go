@@ -470,6 +470,27 @@ func main() {
 			)
 		}
 
+		// TASK-152: dynamic Kelly scaling — scale MaxKellyFraction up/down based on
+		// bankroll growth relative to the configured initial reference.
+		{
+			initialBR := cfg.InitialBankroll
+			if initialBR <= 0 {
+				initialBR = calibration.DefaultBankroll
+			}
+			kellyScale := calibration.BankrollKellyScale(baseBankroll, initialBR)
+			if kellyScale != 1.0 {
+				strategy.MaxKellyFraction = cfg.MaxKellyFraction * kellyScale
+				slog.Debug("kelly scale applied",
+					"initial_bankroll", fmt.Sprintf("%.2f", initialBR),
+					"current_bankroll", fmt.Sprintf("%.2f", baseBankroll),
+					"scale", fmt.Sprintf("%.4f", kellyScale),
+					"max_kelly_fraction", fmt.Sprintf("%.4f", strategy.MaxKellyFraction),
+				)
+			} else {
+				strategy.MaxKellyFraction = cfg.MaxKellyFraction
+			}
+		}
+
 		// TASK-066: compute adaptive min_edge based on rolling Brier performance.
 		// This relaxes the threshold when we're well-calibrated and tightens it
 		// when recent performance has been poor.
