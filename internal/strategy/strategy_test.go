@@ -411,6 +411,37 @@ func TestHalfKelly_PositiveEdge(t *testing.T) {
 	}
 }
 
+// TestHalfKelly_FeeAdjusted verifies that a non-zero ProtocolFeeRate reduces
+// Kelly sizing compared to the no-fee baseline (TASK-141).
+func TestHalfKelly_FeeAdjusted(t *testing.T) {
+	// Use an uncapped scenario (maxFraction=1.0) so fee reduction is visible.
+	// edge=0.10, odds=2.0 (50¢ market): reasonable mid-range bet.
+	const edge = 0.10
+	const odds = 2.0
+	const bankroll = 1000.0
+	const maxF = 1.0
+
+	// Baseline: no fee.
+	origFee := ProtocolFeeRate
+	ProtocolFeeRate = 0
+	noFeeSize := halfKelly(edge, odds, bankroll, maxF)
+
+	// With 2% fee size must be strictly smaller.
+	ProtocolFeeRate = 0.02
+	feeSize := halfKelly(edge, odds, bankroll, maxF)
+	ProtocolFeeRate = origFee // restore
+
+	if feeSize >= noFeeSize {
+		t.Errorf("fee=2%% should reduce Kelly size: no_fee=%.4f fee=%.4f", noFeeSize, feeSize)
+	}
+	// Fee should not be catastrophic: expect at most 5% size reduction.
+	maxReduction := noFeeSize * 0.05
+	if noFeeSize-feeSize > maxReduction {
+		t.Errorf("fee reduction too large: no_fee=%.4f fee=%.4f diff=%.4f (max allowed=%.4f)",
+			noFeeSize, feeSize, noFeeSize-feeSize, maxReduction)
+	}
+}
+
 // ─── TASK-129: Dead-heat tests ────────────────────────────────────────────────
 
 func TestDeadHeatAdjust(t *testing.T) {

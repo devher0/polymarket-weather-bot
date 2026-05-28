@@ -72,6 +72,10 @@ type Config struct {
 	KellyFraction    float64 `yaml:"kelly_fraction"`     // fraction of full Kelly (0.25=quarter, 0.5=half, 1.0=full; default 0.5)
 	MaxKellyFraction float64 `yaml:"max_kelly_fraction"` // hard cap on bankroll fraction per bet (default 0.05 = 5%)
 
+	// Protocol fee (TASK-141): Polymarket charges this fraction of net profit on wins.
+	// Kelly formula uses fee-adjusted odds so sizing accounts for the real payout.
+	ProtocolFeeRate float64 `yaml:"protocol_fee_rate"` // default 0.02 (2%)
+
 	// Auto-blacklist (TASK-131): automatically suppress (city, signal) pairs that
 	// show systematic losses. 0/default values use the AutoBlacklistCfg defaults.
 	AutoBlacklistMinBets    int     `yaml:"auto_blacklist_min_bets"`    // min resolved bets before check (default 8)
@@ -131,6 +135,7 @@ func defaults() Config {
 		MinHoursToExpiry:    6.0,
 		KellyFraction:           0.5,
 		MaxKellyFraction:        0.05,
+		ProtocolFeeRate:         0.02,
 		BetJitterEnabled:        true,
 		MinBetIntervalHours:     4.0,
 		AutoBlacklistMinBets:    8,
@@ -276,6 +281,10 @@ func applyEnv(cfg *Config) {
 	}
 	if v := envFloat("MAX_KELLY_FRACTION"); v != nil {
 		cfg.MaxKellyFraction = *v
+	}
+	// Protocol fee (TASK-141)
+	if v := envFloat("PROTOCOL_FEE_RATE"); v != nil {
+		cfg.ProtocolFeeRate = *v
 	}
 
 	// Anti-detection / rate limiting

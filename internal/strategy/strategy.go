@@ -29,6 +29,12 @@ var KellyFraction = 0.5
 // Set by cmd/bot at startup from config.
 var MaxKellyFraction = 0.05
 
+// ProtocolFeeRate is the Polymarket protocol fee charged on net profit when a
+// bet wins (default 2%). halfKelly uses fee-adjusted net odds so Kelly sizing
+// accounts for the real payout rather than the gross theoretical payout.
+// Set by cmd/bot at startup from config. Set to 0 to disable (e.g. back-tests).
+var ProtocolFeeRate = 0.02
+
 // ScoredMarket pairs a market with its pre-computed priority score
 // and the fused forecast used to compute it.
 type ScoredMarket struct {
@@ -121,12 +127,21 @@ type Decision struct {
 // halfKelly returns the bet size using the fractional-Kelly formula.
 // The actual fraction applied is min(maxFraction, k*KellyFraction).
 // maxFraction is a hard cap; KellyFraction (package-level var) scales Kelly.
+//
+// Fee adjustment (TASK-141): ProtocolFeeRate reduces the net-profit multiplier
+// b from (odds-1) to (odds-1)*(1-fee). This correctly shrinks Kelly fraction
+// when the house takes a cut on wins — important for marginal-edge bets where
+// fee can consume 10-20% of expected value.
 func halfKelly(edge, odds, bankroll, maxFraction float64) float64 {
 	if edge <= 0 {
 		return 0
 	}
-	b := odds - 1
-	p := edge + 1/odds
+	// fee-adjusted net profit per dollar bet: what we actually keep when we win.
+	b := (odds - 1) * (1 - ProtocolFeeRate)
+	if b <= 0 {
+		return 0
+	}
+	p := edge + 1/odds // reconstruct ourP: edge=(ourP-mktP), 1/odds=mktP → p=ourP
 	q := 1 - p
 	k := (b*p - q) / b
 	frac := math.Min(maxFraction, math.Max(0, k*KellyFraction))
@@ -833,6 +848,10 @@ func evaluate(
 		return nil
 	}
 
+	feeNote := ""
+	if ProtocolFeeRate > 0 {
+		feeNote = fmt.Sprintf(" fee_rate=%.0f%%", ProtocolFeeRate*100)
+	}
 	return &Decision{
 		Market:         m,
 		Side:           best.side,
@@ -841,8 +860,8 @@ func evaluate(
 		MarketPrice:    best.marketPrice,
 		Edge:           best.edge,
 		SizeUSDC:       size,
-		Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]",
-			m.City, m.Signal, ourP, best.marketPrice, best.edge, sourceNote),
+		Reason: fmt.Sprintf("%s/%s: our=%.2f mkt=%.2f edge=%+.2f [%s]%s",
+			m.City, m.Signal, ourP, best.marketPrice, best.edge, sourceNote, feeNote),
 	}
 }
 

@@ -251,6 +251,8 @@ func main() {
 	// TASK-080: apply Kelly parameters from config to strategy package vars.
 	strategy.KellyFraction = cfg.KellyFraction
 	strategy.MaxKellyFraction = cfg.MaxKellyFraction
+	// TASK-141: fee-adjusted Kelly — use real protocol fee rate.
+	strategy.ProtocolFeeRate = cfg.ProtocolFeeRate
 
 	// TASK-082: validate config at startup.
 	{

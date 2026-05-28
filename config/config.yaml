@@ -119,6 +119,12 @@ kelly_fraction: 0.5
 # Env override: MAX_KELLY_FRACTION=0.05
 max_kelly_fraction: 0.05
 
+# Polymarket protocol fee on winning bets (2% of net profit, as of 2024).
+# Kelly sizing uses fee-adjusted odds so positions account for the real payout.
+# Set to 0 to disable fee adjustment (e.g. for back-testing on pre-fee data).
+# Env override: PROTOCOL_FEE_RATE=0.02
+protocol_fee_rate: 0.02
+
 # ── Anti-detection / rate limiting ───────────────────────────────────────────
 # Sleep a random 30s–3min before each live bet to avoid mechanical timing patterns.
 # Env override: BET_JITTER_ENABLED=true

@@ -1,5 +1,25 @@
 # Night Log — Polymarket Weather Bot
 
+## 2026-05-28 04:37 UTC — TASK-141
+
+**Fee-adjusted Kelly sizing**
+
+**Что сделано:**
+Polymarket берёт 2% с прибыли на выигрышных ставках. Текущий halfKelly использовал gross odds `(1/price - 1)` без учёта комиссии — т.е. слегка завышал размер позиции. На marginal-edge ставках (edge≈0.05) fee съедает ~10-15% EV, что при систематической торговле проявляется в реальном P&L.
+
+**Изменения:**
+- `config/config.go` (+6 строк) — поле `ProtocolFeeRate float64` в Config; default 0.02; ENV `PROTOCOL_FEE_RATE`
+- `config/config.yaml` (+7 строк) — секция `protocol_fee_rate: 0.02` с комментарием
+- `internal/strategy/strategy.go` (+12 строк) — package-var `ProtocolFeeRate = 0.02`; в `halfKelly`: `b := (odds-1)` → `b := (odds-1) * (1 - ProtocolFeeRate)` + guard `if b <= 0`; fee_rate note в Decision.Reason
+- `cmd/bot/main.go` (+2 строки) — `strategy.ProtocolFeeRate = cfg.ProtocolFeeRate` рядом с KellyFraction
+- `internal/strategy/strategy_test.go` (+25 строк) — `TestHalfKelly_FeeAdjusted`: подтверждает что fee=2% даёт строго меньший размер vs fee=0 на uncapped Kelly (maxF=1.0); проверяет что reduction ≤ 5%
+
+**Математика:** Kelly fraction k = (b×p - q)/b, где b = fee-adjusted net profit = (1/price - 1) × (1 - fee). При fee=0.02 и price=0.50 (50¢ рынок): b без fee = 1.0, b с fee = 0.98 → k снижается примерно на 2%. Для price=0.60 (60¢): b без fee = 0.667, b с fee = 0.653 → снижение ~2%. Наиболее ощутимо при высоких ценах (price→1) или малом edge.
+
+**Файлов:** 5 | **Строк:** ~52 | `go build ./...` ✅ | `go test ./internal/strategy/` ✅ (4/4 halfKelly тесты PASS)
+
+---
+
 ## 2026-05-28 02:42 UTC — TASK-136 / TASK-137
 
 **TASK-136: Duplicate-market Telegram alert**
