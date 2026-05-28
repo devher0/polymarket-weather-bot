@@ -31,6 +31,9 @@
 //   /sharpe          — 30-day + 7-day Sharpe ratio with trend (TASK-210)
 //   /timing          — best/worst UTC hours to bet by win rate (TASK-211)
 //   /drawdown        — current bankroll drawdown from historical peak (TASK-212)
+//   /streak          — current win/loss streak + historical best/worst (TASK-213)
+//   /weekly          — 4-week P&L table with best/worst week (TASK-214)
+//   /roi             — cumulative ROI% from starting bankroll with weekly sparkline (TASK-215)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -297,6 +300,12 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleTiming(bcfg))
 				case "/drawdown":
 					sendReply(cfg, chatID, handleDrawdown(bcfg))
+				case "/streak":
+					sendReply(cfg, chatID, handleStreak(bcfg))
+				case "/weekly":
+					sendReply(cfg, chatID, handleWeekly(bcfg))
+				case "/roi":
+					sendReply(cfg, chatID, handleROI(bcfg))
 				}
 			}
 		}
@@ -1844,7 +1853,10 @@ func handleHelp() string {
 /daily           Today's bets timeline + running P&L
 /sharpe          30-day + 7-day Sharpe ratio with trend
 /timing          Best/worst UTC hours to bet (win rate)
-/drawdown        Current drawdown from bankroll peak</pre>
+/drawdown        Current drawdown from bankroll peak
+/streak          Current win/loss streak + historical best/worst
+/weekly          4-week P&L table with best/worst week
+/roi             Cumulative ROI% from start with weekly sparkline</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -2876,6 +2888,231 @@ func handleDrawdown(bcfg BotConfig) string {
 		sb.WriteString("Kelly ×   : 1.00 (no reduction)\n")
 	}
 	sb.WriteString(fmt.Sprintf("Snapshots : %d days tracked\n", len(history)))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-213: /streak command ─────────────────────────────────────────────────
+
+// handleStreak shows the current win/loss streak and historical best/worst.
+func handleStreak(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	// Collect resolved bets sorted oldest-first.
+	var resolved []calibration.BetRecord
+	for _, r := range records {
+		if r.Outcome != nil {
+			resolved = append(resolved, r)
+		}
+	}
+	if len(resolved) == 0 {
+		return "🎯 <b>Streak</b>\nNo resolved bets yet."
+	}
+	sort.Slice(resolved, func(i, j int) bool {
+		ti := resolved[i].ResolvedAt
+		if ti.IsZero() {
+			ti = resolved[i].Timestamp
+		}
+		tj := resolved[j].ResolvedAt
+		if tj.IsZero() {
+			tj = resolved[j].Timestamp
+		}
+		return ti.Before(tj)
+	})
+
+	// Current streak via calibration helper.
+	curN, curKind := calibration.ComputeStreak(resolved)
+
+	// Scan full history for best win streak and worst loss streak.
+	bestWin, worstLoss := 0, 0
+	run, runIsWin := 1, *resolved[0].Outcome
+	for i := 1; i < len(resolved); i++ {
+		same := *resolved[i].Outcome == runIsWin
+		if same {
+			run++
+		} else {
+			if runIsWin && run > bestWin {
+				bestWin = run
+			} else if !runIsWin && run > worstLoss {
+				worstLoss = run
+			}
+			run, runIsWin = 1, *resolved[i].Outcome
+		}
+	}
+	// Flush last run.
+	if runIsWin && run > bestWin {
+		bestWin = run
+	} else if !runIsWin && run > worstLoss {
+		worstLoss = run
+	}
+
+	// Streak Kelly factor.
+	sr := calibration.CurrentStreak(resolved)
+	kellyFactor := calibration.StreakKellyFactor(sr)
+
+	// Emoji for current streak.
+	var streakEmoji string
+	switch {
+	case curKind == "wins" && curN >= 5:
+		streakEmoji = "🔥"
+	case curKind == "wins":
+		streakEmoji = "✅"
+	case curKind == "losses" && curN >= 4:
+		streakEmoji = "🚨"
+	case curKind == "losses":
+		streakEmoji = "⚠️"
+	default:
+		streakEmoji = "➖"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("🎯 <b>Win/Loss Streak</b>\n<pre>")
+
+	// Current streak.
+	if curKind == "wins" {
+		sb.WriteString(fmt.Sprintf("Current : %s +%d %s\n", streakEmoji, curN, curKind))
+	} else if curKind == "losses" {
+		sb.WriteString(fmt.Sprintf("Current : %s -%d %s\n", streakEmoji, curN, curKind))
+	} else {
+		sb.WriteString("Current : ➖ no data\n")
+	}
+
+	// Historical records.
+	if bestWin > 0 {
+		sb.WriteString(fmt.Sprintf("Best    : +%d consecutive wins\n", bestWin))
+	}
+	if worstLoss > 0 {
+		sb.WriteString(fmt.Sprintf("Worst   : -%d consecutive losses\n", worstLoss))
+	}
+	sb.WriteString(fmt.Sprintf("Kelly × : %.2f\n", kellyFactor))
+	sb.WriteString(fmt.Sprintf("Total   : %d resolved bets\n", len(resolved)))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-214: /weekly command ─────────────────────────────────────────────────
+
+// handleWeekly shows a 4-week P&L table with best and worst week highlights.
+func handleWeekly(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	weeks := calibration.WeeklyBreakdown(records, 4)
+
+	// Count weeks that have any data.
+	weeksWithData := 0
+	for _, w := range weeks {
+		if w.Bets > 0 {
+			weeksWithData++
+		}
+	}
+	if weeksWithData < 2 {
+		return "📅 <b>Weekly P&L</b>\nNot enough history yet (need 2+ weeks of data)."
+	}
+
+	best := calibration.BestWeek(weeks)
+	worst := calibration.WorstWeek(weeks)
+
+	currentWeekStart := weeks[len(weeks)-1].WeekStart
+	now := time.Now().UTC()
+
+	var sb strings.Builder
+	sb.WriteString("📅 <b>Weekly P&L</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("%-12s %5s %6s %8s\n", "Week", "Bets", "Win%", "P&L"))
+	sb.WriteString(strings.Repeat("-", 35) + "\n")
+
+	for _, w := range weeks {
+		label := w.WeekStart.Format("Jan 02")
+		marker := ""
+		if w.WeekStart.Equal(currentWeekStart) && now.Weekday() != time.Sunday {
+			marker = "*"
+		}
+		winPct := "-  "
+		if w.Bets > 0 {
+			winPct = fmt.Sprintf("%.0f%%", w.WinPct())
+		}
+		pnlStr := fmt.Sprintf("%+.2f", w.PnLUSDC)
+		sb.WriteString(fmt.Sprintf("%-11s%s %5d %6s %8s\n",
+			label, marker, w.Bets, winPct, pnlStr))
+	}
+
+	sb.WriteString(strings.Repeat("-", 35) + "\n")
+	if best.Bets > 0 {
+		sb.WriteString(fmt.Sprintf("Best  : %s  %+.2f USDC\n",
+			best.WeekStart.Format("Jan 02"), best.PnLUSDC))
+	}
+	if worst.Bets > 0 {
+		sb.WriteString(fmt.Sprintf("Worst : %s  %+.2f USDC\n",
+			worst.WeekStart.Format("Jan 02"), worst.PnLUSDC))
+	}
+	sb.WriteString("</pre>")
+	sb.WriteString("<i>* = current week (partial)</i>\n")
+	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", now.UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-215: /roi command ────────────────────────────────────────────────────
+
+// handleROI shows cumulative ROI% from the starting bankroll with a weekly sparkline.
+func handleROI(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	initial := calibration.DefaultBankroll
+	current := calibration.LoadBankroll(bcfg.DataRoot)
+	if current <= 0 {
+		current = bcfg.Bankroll
+	}
+
+	roiPct := (current - initial) / initial * 100
+	var roiSign string
+	if roiPct >= 0 {
+		roiSign = "+"
+	}
+
+	// 8-week breakdown for sparkline.
+	weeks := calibration.WeeklyBreakdown(records, 8)
+
+	// Build cumulative P&L series.
+	var cumValues []float64
+	cum := 0.0
+	for _, w := range weeks {
+		cum += w.PnLUSDC
+		cumValues = append(cumValues, cum)
+	}
+
+	spark := ""
+	if len(cumValues) > 1 {
+		spark = asciiSparkline(cumValues)
+	}
+
+	// Count resolved bets.
+	totalBets := 0
+	for _, r := range records {
+		if r.Outcome != nil {
+			totalBets++
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("📈 <b>Cumulative ROI</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("Initial   : $%.2f USDC\n", initial))
+	sb.WriteString(fmt.Sprintf("Current   : $%.2f USDC\n", current))
+	sb.WriteString(fmt.Sprintf("ROI       : %s%.1f%%\n", roiSign, roiPct))
+	sb.WriteString(fmt.Sprintf("Net P&L   : %+.2f USDC\n", current-initial))
+	sb.WriteString(fmt.Sprintf("Resolved  : %d bets\n", totalBets))
+	if spark != "" {
+		sb.WriteString(fmt.Sprintf("\n8-wk P&L  : %s\n", spark))
+	}
 	sb.WriteString("</pre>")
 	sb.WriteString(fmt.Sprintf("<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
 	return sb.String()

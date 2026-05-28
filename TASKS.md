@@ -2112,3 +2112,43 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Форматировать: "Peak: $1234.56 | Current: $1180.00 | Drawdown: -4.4% (moderate) | Kelly ×0.78"
 - Если нет истории: "No bankroll history yet"
 - Добавить case "/drawdown" в switch поллера и в /help раздел "Analytics"
+
+---
+
+## 🔴 ПРИОРИТЕТ 800 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-213: `/streak` Telegram команда — текущая серия + исторический рекорд
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает текущую серию побед/поражений, лучшую и худшую историческую серию.
+- `handleStreak(bcfg BotConfig) string`
+- `calibration.ComputeStreak(records)` → текущая серия
+- Сканировать всю историю для нахождения лучшей streak побед и худшей streak поражений
+- Вычислять лучшую streak: при каждом изменении outcome считать длину серии, запоминать максимум
+- Emoji статус: 🔥 5+ wins, ✅ 1-4 wins, ➖ нет данных, ⚠️ 1-3 losses, 🚨 4+ losses
+- Формат: "Current: 🔥 +5 wins | Best: +8 wins | Worst: -6 losses | Kelly: ×0.70"
+- Добавить case "/streak" в switch поллера и в /help раздел "Analytics"
+
+### [x] 2026-05-28 — TASK-214: `/weekly` Telegram команда — недельная P&L таблица
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает последние 4 недели: ставки, победы, P&L, win% — как быстрая сводка прогресса.
+- `handleWeekly(bcfg BotConfig) string`
+- `calibration.WeeklyBreakdown(records, 4)` → 4 недели данных
+- `calibration.BestWeek(stats)` и `calibration.WorstWeek(stats)` → для итоговых строк
+- Таблица: Week (Mon DD) | Bets | Win% | P&L — по одной строке на неделю
+- Текущая неделя помечается "*" (или "← current")
+- Итог: лучшая неделя + худшая неделя (city | pnl)
+- Если менее 2 недель данных: "Not enough history yet (need 2+ weeks)"
+- Добавить case "/weekly" в switch поллера и в /help раздел "Analytics"
+
+### [x] 2026-05-28 — TASK-215: `/roi` Telegram команда — ROI% от старта с недельной разбивкой
+**Файл:** `internal/notifier/telegram_commands.go` (обновить)
+Показывает кумулятивный ROI% от начального банкролла (100 USDC) + недельный прирост.
+- `handleROI(bcfg BotConfig) string`
+- Начальный банкролл: `calibration.DefaultBankroll` (100.0 USDC)
+- Текущий: `calibration.LoadBankroll(bcfg.DataRoot)`
+- Общий ROI%: (current - initial) / initial * 100
+- Используем `calibration.WeeklyBreakdown(records, 8)` — 8 недель для накопительного P&L
+- Строить накопительный P&L строку (кумулятивные суммы по неделям)
+- ASCII sparkline через `asciiSparkline(cumulativeValues)`
+- Формат: "Initial: $100.00 | Current: $127.30 | ROI: +27.3%\n\nWeekly P&L:\n[sparkline]\n..."
+- Добавить case "/roi" в switch поллера и в /help раздел "Analytics"
