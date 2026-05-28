@@ -186,6 +186,13 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleSummary(bcfg))
 				case "/signals":
 					sendReply(cfg, chatID, handleSignals(bcfg))
+				case "/watchlist":
+					arg := ""
+					parts := strings.SplitN(text, " ", 2)
+					if len(parts) == 2 {
+						arg = strings.TrimSpace(parts[1])
+					}
+					sendReply(cfg, chatID, handleWatchlist(bcfg, arg))
 				}
 			}
 		}

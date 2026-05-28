@@ -559,6 +559,38 @@ func main() {
 		consecutiveAPIFails = 0 // reset streak on success
 		slog.Info("weather markets found", "count", len(mkt))
 
+		// TASK-153: merge watchlisted conditionIDs into the market set.
+		// Fetches each watchlisted market via RefreshPrices so it gets live prices.
+		{
+			watchlistIDs := notifier.LoadWatchlist(cfg.DataRoot)
+			if len(watchlistIDs) > 0 {
+				// Build existing conditionID set to avoid duplicates.
+				existing := make(map[string]bool, len(mkt))
+				for _, m := range mkt {
+					existing[m.ConditionID] = true
+				}
+				added := 0
+				for _, condID := range watchlistIDs {
+					if existing[condID] {
+						continue
+					}
+					placeholder := markets.Market{ConditionID: condID}
+					refreshed, ok, err := markets.RefreshPrices(placeholder)
+					if err != nil || !ok {
+						slog.Warn("watchlist: could not fetch market", "conditionID", condID, "err", err)
+						continue
+					}
+					mkt = append(mkt, refreshed)
+					existing[condID] = true
+					added++
+					slog.Info("watchlist: added market", "conditionID", condID)
+				}
+				if added > 0 {
+					slog.Info("watchlist: merged markets", "added", added, "total", len(mkt))
+				}
+			}
+		}
+
 		// TASK-136: detect duplicate-market fingerprints and alert once per day.
 		if dupes := markets.FindDuplicates(mkt); len(dupes) > 0 {
 			slog.Info("duplicate markets detected", "groups", len(dupes))
