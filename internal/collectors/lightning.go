@@ -129,7 +129,7 @@ func connectAndReceive() error {
 		if line == "\r\n" {
 			break
 		}
-		if len(line) > 24 && line[:23] == "Sec-WebSocket-Accept: " {
+		if len(line) > 22 && line[:22] == "Sec-WebSocket-Accept: " {
 			gotAccept = line[22 : len(line)-2] // trim \r\n
 		}
 	}

@@ -41,6 +41,7 @@
 //   /ab-test         — A/B strategy test: quarter-Kelly vs half-Kelly results (TASK-229)
 //   /momentum        — forecast trend direction for all cities (TASK-230)
 //   /best-city       — top cities ranked by total positive edge across all signals (TASK-231)
+//   /edge-buckets    — edge-tier win-rate validator: are bigger edges more profitable? (TASK-232)
 //
 // Uses long-poll (getUpdates with timeout=60) — no webhook required.
 // StartCommandPoller runs in a background goroutine; call it after bot setup.
@@ -328,6 +329,12 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleMomentum(bcfg))
 				case "/best-city":
 					sendReply(cfg, chatID, handleBestCity(bcfg))
+				case "/edge-buckets":
+					sendReply(cfg, chatID, handleEdgeBuckets(bcfg))
+				case "/pnl-weekday":
+					sendReply(cfg, chatID, handlePnLWeekday(bcfg))
+				case "/drift":
+					sendReply(cfg, chatID, handleDrift(bcfg))
 				}
 			}
 		}
@@ -1991,7 +1998,10 @@ func handleHelp() string {
 /volume          Top markets by traded volume (24h + total)
 /ab-test         A/B test: quarter-Kelly vs half-Kelly results
 /momentum        Forecast trend direction for all cities
-/best-city       Top cities ranked by total positive edge</pre>
+/best-city       Top cities ranked by total positive edge
+/edge-buckets    Edge-tier win-rate validator (does larger edge = better wins?)
+/pnl-weekday     P&L by day of week — find your best and worst trading days
+/drift           Post-bet price drift analysis — does market confirm your edge?</pre>
 
 <b>🌤 Forecasts &amp; Markets</b>
 <pre>/forecast [city] Weather forecast (all cities or one)
@@ -3749,4 +3759,147 @@ func handleMomentum(bcfg BotConfig) string {
 	}
 	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
 	return sb.String()
+}
+
+func handleEdgeBuckets(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	buckets := calibration.ComputeEdgeBuckets(records)
+
+	// Check if there's any data at all.
+	total := 0
+	for _, b := range buckets {
+		total += b.Count
+	}
+	if total == 0 {
+		return "📊 <b>Edge Bucket Analysis</b>\nNo resolved bets with positive edge yet."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<b>📊 Edge Bucket Validator</b>\n")
+	sb.WriteString("<i>Does larger edge → better outcomes?</i>\n\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-8s %5s %6s %7s %6s\n", "Edge", "Bets", "Win%", "P&L", "ROI%"))
+	sb.WriteString(strings.Repeat("-", 36) + "\n")
+
+	for _, b := range buckets {
+		if b.Count == 0 {
+			sb.WriteString(fmt.Sprintf("%-8s %5s %6s %7s %6s\n", b.Label, "-", "-", "-", "-"))
+			continue
+		}
+		profitEmoji := "✅"
+		if b.PnL < 0 {
+			profitEmoji = "❌"
+		}
+		sb.WriteString(fmt.Sprintf("%-8s %5d %5.0f%% %+6.2f %+5.0f%% %s\n",
+			b.Label, b.Count, b.WinPct(), b.PnL, b.ROIPct(), profitEmoji))
+	}
+	sb.WriteString("</pre>\n")
+
+	msg, _ := calibration.EdgeValidation(buckets)
+	sb.WriteString(msg)
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+func handlePnLWeekday(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history."
+	}
+
+	stats := calibration.WeekdayBreakdown(records)
+
+	// Count how many weekdays have data.
+	daysWithData := 0
+	for _, s := range stats {
+		if s.Bets > 0 {
+			daysWithData++
+		}
+	}
+	if daysWithData < 2 {
+		return "📅 <b>P&L by Weekday</b>\nNot enough history yet (need bets on 2+ different weekdays)."
+	}
+
+	best := calibration.BestWeekday(stats, 2)
+	worst := calibration.WorstWeekday(stats, 2)
+
+	dayNames := [7]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+
+	var sb strings.Builder
+	sb.WriteString("<b>📅 P&L by Day of Week (UTC)</b>\n\n")
+	sb.WriteString("<pre>")
+	sb.WriteString(fmt.Sprintf("%-4s %5s %6s %7s %6s\n", "Day", "Bets", "Win%", "P&L", "ROI%"))
+	sb.WriteString(strings.Repeat("-", 34) + "\n")
+
+	for i, s := range stats {
+		if s.Bets == 0 {
+			sb.WriteString(fmt.Sprintf("%-4s %5s %6s %7s %6s\n", dayNames[i], "-", "-", "-", "-"))
+			continue
+		}
+		marker := ""
+		if i == best {
+			marker = " 🏆"
+		} else if i == worst {
+			marker = " 📉"
+		}
+		sb.WriteString(fmt.Sprintf("%-4s %5d %5.0f%% %+6.2f %+5.0f%%%s\n",
+			dayNames[i], s.Bets, s.WinPct(), s.PnL, s.ROIPct(), marker))
+	}
+	sb.WriteString("</pre>")
+
+	if best >= 0 {
+		sb.WriteString(fmt.Sprintf("\n🏆 Best: <b>%s</b> (ROI %+.0f%%)", dayNames[best], stats[best].ROIPct()))
+	}
+	if worst >= 0 && worst != best {
+		sb.WriteString(fmt.Sprintf("\n📉 Worst: <b>%s</b> (ROI %+.0f%%)", dayNames[worst], stats[worst].ROIPct()))
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("15:04")))
+	return sb.String()
+}
+
+func handleDrift(bcfg BotConfig) string {
+	summary, ok := markets.LoadDriftSummary(bcfg.DataRoot)
+	if !ok || summary.Count == 0 {
+		return "📊 <b>Price Drift Analysis</b>\nNo drift data yet — it accumulates as the bot places bets and the market moves."
+	}
+
+	driftSign := "+"
+	if summary.AvgDrift < 0 {
+		driftSign = ""
+	}
+
+	var interpretation string
+	switch {
+	case summary.AvgDrift > 3:
+		interpretation = "✅ Market confirms our edge (prices moving our way)"
+	case summary.AvgDrift > 0:
+		interpretation = "🟡 Slight positive drift (market weakly confirming edge)"
+	case summary.AvgDrift > -3:
+		interpretation = "🟡 Near-zero drift (inconclusive)"
+	default:
+		interpretation = "⚠️ Adverse drift (prices moving against us — review edge model)"
+	}
+
+	total := summary.Positive + summary.Negative
+	positivePct := 0.0
+	if total > 0 {
+		positivePct = float64(summary.Positive) / float64(total) * 100
+	}
+
+	return fmt.Sprintf(
+		"📊 <b>Price Drift Analysis</b>\n\n"+
+			"Avg drift: <b>%s%.1fpp</b>\n"+
+			"Positive: %d | Negative: %d (%.0f%% favourable)\n\n"+
+			"%s\n\n"+
+			"<i>Tracked positions: %d | %s UTC</i>",
+		driftSign, summary.AvgDrift,
+		summary.Positive, summary.Negative, positivePct,
+		interpretation,
+		summary.Count,
+		time.Now().UTC().Format("15:04"),
+	)
 }

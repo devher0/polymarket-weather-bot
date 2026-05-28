@@ -2336,3 +2336,39 @@ Platt scaling (sigmoid) предполагает гладкую S-кривую. 
 - Формат: "🥇 New York — edge: +0.28 (3 markets)\n🥈 Miami — edge: +0.15 (2 markets)\n🥉 Chicago — edge: +0.09 (1 market)"
 - Если нет активных рынков с edge > 0 — "No cities with positive edge right now"
 - Edge брать из handleTopEdge логики (bcfg.MarketCache + EvaluateFused)
+
+---
+
+## 🔴 ПРИОРИТЕТ 1400 — Новые улучшения (добавлено 2026-05-28)
+
+### [x] 2026-05-28 — TASK-232: Edge-bucket win-rate validator + `/edge-buckets` Telegram команда
+**Файлы:** `internal/calibration/edge_buckets.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Разбить все resolved ставки по размеру edge на 4 бакета: <5%, 5-10%, 10-15%, >15%.
+Для каждого бакета: кол-во ставок, win rate, средний Brier score, суммарный P&L, ROI%.
+- `EdgeBucket{Label string, MinEdge, MaxEdge float64, Count, Wins int, PnL, TotalRisked float64}`
+- `ComputeEdgeBuckets(records []BetRecord) []EdgeBucket` — возвращает 4 бакета всегда
+- edge = OurProbability - MarketPrice (только resolved ставки, только edge > 0)
+- Команда `/edge-buckets`: таблица бакет|ставок|win%|P&L|ROI% с emoji ✅/❌ по прибыльности
+- Footer: "Edge validation: ✅ larger edge → higher win rate" или "⚠️ edge not validated (N<10)"
+- 4 unit-теста: пустые записи, разные бакеты, граничные значения, все в одном бакете
+
+### [x] 2026-05-28 — TASK-233: P&L по дню недели `/pnl-weekday`
+**Файлы:** `internal/calibration/weekday.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+Сгруппировать resolved ставки по дню недели (Mon-Sun) — найти лучший/худший торговый день.
+- `WeekdayStats{Day time.Weekday, Bets, Wins int, PnL, TotalRisked float64}`
+- `WeekdayBreakdown(records []BetRecord) [7]WeekdayStats`
+- Команда `/pnl-weekday`: таблица день|ставок|win%|P&L|ROI% + 🏆 лучший день, 📉 худший
+- Если меньше 2 дней с данными — "Not enough history (need bets on 2+ weekdays)"
+- 3 unit-теста: пустой, один день, все дни
+
+### [x] 2026-05-28 — TASK-234: Market price drift tracker — мониторинг движения цены после ставки
+**Файлы:** `internal/markets/price_drift.go` (новый), `internal/markets/price_drift_test.go` (новый), `internal/notifier/telegram_commands.go` (обновить)
+После каждой ставки сохранять начальную цену; при следующем ценовом снапшоте сравнивать.
+Позитивный drift = рынок движется в нашу сторону (цена на нашу сторону растёт).
+- `DriftRecord{CondID string, Side string, EntryPrice float64, CurrentPrice float64, DriftPP float64, Age time.Duration}`
+- `SaveDriftEntry(condID, side string, entryPrice float64, dataRoot string) error`
+- `UpdateDrift(condID string, currentPrice float64, dataRoot string) error`
+- `LoadDriftSummary(dataRoot string) (avgDrift float64, positive, negative int, ok bool)`
+- Команда `/drift`: "📊 Price Drift Analysis\nAvg drift: +3.2pp ✅ (market confirms our edge)\nPositive: 12 | Negative: 5"
+- Сохранять в `data/price_drift.json`
+- 4 unit-теста: save, update, summary calculation, empty

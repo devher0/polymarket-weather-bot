@@ -1,23 +1,23 @@
 {
-  "saved_at": "2026-05-28T10:46:28.233646025+02:00",
+  "saved_at": "2026-05-28T13:13:41.588969588+02:00",
   "city": "london",
   "day_offset": 2,
-  "confidence": 0.5950448857706603,
+  "confidence": 0.5957980110481133,
   "sources": [
     "gfs",
-    "ecmwf",
     "nasa",
+    "ecmwf",
     "openmeteo"
   ],
   "date": "2026-05-30",
   "max_temp_c": -225.06944444444446,
-  "min_temp_c": -229.00000000000003,
+  "min_temp_c": -229.0277777777778,
   "precipitation_mm": 0,
   "precipitation_probability": 3.680555555555556,
-  "wind_speed_kmh": 6.847222222222221,
+  "wind_speed_kmh": 5.152777777777779,
   "weather_code": 1,
   "ensemble_uncertainty": 0,
-  "fetched_at": "2026-05-28T10:46:28.098902205+02:00",
+  "fetched_at": "2026-05-28T13:13:41.457530464+02:00",
   "per_source_forecasts": {
     "ecmwf": {
       "City": "london",
@@ -68,14 +68,14 @@
       "City": "london",
       "Date": "2026-05-30",
       "MaxTempC": 25,
-      "MinTempC": 17.5,
+      "MinTempC": 17.4,
       "PrecipitationMM": 0,
       "PrecipitationProbability": 4,
-      "WindSpeedKMH": 19.4,
+      "WindSpeedKMH": 13.3,
       "WeatherCode": 3,
-      "UVIndexMax": 6.75,
+      "UVIndexMax": 6.5,
       "HumidityPct": 0,
-      "ApparentMaxTempC": 23.5,
+      "ApparentMaxTempC": 23.4,
       "CapeJkg": 0,
       "SnowfallCM": 0
     }

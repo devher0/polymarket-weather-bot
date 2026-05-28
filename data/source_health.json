@@ -1,59 +1,60 @@
 {
   "ecmwf": {
-    "last_success": "2026-05-28T08:46:29.192582779Z",
+    "last_success": "2026-05-28T12:56:15.334002022Z",
     "last_error": "0001-01-01T00:00:00Z",
     "consec_fails": 0,
-    "total_calls": 9,
-    "total_success": 9,
+    "total_calls": 42,
+    "total_success": 42,
     "trip_until": "0001-01-01T00:00:00Z"
   },
   "gfs": {
-    "last_success": "2026-05-28T08:46:29.114395084Z",
-    "last_error": "0001-01-01T00:00:00Z",
+    "last_success": "2026-05-28T12:56:15.34133432Z",
+    "last_error": "2026-05-28T11:10:38.770706677Z",
+    "last_error_msg": "gfs: status 429: {\"reason\":\"Too many concurrent requests\",\"error\":true}",
     "consec_fails": 0,
-    "total_calls": 9,
-    "total_success": 9,
+    "total_calls": 42,
+    "total_success": 41,
     "trip_until": "0001-01-01T00:00:00Z"
   },
   "goes": {
-    "last_success": "2026-05-28T08:45:54.205800405Z",
+    "last_success": "2026-05-28T12:51:17.4216604Z",
     "last_error": "0001-01-01T00:00:00Z",
     "consec_fails": 0,
-    "total_calls": 4,
-    "total_success": 4,
+    "total_calls": 16,
+    "total_success": 16,
     "trip_until": "0001-01-01T00:00:00Z"
   },
   "hrrr": {
-    "last_success": "2026-05-28T08:46:28.249645385Z",
+    "last_success": "2026-05-28T12:56:15.359429122Z",
     "last_error": "0001-01-01T00:00:00Z",
     "consec_fails": 0,
-    "total_calls": 6,
-    "total_success": 6,
+    "total_calls": 26,
+    "total_success": 26,
     "trip_until": "0001-01-01T00:00:00Z"
   },
   "nasa": {
-    "last_success": "2026-05-28T08:46:29.934544299Z",
+    "last_success": "2026-05-28T12:56:15.333645506Z",
     "last_error": "0001-01-01T00:00:00Z",
     "consec_fails": 0,
-    "total_calls": 9,
-    "total_success": 9,
+    "total_calls": 42,
+    "total_success": 42,
     "trip_until": "0001-01-01T00:00:00Z"
   },
   "noaa": {
-    "last_success": "2026-05-28T08:46:28.342199811Z",
-    "last_error": "2026-05-28T08:46:29.066821693Z",
-    "last_error_msg": "noaa_nws: city \"london\" is not a supported US city",
-    "consec_fails": 1,
-    "total_calls": 9,
-    "total_success": 6,
-    "trip_until": "0001-01-01T00:00:00Z"
+    "last_success": "2026-05-28T11:13:41.691264958Z",
+    "last_error": "2026-05-28T12:51:17.407196979Z",
+    "last_error_msg": "noaa_nws: city \"tokyo\" is not a supported US city",
+    "consec_fails": 3,
+    "total_calls": 31,
+    "total_success": 18,
+    "trip_until": "2026-05-28T13:06:17.407196979Z"
   },
   "openmeteo": {
-    "last_success": "2026-05-28T08:46:29.115735152Z",
+    "last_success": "2026-05-28T12:56:15.358975809Z",
     "last_error": "0001-01-01T00:00:00Z",
     "consec_fails": 0,
-    "total_calls": 9,
-    "total_success": 9,
+    "total_calls": 42,
+    "total_success": 42,
     "trip_until": "0001-01-01T00:00:00Z"
   }
 }
