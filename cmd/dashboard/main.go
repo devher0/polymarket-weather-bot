@@ -595,6 +595,9 @@ func main() {
 			}
 		}
 		cmdWeek(dataRoot, nDays)
+	case "signals-trend":
+		// TASK-168: rolling signal win rate over 7/14/30 days.
+		cmdSignalsTrend(dataRoot)
 	case "all":
 		cmdPositions(dataRoot)
 		cmdPnL(dataRoot)
@@ -632,6 +635,7 @@ func printUsage() {
 	fmt.Println("  compare [--days=N]                Compare current N days vs previous N days (TASK-145)")
 	fmt.Println("  pnl-city                          Per-city P&L breakdown: bets/wins/PnL/ROI sorted by profit (TASK-161)")
 	fmt.Println("  week [N]                          N-day (default 7) daily P&L table with running total (TASK-164)")
+	fmt.Println("  signals-trend                     Rolling signal win rate trend: 7/14/30 days (TASK-168)")
 	fmt.Println("  all                               Run all sub-commands")
 }
 
@@ -771,6 +775,111 @@ func cmdWeek(dataRoot string, nDays int) {
 	if line := calibration.DailyPnLLine(records, nDays); line != "" {
 		fmt.Printf("\n  %s\n", line)
 	}
+}
+
+// ── signals-trend (TASK-168) ──────────────────────────────────────────────────
+
+// cmdSignalsTrend prints a trend table of per-signal win rates over 7 / 14 / 30
+// days so operators can see whether each signal is improving or deteriorating.
+func cmdSignalsTrend(dataRoot string) {
+	header("📈  SIGNAL WIN RATE TREND")
+
+	records, err := calibration.LoadHistory(dataRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+		return
+	}
+
+	bd7 := calibration.SignalBreakdownForPeriod(records, 7)
+	bd14 := calibration.SignalBreakdownForPeriod(records, 14)
+	bd30 := calibration.SignalBreakdownForPeriod(records, 30)
+
+	// Collect all signal names.
+	sigSet := map[string]bool{}
+	for k := range bd7 {
+		sigSet[k] = true
+	}
+	for k := range bd14 {
+		sigSet[k] = true
+	}
+	for k := range bd30 {
+		sigSet[k] = true
+	}
+	if len(sigSet) == 0 {
+		fmt.Println("  No resolved bets found.")
+		return
+	}
+	sigs := make([]string, 0, len(sigSet))
+	for s := range sigSet {
+		sigs = append(sigs, s)
+	}
+	sort.Strings(sigs)
+
+	t := newTable()
+	t.AppendHeader(table.Row{"Signal", "7d WR", "14d WR", "30d WR", "30d Brier", "30d N", "Trend"})
+
+	winRatePct := func(s calibration.BreakdownStats) float64 {
+		if s.Count == 0 {
+			return -1
+		}
+		return float64(s.Wins) / float64(s.Count) * 100
+	}
+
+	colorWR := func(wr float64) interface{} {
+		if wr < 0 {
+			return styleNeutral.Sprint("—")
+		}
+		str := fmt.Sprintf("%.0f%%", wr)
+		if wr >= 55 {
+			return styleWin.Sprint(str)
+		}
+		if wr < 45 {
+			return styleLoss.Sprint(str)
+		}
+		return str
+	}
+
+	for _, sig := range sigs {
+		s7 := bd7[sig]
+		s14 := bd14[sig]
+		s30 := bd30[sig]
+
+		wr7 := winRatePct(s7)
+		wr14 := winRatePct(s14)
+		wr30 := winRatePct(s30)
+
+		var brier30Str string
+		if s30.Count >= 3 {
+			brier30Str = fmt.Sprintf("%.3f", s30.BrierAvg())
+		} else {
+			brier30Str = "—"
+		}
+
+		// Trend: compare 7d vs 30d win rate.
+		var trendStr string
+		if wr7 >= 0 && wr30 >= 0 {
+			delta := wr7 - wr30
+			switch {
+			case delta >= 5:
+				trendStr = styleWin.Sprint("↑ improving")
+			case delta <= -5:
+				trendStr = styleLoss.Sprint("↓ declining")
+			default:
+				trendStr = "→ stable"
+			}
+		}
+
+		t.AppendRow(table.Row{
+			sig,
+			colorWR(wr7),
+			colorWR(wr14),
+			colorWR(wr30),
+			brier30Str,
+			s30.Count,
+			trendStr,
+		})
+	}
+	t.Render()
 }
 
 // ── markets (TASK-159) ────────────────────────────────────────────────────────

@@ -11,6 +11,8 @@
 //   /healthcheck    — data source status, calibration, risk state, signal kelly (TASK-157)
 //   /source-weights — current dynamic weights per data source vs static baseline (TASK-160)
 //   /pnl-city       — per-city P&L table: bets/wins/win%/pnl/roi (TASK-163)
+//   /winrate        — rolling win rate table per signal over last 20 bets (TASK-169)
+//   /explain <id>   — full strategy audit trail for a specific conditionID (TASK-167)
 //   /pause          — suspend all trading
 //   /resume         — resume trading
 //
@@ -224,6 +226,15 @@ func StartCommandPoller(ctx context.Context, bcfg BotConfig) {
 					sendReply(cfg, chatID, handleSourceWeights(bcfg))
 				case "/pnl-city":
 					sendReply(cfg, chatID, handlePnLCity(bcfg))
+				case "/winrate":
+					sendReply(cfg, chatID, handleWinRate(bcfg))
+				case "/explain":
+					arg := ""
+					parts := strings.SplitN(text, " ", 2)
+					if len(parts) == 2 {
+						arg = strings.TrimSpace(parts[1])
+					}
+					sendReply(cfg, chatID, handleExplainMarket(bcfg, arg))
 				}
 			}
 		}
@@ -1269,4 +1280,164 @@ func repeatDash(n int) string {
 		b[i] = '-'
 	}
 	return string(b)
+}
+
+// ── TASK-169: /winrate command ─────────────────────────────────────────────
+
+// handleWinRate returns a per-signal rolling win rate table for the last 20
+// resolved bets of each signal type.
+func handleWinRate(bcfg BotConfig) string {
+	records, err := calibration.LoadHistory(bcfg.DataRoot)
+	if err != nil {
+		return "❌ Could not load bet history: " + err.Error()
+	}
+
+	// Filter resolved records only.
+	var resolved []calibration.BetRecord
+	for _, r := range records {
+		if r.Outcome != nil {
+			resolved = append(resolved, r)
+		}
+	}
+	if len(resolved) == 0 {
+		return "📭 No resolved bets yet."
+	}
+
+	// Group by signal, keeping only the last 20 per signal (newest first).
+	type signalStats struct {
+		bets  int
+		wins  int
+		pnl   float64
+	}
+	stats := map[string]*signalStats{}
+	signalOrder := []string{}
+
+	// Walk resolved in reverse (newest first) and collect up to 20 per signal.
+	signalCount := map[string]int{}
+	for i := len(resolved) - 1; i >= 0; i-- {
+		r := resolved[i]
+		sig := r.Signal
+		if sig == "" {
+			sig = "unknown"
+		}
+		if signalCount[sig] >= 20 {
+			continue
+		}
+		signalCount[sig]++
+		if _, ok := stats[sig]; !ok {
+			stats[sig] = &signalStats{}
+			signalOrder = append(signalOrder, sig)
+		}
+		stats[sig].bets++
+		if *r.Outcome {
+			stats[sig].wins++
+			// net gain = return - stake; MarketPrice is the price paid (0-1 scale)
+			if r.MarketPrice > 0 {
+				stats[sig].pnl += r.SizeUSDC/r.MarketPrice - r.SizeUSDC
+			}
+		} else {
+			stats[sig].pnl -= r.SizeUSDC
+		}
+	}
+
+	// Sort signals by pnl descending.
+	sort.Slice(signalOrder, func(i, j int) bool {
+		return stats[signalOrder[i]].pnl > stats[signalOrder[j]].pnl
+	})
+
+	var sb strings.Builder
+	sb.WriteString("<b>📊 Rolling Win Rate (last 20 bets/signal)</b>\n<pre>")
+	sb.WriteString(fmt.Sprintf("%-10s %4s %5s %7s\n", "Signal", "N", "Win%", "PnL"))
+	sb.WriteString(repeatDash(30) + "\n")
+
+	totalBets, totalWins := 0, 0
+	totalPnL := 0.0
+	for _, sig := range signalOrder {
+		s := stats[sig]
+		wr := 0.0
+		if s.bets > 0 {
+			wr = float64(s.wins) / float64(s.bets) * 100
+		}
+		sb.WriteString(fmt.Sprintf("%-10s %4d %4.0f%% %+7.2f\n", sig, s.bets, wr, s.pnl))
+		totalBets += s.bets
+		totalWins += s.wins
+		totalPnL += s.pnl
+	}
+
+	sb.WriteString(repeatDash(30) + "\n")
+	overallWR := 0.0
+	if totalBets > 0 {
+		overallWR = float64(totalWins) / float64(totalBets) * 100
+	}
+	sb.WriteString(fmt.Sprintf("%-10s %4d %4.0f%% %+7.2f\n", "TOTAL", totalBets, overallWR, totalPnL))
+	sb.WriteString("</pre>")
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
+}
+
+// ── TASK-167: /explain <conditionID> command ───────────────────────────────
+
+// handleExplainMarket fetches markets, finds the one matching conditionID,
+// runs ExplainEvaluate, and returns a formatted audit trail for Telegram.
+func handleExplainMarket(bcfg BotConfig, conditionID string) string {
+	if conditionID == "" {
+		return "Usage: /explain &lt;conditionID&gt;\nExample: /explain 0x1234...abcd"
+	}
+
+	mks, err := markets.GetWeatherMarkets()
+	if err != nil {
+		return "❌ Could not fetch markets: " + err.Error()
+	}
+
+	var target *markets.Market
+	for i := range mks {
+		if strings.EqualFold(mks[i].ConditionID, conditionID) {
+			target = &mks[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Sprintf("❌ Market <code>%s</code> not found in current discovery window.", conditionID)
+	}
+
+	// Load forecast — try fused cache first, fall back to open-meteo.
+	ff, _ := loadForecastForDisplay(bcfg, target.City)
+
+	r := strategy.ExplainEvaluate(*target, ff, bcfg.Bankroll, bcfg.MinEdge, bcfg.MaxBet)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>🔍 Explain: %s / %s</b>\n", target.City, target.Signal))
+	sb.WriteString(fmt.Sprintf("Market: <code>%s</code>\n", conditionID))
+	sb.WriteString(fmt.Sprintf("YES %.2f  NO %.2f\n\n", target.YesPrice, target.NoPrice))
+
+	if ff != nil {
+		sb.WriteString(fmt.Sprintf("Confidence:  %.2f\n", r.Confidence))
+		sb.WriteString(fmt.Sprintf("Consensus:   %.2f\n", r.ConsensusScore))
+		sb.WriteString(fmt.Sprintf("Sources:     %s\n", strings.Join(r.Sources, ", ")))
+		if r.EnsUnc > 0 {
+			sb.WriteString(fmt.Sprintf("EnsUnc:      %.1f°C\n", r.EnsUnc))
+		}
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("RawP →  %.3f\n", r.RawP))
+		sb.WriteString(fmt.Sprintf("SeasonP → %.3f\n", r.SeasonP))
+		sb.WriteString(fmt.Sprintf("FinalP:   %.3f\n", r.FinalP))
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("YES edge: %+.3f\n", r.YesEdge))
+		sb.WriteString(fmt.Sprintf("NO  edge: %+.3f\n", r.NoEdge))
+		if r.BestSide != "" {
+			sb.WriteString(fmt.Sprintf("Best:     %s (edge %+.3f)\n", r.BestSide, r.BestEdge))
+			sb.WriteString(fmt.Sprintf("Kelly:    $%.2f\n", r.KellyRaw))
+			sb.WriteString(fmt.Sprintf("EnsScale: %.2f\n", r.EnsScale))
+			sb.WriteString(fmt.Sprintf("Size:     $%.2f\n", r.FinalSize))
+		}
+	}
+
+	sb.WriteString("\n")
+	if r.IsBet() {
+		sb.WriteString(fmt.Sprintf("✅ <b>%s</b>", r.Action))
+	} else {
+		sb.WriteString(fmt.Sprintf("⏭ <b>%s</b>", r.Action))
+	}
+	sb.WriteString(fmt.Sprintf("\n<i>%s UTC</i>", time.Now().UTC().Format("2006-01-02 15:04")))
+	return sb.String()
 }

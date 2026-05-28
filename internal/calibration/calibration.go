@@ -547,6 +547,20 @@ func SignalBreakdown(records []BetRecord) map[string]BreakdownStats {
 	return m
 }
 
+// SignalBreakdownForPeriod returns per-signal Brier stats for resolved bets
+// placed within the last `days` calendar days. Useful for trending win rate
+// over different time windows (7d / 14d / 30d). See TASK-168.
+func SignalBreakdownForPeriod(records []BetRecord, days int) map[string]BreakdownStats {
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	var filtered []BetRecord
+	for _, r := range records {
+		if !r.Timestamp.IsZero() && r.Timestamp.After(cutoff) {
+			filtered = append(filtered, r)
+		}
+	}
+	return SignalBreakdown(filtered)
+}
+
 // WeakSignalAlert scans a SignalBreakdown map and returns a slice of
 // human-readable warning strings for any signal type whose win rate is below
 // winRateThreshold (default 40%) and has at least minSamples resolved bets.
